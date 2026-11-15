@@ -20,6 +20,8 @@ It asks one short question at a time, shows the full plan once, and then install
 
 Along 的拟实现方案见 [本地 Agent 系统架构](docs/along/001-architecture.md)，已定边界见 [决策记录](docs/along/000-decisions.md)，阶段与验收见 [实施与验收](docs/along/003-implementation.md)。这些文档描述 fork 的扩展计划，不代表原型已具备对应能力。
 
+阶段 0 的实际探针、结果与未通过项见 [技术验证记录](docs/along/004-phase0-validation.md)。
+
 For a Chinese introduction to the main features and workflow, see [功能概览（中文）](docs/overview.zh-CN.md).
 
 Read the numbered documents in order; each builds only on the ones before it.
