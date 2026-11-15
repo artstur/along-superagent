@@ -51,9 +51,18 @@ export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
 export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
 
 export interface Deployment extends Machine {
+  repository?: string
+  github?: { cli: string; login: string; noreply: string }
+  feishu?: FeishuBot
+}
+export interface GithubDeployment extends Deployment {
   repository: string
   github: { cli: string; login: string; noreply: string }
-  feishu?: FeishuBot
+}
+/** Require a configured GitHub capability at a GitHub-only boundary. */
+export function requireGithub(deployment: Deployment): GithubDeployment {
+  if (!deployment.repository || !deployment.github) throw new Error('The GitHub Source has no configured repository or agent account')
+  return deployment as GithubDeployment
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
 
@@ -84,7 +93,7 @@ function parsed<T>(schema: z.ZodType<T>, text: string): T | undefined {
   return result.success ? result.data : undefined
 }
 /** Verify the agent's GitHub CLI identity and push access to the configured repository. */
-export async function resolveDeployment(machine: Machine, github: unknown, probe: Probe, path = process.env.PATH ?? ''): Promise<Deployment> {
+export async function resolveDeployment(machine: Machine, github: unknown, probe: Probe, path = process.env.PATH ?? ''): Promise<GithubDeployment> {
   const { stateDir } = machine
   const accounts = GithubAccountsSchema.parse(github ?? {})
   const remote = accounts.repository

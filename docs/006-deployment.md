@@ -10,6 +10,10 @@ Use this guide to install, configure and operate dsh-superagent. It covers accou
 
 Plugin configuration holds the state directory and machine limits. Use the panel for everything else: Sources for the repository and accounts, Policy for allowed lists, and Execution for worker directories and commands.
 
+### Local Along extension
+
+This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Runtime can then start without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. Along's authenticated phone ingress and business write tools are separate work; the Source descriptor alone does not expose an ingestion API.
+
 ### Permissions and isolation
 
 The bundle defines `dsh-superagent-worker` for Executors and `dsh-superagent-router` for the main Session. They appear in the DeepSeek Harness preset list but are intended only for dsh-superagent. Do not select them for personal Sessions or disable their configuration rows. The application needs them to create and resume its Sessions.
