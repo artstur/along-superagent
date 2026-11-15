@@ -3,3 +3,9 @@ lib/
 .artifacts/
 .env
 coverage/
+.codegraph/
+
+# archify 的中间产物不要提交；已入库的两张总览图保留跟踪
+.archify/**/*.json
+.archify/**/*-review-*/
+.archify/**/*-visual/
