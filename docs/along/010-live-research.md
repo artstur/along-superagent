@@ -39,3 +39,5 @@ message sync payload 可选 `recommendation`：`{version:1,kind:'hiking'|'genera
 到期研究任务经合法变更完成后，推荐结果使用当前任务版本的 task_result 通知；仍开放的研究用当前版本 recommendation_ready。已完成的实际徒步不因推荐绕过原过滤。研究身份取原到期修订的内容，无法确认时不升级完成任务的通知。
 
 周期研究沿用 task_daily 的 weekday 和既有 renewDaily，不新增scheduler或数据契约。宿主到期场景下，已绑定周期的研究不允许自动永久完成/取消；本轮 keep 完成review并自动续排原任务。健康读取明确提供repeat、weekday和保持时的下一周期。用户新的真实聊天仍可合法停用；当前没有周期证据的旧任务由真实授权对话补计划，校验不放松。
+
+独立复审再收紧：宿主到期的持续研究整项保留原任务，自动Worker不接受任何task ChangeSet，避免经off、null、repeat或内容改写间接清掉周期；新用户聊天不受此限制。徒步领域从原到期修订、绑定任务或原用户意图派生，模型自报general不能绕过徒步校验。

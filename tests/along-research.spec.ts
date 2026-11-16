@@ -267,6 +267,9 @@ it('renews the same weekly research task across repeated ticks and restart, emit
    expect(await h.runTool(worker,'along_health_read',{})).toMatchObject({review:{taskId:task.id,repeat:'weekly',weekday:5,next_occurrence_if_kept:next}})
    const read=await h.runTool(worker,'along_goal_read',{}) as any
    expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'do_not_finish_'+index,base_revision:read.goal.current_revision,input_version:read.goal.input_version,reason:'不应永久结束周期研究',ops:[{op:'task.update',task_id:task.id,base_revision:store.getTask(userId,task.id)!.currentRevision,fields:{status:'done'}}]})).toMatchObject({status:'invalid',reason:'recurring_research_remains_open'})
+   for(const [n,fields] of [{reminder_plan:{state:'off',reason:'untimed'}},{scheduled_at:null},{repeat:'once'},{content:'只做一次的其他事项'}].entries()){
+    expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'keep_cadence_'+index+'_'+n,base_revision:read.goal.current_revision,input_version:read.goal.input_version,reason:'不应删除既有周期',ops:[{op:'task.update',task_id:task.id,base_revision:store.getTask(userId,task.id)!.currentRevision,fields}]})).toMatchObject({status:'invalid',reason:'recurring_research_remains_open'})
+   }
    const scope={userId,goalId:goal.id,ticketId:ticket.id},source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方资料',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
    const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
    const input={outcome:'keep',types:[],reason:'本周期资料核查完成，保留持续任务',text:'本周末资料已整理。',recommendation:plan(route.id,access.id,weather.id)}
@@ -288,3 +291,13 @@ it('renews the same weekly research task across repeated ticks and restart, emit
   await review('2027-01-15T11:00:00Z','2027-01-22T11:00:00.000Z',2)
  }finally{await h.stop()}
 },30_000)
+it('binds hiking safety to the original human intent even when the model labels its reply general',async()=>{
+ const {store,scope,save,deviceId}=fixture(),event='cannot_downgrade_hiking'
+ createInbox(store).acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:scope.goalId,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'请推荐周末徒步路线'}},{userId:scope.userId,deviceId})
+ const t=alongTools({service:new AlongService(store),scopeFor:()=>({userId:scope.userId,allowedGoalId:scope.goalId,triggerEventId:event})},scope.ticketId).find(t=>t.name==='along_chat_reply')!
+ const route=save('route','全程6公里'),access=store.research.save(scope,{title:'第三方路线',url:'https://trip.com/route',purpose:'access',content:'步道正常开放',fetched:true}),weather=save('weather','周末晴天')
+ const rec=plan(route.id,access.id,weather.id);rec.kind='general';rec.options[0]!.checks[1]!.alertEvidence=[]
+ await t.execute(t.schema.parse({text:'候选仍需核实。',recommendation:rec}),new AbortController().signal)
+ const result=(store.syncPage(scope.userId,0,200).items.find(i=>(i.payload as any).recommendation)!.payload as any).recommendation
+ expect(result).toMatchObject({kind:'hiking',status:'partial',options:[{status:'conditional',checks:[{status:'unknown'},{status:'unknown'}]}]})
+})

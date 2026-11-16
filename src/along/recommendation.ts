@@ -23,12 +23,15 @@ export interface Recommendation {
 const primary=(source:ResearchEvidence)=>{const host=new URL(source.url).hostname.toLowerCase();return /(?:^|\.)gov(?:\.(?:cn|hk|mo|uk|au|nz|sg))?$/.test(host)||host==='nmc.cn'||host.endsWith('.nmc.cn')}
 const noActiveAlert=(quote:string)=>/当前(?:暂无|没有|无|未发布).{0,30}(?:预警|警报)|(?:暂无|没有|无).{0,20}(?:生效|有效|正在生效).{0,20}(?:预警|警报)|no\s+(?:active|current)\s+(?:weather\s+)?(?:warnings?|alerts?)/i.test(quote)
 /** Research is an informational action; it is distinct from carrying out the physical activity. */
+export const hikingIntent=(text:string):boolean=>/徒步|登山|爬山|\b(?:hiking|hike|trekking|trails?)\b/i.test(text)
+/** Conservatively distinguish an information task from doing the physical activity. */
 export function isResearchTaskContent(content:string):boolean {
  if(/(?:完成|走完|进行|参加|出发|攀登|去爬|去登).*(?:徒步|路线|登山|公园)|\b(?:complete|finish|go|do)\b.{0,30}\b(?:hike|walk|climb|trail)\b/i.test(content))return false
  return /研究|查询|查天气|比较|(?:安排|规划|决定|挑选|选择|推荐).*(?:徒步|目的地|路线|去哪里)|\bresearch\b|\brecommend\b|\bcheck (?:the )?weather\b|\bplan\b.{0,40}\b(?:route|hike|weekend)\b/i.test(content)
 }
 const normalized=(text:string)=>text.normalize('NFKC').replace(/\s+/g,' ').trim()
 export function recommendation(store:ResearchStore,scope:ResearchScope,input:RecommendationInput,now=Date.now()):Recommendation {
+ const kind=scope.requiredKind??input.kind
  const used=new Map<string,ResearchEvidence>()
  const refs=(items:{sourceId:string;quote:string}[])=>items.map(item=>{
   const source=store.get(scope,item.sourceId)
@@ -60,10 +63,10 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
    let summary=check.summary
    const alertSources=refs(check.alertEvidence??[]);alertSources.forEach(s=>optionSources.add(s.id))
    if(alertSources.some(s=>Date.parse(s.expiresAt)<=now))uncertain=true
-   if(input.kind==='hiking'&&check.kind==='access'&&status==='ok'&&!sources.every(primary)){
+   if(kind==='hiking'&&check.kind==='access'&&status==='ok'&&!sources.every(primary)){
     status='unknown';summary='尚未取得可确认的官方开放与预约依据；第三方资料仅供参考。'
    }
-   if(input.kind==='hiking'&&check.kind==='weather'){
+   if(kind==='hiking'&&check.kind==='weather'){
     const alertClear=check.alertStatus==='clear'&&alertSources.length>0&&alertSources.every((s,index)=>s.fetched&&primary(s)
       &&['alerts','weather'].includes(s.purpose)&&Date.parse(s.expiresAt)>now
       &&(!s.publishedAt||Date.parse(s.publishedAt)>=now-36*3600_000&&Date.parse(s.publishedAt)<=now+300_000)
@@ -77,14 +80,14 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
    return {kind:check.kind,status,summary,sourceIds:[...new Set([...sources,...alertSources].map(s=>s.id))]}
   })
   const risk=checks.some(c=>c.status==='risk')
-  const checked=checks.every(check=>check.status==='ok')&&(input.kind!=='hiking'||['access','weather'].every(kind=>checks.some(c=>c.kind===kind&&c.status==='ok')))
+  const checked=checks.every(check=>check.status==='ok')&&(kind!=='hiking'||['access','weather'].every(kind=>checks.some(c=>c.kind===kind&&c.status==='ok')))
   const status=risk?'excluded' as const:checked&&!uncertain&&optionSources.size>0&&option.unknowns.length===0?'recommended' as const:'conditional' as const
   return {id:option.id,title:option.title,reason:option.reason,status,conditions:option.conditions,unknowns:option.unknowns,facts,checks,sourceIds:[...optionSources]}
  })
  if(used.size>30)throw Error('too many recommendation sources')
  const sources=[...used.values()].map(({id,title,url,retrievedAt,expiresAt,publishedAt})=>({id,title,url,retrievedAt,expiresAt,...(publishedAt?{publishedAt}:{})}))
  const validUntil=sources.length?new Date(Math.min(...sources.map(s=>Date.parse(s.expiresAt)))).toISOString():new Date(now).toISOString()
- return {version:1,kind:input.kind,status:options.some(o=>o.status==='recommended')?'ready':sources.length&&options.some(o=>o.status==='conditional')?'partial':'unavailable',
+ return {version:1,kind,status:options.some(o=>o.status==='recommended')?'ready':sources.length&&options.some(o=>o.status==='conditional')?'partial':'unavailable',
   title:input.title,summary:input.summary,...(input.timeWindow?{timeWindow:input.timeWindow}:{}),constraints:input.constraints,options,sources,
   retrievedAt:new Date(now).toISOString(),validUntil,nextStep:input.nextStep}
 }

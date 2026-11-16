@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS research_request (
 CREATE TABLE IF NOT EXISTS research_reply (
  message_id TEXT PRIMARY KEY REFERENCES message(id), input TEXT NOT NULL, recommendation TEXT, notification TEXT
 );`
-export interface ResearchScope { userId: string; goalId: string; ticketId: string }
+export interface ResearchScope { userId: string; goalId: string; ticketId: string; requiredKind?:'hiking' }
 export type ResearchPurpose = 'weather' | 'alerts' | 'access' | 'route' | 'general'
 export interface ResearchSource {
  id: string; title: string; url: string; retrievedAt: string; expiresAt: string; publishedAt?: string

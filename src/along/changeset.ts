@@ -279,7 +279,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       || task.scheduledAt !== health.due.dueAt) return refuse('conflicted', 'conflicted_revision')
     if (input.ops.some(op => (op.op !== 'task.update' && op.op !== 'task.cancel') || op.task_id !== task.id))
       return refuse('invalid', 'outside_due_task')
-    if(store.health.daily(task.id)&&isResearchTaskContent(task.content)&&input.ops.some(op=>op.op==='task.cancel'||op.op==='task.update'&&(op.fields.status==='done'||op.fields.status==='cancelled')))
+    if(store.health.daily(task.id)&&isResearchTaskContent(task.content))
       return refuse('invalid','recurring_research_remains_open')
   }
   if (health && input.ops.some(op => op.op.startsWith('goal.'))) return refuse('invalid', 'health_goal_mutation')

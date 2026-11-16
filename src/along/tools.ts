@@ -8,7 +8,7 @@
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
 import { isDeepStrictEqual } from 'node:util'
-import { recommendation, RECOMMENDATION_INPUT } from './recommendation.ts'
+import { recommendation, RECOMMENDATION_INPUT, hikingIntent } from './recommendation.ts'
 import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
@@ -87,7 +87,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     const bound=scope()
     if(!bound.allowedGoalId)throw new Error('research requires a bound existing goal')
     if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
-    return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId}
+    const due=host.healthFollowup?.forTicket(ticketId)?.due
+    const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
+    const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
+    const original=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)?.text:undefined
+    return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
   }
   return [
     ...researchTools(store.research,researchScope,host.web??(()=>undefined)),
@@ -246,6 +250,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true })
         if (result.status === 'invalid') {
           const guidance:Record<string,string> = {
+            recurring_research_remains_open:'This host-bound review cannot edit or stop the ongoing research task, its wording, time or recurrence. Make no task ChangeSet; deliver this occurrence with along_health_followup outcome:keep and its recommendation. The host renews the existing cadence. A new explicit user chat handles task changes.',
             reminder_plan_required:'Every new task needs reminder_plan in that op. If the action has a time or deadline, choose the next useful future instant as source:agent, repeat:once with explanation. For a genuine missing window use needs_time with one specific question; explicitly declined or untimed work uses off.',
             task_scoped_repeat_evidence_required:'Use the original cadence clause, a specific action shared with the task, and the actual reminder weekday. If uncertain, arrange the next useful occurrence NOW with repeat:"once", future scheduled_at, and reminder_plan:{state:"scheduled",source:"agent",explanation:"why this one time was chosen"}. Do not retry an unverified recurrence.',
             user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For user source, quote the single original clock + reminder verb + exact task action, and pass that action. If cadence was also rejected, schedule the next occurrence once.',

@@ -1,5 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
-import { recommendation, RECOMMENDATION_INPUT, isResearchTaskContent } from './recommendation.ts'
+import { recommendation, RECOMMENDATION_INPUT, isResearchTaskContent, hikingIntent } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -434,9 +434,10 @@ export class HealthFollowup {
             if (args.outcome === 'ask' && !args.text) throw new Error('ask requires a concrete question')
             const dailyEvidence = args.renew_daily_from_event ?? (d.due && store.health.daily(d.due.taskId)?.evidence)
             if (dailyEvidence) this.renewDaily(d, dailyEvidence, !args.renew_daily_from_event)
-            const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId},args.recommendation):undefined
             const currentTask=d.due?store.getTask(d.userId,d.due.taskId):undefined
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
+            const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
+              ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
             // A completed research result may notify; a completed physical activity must not be revived by a recommendation.
             const completedResearch=currentTask?.status==='done'&&!!originalContent&&isResearchTaskContent(originalContent)
             const recommendationKind=currentTask?.status==='open'?'recommendation_ready':completedResearch?'task_result':undefined
