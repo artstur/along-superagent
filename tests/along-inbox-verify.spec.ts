@@ -9,7 +9,7 @@
  * foreign-task feedback payloads, delivery-lease exclusivity and the one-time failure sync.
  *
  * The case table at the bottom is this review's own two-end static vector set (SD-1/SG-1): the identical
- * `VERIFY_VECTOR_CASES` table runs against the fork zod Schema here and against `web/event-envelope.mjs`
+ * `VERIFY_VECTOR_CASES` table runs against the Along Agent zod Schema here and against `web/event-envelope.mjs`
  * `validateEnvelope` in `along/test/event-queue-verify.test.mjs` — both ends must answer the same verdict.
  */
 import { DatabaseSync } from 'node:sqlite'
@@ -384,7 +384,7 @@ describe('delivery pump edges', () => {
 // ---- 两端静态向量（SD-1/SG-1 的独立复核）：与 along/test/event-queue-verify.test.mjs 同一张表 -----------------------
 
 const id96 = 'a'.repeat(96)
-describe('two-end static vectors (fork side)', () => {
+describe('two-end static vectors (Along Agent side)', () => {
   const base = userMessage({ event_id: 'evt-vecv-0001' })
   const cases: readonly (readonly [string, unknown, boolean])[] = [
     ['最小合法 user_message', base, true],
@@ -421,7 +421,7 @@ describe('two-end static vectors (fork side)', () => {
     ['payload 带多余字段拒绝（strict）', { ...base, event_id: 'evt-vecv-0016',
       payload: { event_type: 'along.user_message', text: 'hello', extra: 1 } }, false],
   ]
-  it('fork zod answers the pinned verdict for every case', () => {
+  it('Along Agent zod answers the pinned verdict for every case', () => {
     for (const [name, envelope, expected] of cases) {
       expect(EventEnvelopeSchema.safeParse(envelope).success, `向量「${name}」判定失败`).toBe(expected)
     }

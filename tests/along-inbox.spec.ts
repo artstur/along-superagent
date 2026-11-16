@@ -11,7 +11,7 @@
  * pump feeds into DSH intake, the server-derived health `adapter` (§2.2.4) and the D15 `authorization.changed`
  * handling (recorded, never delivered, never a failure).
  *
- * The payloadHash vector below is the fork half of the two-end static case vectors (SD-1/SG-1): the same
+ * The payloadHash vector below is the Along Agent half of the two-end static case vectors (SD-1/SG-1): the same
  * vector constants and expected hash are pinned in `along/test/event-queue.test.mjs`; either end changing the
  * protocol must change the vectors first.
  */

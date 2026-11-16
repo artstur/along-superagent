@@ -1,25 +1,25 @@
 # Along 实施与验收
 
-> v0.6，2026-11-15。实施建议与验收条件，不是已执行结果或排期承诺。源码核对基线：本 fork `a07764f`；已执行结果见 [阶段 0 技术验证](004-phase0-validation.md)。
+> 2026-11-16 核对。第 1 节记录当前实现，后续章节定义阶段范围与验收条件，不代表全部已通过。设计起始基线为 `a07764f`；各阶段实际证据见对应实施记录。
 
 ## 1. 现有能力与扩展位置
 
 | 能力 | 现状 | 依据与扩展位置 |
 | --- | --- | --- |
 | Trigger 与来源扩展 | Along Source、配对身份与事件接入已实现；手机真机联调待验 | [Trigger](../../src/core/model.ts)、[SourceKind](../../src/sources/kind.ts)、[阶段 A 集成](005-phase-a-integration.md) |
-| 去重、订阅、评估与路由 | 已有，工作线程语义需适配 | [Intake](../../src/core/intake.ts)、[Engine](../../src/core/engine.ts) |
-| Policy、Mandate 与主动模式 | 复用；默认 `observe`，需新增 Along `auto` 规则 | [授权设计](../002-authorization.md)、[Policy](../../src/policy.ts) |
+| 去重、订阅、评估与路由 | 复用核心机制，Along 聊天路由与绑定已接通 | [Intake](../../src/core/intake.ts)、[Engine](../../src/core/engine.ts) |
+| Policy、Mandate 与主动模式 | 复用；Along 本地部署使用 `auto`，聊天、健康与维护规则已接通；默认核心配置仍为 `observe` | [授权设计](../002-authorization.md)、[Policy](../../src/policy.ts) |
 | Ticket、Assignment、执行与恢复 | 复用 | [执行机制](../003-execution.md)、[DshExecutor](../../src/executor/dsh.ts) |
-| Worker 工具 | 已有 `WORK_TOOLS`，保留并追加 Along 工具 | [Sessions](../../src/app/sessions.ts) |
+| Worker 工具 | 保留 `WORK_TOOLS`，Along 目标、任务与记忆工具已接入；维护工单使用专门工具 | [Sessions](../../src/app/sessions.ts) |
 | Skill 注册 | 已有，不支持按派工固定版本 | `Sessions.bindSkills`、[Prompts](../../src/app/prompts.ts) |
 | 非编程场景启动 | 已支持显式启用 Along、关闭 GitHub 的本地部署 | [Setup](../../src/app/setup.ts)、[Runtime](../../src/app/runtime.ts) |
 | 定时调度 | 记忆维护已通过持久批次与 DSH 工单接通；完整复盘与 Skill 作业待实现 | 见 [定时维护](008-scheduled-maintenance.md) |
 | 业务存储、完整对话、记忆治理 | 阶段 A 基座、记忆治理、Runtime/Worker 工具与定时记忆维护已实现 | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
 | Hy-Memory | 固定版本安装、Runtime 生命周期装配及中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
 | 健康 7 类摘要 | 阶段 C 已接通新协议、前后台可靠队列、逐目标自动派工与跟进；真机后台机会待验收 | [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) |
-| 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，fork `tests/along-phaseB.spec.ts` |
+| 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，Along Agent `tests/along-phaseB.spec.ts` |
 
-Along Host 已有 DSH 上游调用协议，但不能据此推定当前 fork 已实现对应服务，两个仓库的接口要实际联调。[Along 当前技术链路](../../../Along/docs/goal-agent-flow.md)是兼容核对入口。
+Along Host 与 Along Agent 的新协议已接通并有合成数据验证；真实 iPhone 配对、离线重连与后台机会仍须单独验收。[Along 当前技术链路](../../../Along/docs/goal-agent-flow.md)是兼容核对入口。
 
 ## 2. 阶段
 

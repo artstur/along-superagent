@@ -94,7 +94,7 @@ export interface AlongRuntime {
 }
 
 /** Reads the bridge token file, generating a 0600 32-byte hex file on first start (design §4.7). A file with
- * other content fails startup: a wrong token would 401 every Host→fork call. The token never leaves this Mac. */
+ * other content fails startup: a wrong token would 401 every Host→Along Agent call. The token never leaves this Mac. */
 function bridgeTokenOf(file: string): string {
   try {
     const token = readFileSync(file, 'utf8').trim()

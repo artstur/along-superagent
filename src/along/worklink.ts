@@ -4,7 +4,7 @@
  * Business history never depends on a DSH Session surviving — a WorkLink row is written once per ticket
  * from domain events and read by `workScopeForTicket` afterwards (001 §2: 业务 ID 与执行 ID 独立).
  *
- * Subscription (§2.5.1): the fork Engine already emits the full lifecycle (`src/core/tickets.ts` ticket
+ * Subscription (§2.5.1): the Along Agent Engine already emits the full lifecycle (`src/core/tickets.ts` ticket
  * created/resumed/ended, `src/core/assignments.ts` started/ended, `src/core/evals.ts` decision.recorded,
  * `src/core/intake.ts` trigger.received); the host dispatches each event through the orchestrator store's
  * `afterCommit` — `emit` fires inside the Engine transaction, so writing along.sqlite directly would leave

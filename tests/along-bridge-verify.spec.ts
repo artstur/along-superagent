@@ -128,7 +128,7 @@ describe('fail-closed bridge auth covers every route family', () => {
     })
   }
 
-  it('401 fail-closed when the fork itself has no bridge token configured', async () => {
+  it('401 fail-closed when the Along Agent itself has no bridge token configured', async () => {
     const { host } = seededHost({ bridgeToken: undefined })
     for (const path of ['goals/along-status-probe', 'events', 'pairing', 'sync']) {
       const status = (await asA(host, path === 'events' || path === 'pairing' ? 'POST' : 'GET', path,

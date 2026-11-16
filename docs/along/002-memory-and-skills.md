@@ -1,6 +1,6 @@
 # Along 记忆与技能
 
-> v0.6，2026-11-15。拟实现设计。依据见 [决策记录](000-decisions.md) 的 D6、D7、D10、D13、D16、D17。
+> v0.6 目标设计，依据见 [决策记录](000-decisions.md) 的 D6、D7、D10、D13、D16–D18。记忆治理、Runtime 接线与定时记忆维护已实现，见 [实施记录](006-memory-implementation.md) 与 [定时维护](008-scheduled-maintenance.md)；复盘、Skill 发布及回退仍待实现。
 
 ## 1. 三类积累分开保存
 

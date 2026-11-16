@@ -119,7 +119,7 @@ if (locks.length !== 0) console.warn('along-backup: --allow-active：目录复�
 if (!exists(stateDir)) usage(`stateDir 不存在：${stateDir}`);
 if (!exists(alongStateDir)) usage(`alongStateDir 不存在：${alongStateDir}`);
 const businessDb = join(alongStateDir, 'along.sqlite');
-if (!existsSync(businessDb)) usage(`业务库不存在：${businessDb}（先启动一次 Along 本地部署让 fork 建库）`);
+if (!existsSync(businessDb)) usage(`业务库不存在：${businessDb}（先启动一次 Along 本地部署让 Along Agent 建库）`);
 if (existsSync(out)) usage(`备份目录已存在，拒绝覆盖：${out}`);
 
 mkdirSync(out, {recursive: true, mode: 0o700});

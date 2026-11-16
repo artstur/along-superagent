@@ -119,7 +119,7 @@ describe('bridge auth (every /along-source/api route, fail closed)', () => {
     expect((await call(host, 'GET', 'goals/along-status-probe', { token: null })).status).toBe(401)
     expect((await call(host, 'GET', 'goals/along-status-probe', { token: 'b'.repeat(64) })).status).toBe(401)
     expect((await call(host, 'GET', 'goals', { token: null, query: { user_id: USER_A } })).status).toBe(401)
-    // Fail closed when the fork itself has no token configured.
+    // Fail closed when the Along Agent itself has no token configured.
     const unconfigured = seededHost({ hostOverrides: { bridgeToken: undefined }, file: 'unconfigured.sqlite' })
     expect((await asA(unconfigured.host, 'GET', 'goals/along-status-probe')).status).toBe(401)
   })

@@ -1,5 +1,7 @@
 # SETUP
 
+> 本文用于 Along Agent 的 GitHub / 飞书编程部署，保留 `dsh-superagent` 技术标识。Along 手机与本地目标部署从 [README](README.md#本地运行) 进入，无需按本文配置 GitHub 账号。
+
 Instructions for an agent that sets up dsh-superagent with its operator. If you are a person, ask your coding agent to read this file and follow it.
 
 ## How to run the setup

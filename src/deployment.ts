@@ -30,7 +30,7 @@ export const Config = s.object({
   alongMemory: AlongMemoryConfig,
   alongMaintenanceTime: s.string().pattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/).default('03:00')
     .description('Daily Along memory maintenance time in the Mac local timezone (24-hour HH:mm). Saved changes apply on the next pass; overdue and running batches are preserved.').volatile(),
-  alongBridgeTokenFile: absolute('File of the Host↔fork bridge token (32-byte hex, mode 0600, generated on first start); required only for the Along local deployment. Optional.'),
+  alongBridgeTokenFile: absolute('File of the Host↔Along Agent bridge token (32-byte hex, mode 0600, generated on first start); required only for the Along local deployment. Optional.'),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
@@ -40,7 +40,7 @@ export interface Machine {
   admissionContextTimeoutMs: Volatile<number>
   /** Along business database directory (`~/.along/along-data` in the reference layout); set only for the Along local deployment (design §1.3/§4.7, SD-5). */
   alongStateDir?: string
-  /** File of the Host↔fork bridge token; set only for the Along local deployment. */
+  /** File of the Host↔Along Agent bridge token; set only for the Along local deployment. */
   alongBridgeTokenFile?: string
   /** Host-only Python backend paths; absent means explicit SQLite-only degradation. */
   alongMemory?: { python: string; dataDir: string; envFile: string }

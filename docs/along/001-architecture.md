@@ -1,6 +1,6 @@
 # Along 本地 Agent 系统架构
 
-> v0.6，2026-11-15。拟实现架构，不是当前能力说明。决策依据见 [决策记录](000-decisions.md)，记忆与技能见 [记忆与技能](002-memory-and-skills.md)，阶段与验收见 [实施与验收](003-implementation.md)。原型现有实现以 [007 Architecture](../007-architecture.md) 为准。
+> v0.6 目标架构，2026-11-16 核对状态。已实现范围见 [实施与验收](003-implementation.md) 第 1 节；本文仍包含后续设计，不代表全部能力已完成。决策依据见 [决策记录](000-decisions.md)，记忆与技能见 [记忆与技能](002-memory-and-skills.md)，阶段与验收见 [实施与验收](003-implementation.md)。原型现有实现以 [007 Architecture](../007-architecture.md) 为准。
 
 ## 1. 目标与边界
 
@@ -42,7 +42,7 @@ UserTask 不等于 Ticket，Goal 也不等于一个永不结束的 Ticket。业�
 | 进程 | 职责 |
 | --- | --- |
 | Along Host（现有，Node） | 手机入口：配对、接收、查询、同步与输出校验。只调用本机接口，不直接读写业务库 |
-| DSH（fork） | Along Source、Router / Engine、Worker、Along 业务服务和定时批量作业都在这个进程内；业务服务独占 `along.sqlite` |
+| DSH（Along Agent） | Along Source、Router / Engine、Worker、Along 业务服务和定时批量作业都在这个进程内；业务服务独占 `along.sqlite` |
 | Hy-Memory（Python） | 记忆提取与召回，只供本机访问（D6） |
 
 DSH 管理端不暴露给 iPhone。手机只持有配对凭证；模型 Token 和 DSH 管理凭证留在 Mac。进程间接口在阶段 A 确定。

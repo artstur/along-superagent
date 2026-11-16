@@ -1,8 +1,8 @@
 # Along 阶段 A 集成实现记录
 
-> 2026-11-15。集成模块（装配、端到端联测、迁移备份、红线回归）的实现记录。方案唯一来源是 along 仓库 `docs/stage-a-tech-design.md`（§2.7 集成模块）；本文件只记实现落点与联测结果，不重定方案。引用行号以实现时的 fork 工作树为准。
+> 2026-11-15。集成模块（装配、端到端联测、迁移备份、红线回归）的实现记录。方案唯一来源是 along 仓库 `docs/stage-a-tech-design.md`（§2.7 集成模块）；本文件只记实现落点与联测结果，不重定方案。引用行号以实现时的 Along Agent 工作树为准。
 
-## 1. 装配落点（fork `src/app/runtime.ts`）
+## 1. 装配落点（Along Agent `src/app/runtime.ts`）
 
 按方案 §2.7.1 的顺序装配，全部发生在 `Runtime` 构造函数的 try 块内（失败由既有 catch 关库、放锁后重抛）：
 
@@ -19,7 +19,7 @@
 11. **Worker 工具**：`toolHost.along = { service, scopeFor: worklink.workScopeForTicket }`——`executorTools`（`src/app/tools/executor.ts:107-109`）据此注册 5 个 Along 工具；`WORK_TOOLS` 名单已由版本模块扩展（`src/app/sessions.ts:63-65`）。
 12. **停机逆序**（§2.7.1）：`shutdown()` 的 finally 内——停泵（lifetime 已 abort，显式再停一次兜底）→ 关 AlongStore → 关 orchestrator Store → 释放 stateDir 锁 → 释放 alongStateDir 锁（逆获取序）。构造失败路径同样先关 AlongStore、放 Along 锁再重抛。
 
-## 2. 测试夹具与端到端（fork `tests/`）
+## 2. 测试夹具与端到端（Along Agent `tests/`）
 
 - **`tests/fixtures/deployment.ts`**：`testMachine` 增加可选 `alongStateDir`/`alongBridgeTokenFile` 透传（`Machine` 新字段）。
 - **`tests/fixtures/host.ts`**：
@@ -36,32 +36,32 @@
   - BC-07-02 负向：`alongStateDir` 放进 executionRoot 之下 → Runtime 启动即抛。
   - BC-07-03/04 工具侧：`along_changes_commit` 带 `goal_id`（schema 无此字段）→ 工具错误、业务行不变；`goal_id` 指向绑定外目标（沿 changeset 模块单测口径，E2E 覆盖 strict 拒绝路径）。
 
-## 3. 迁移备份（fork `scripts/along-backup.mjs`，BC-09-01/07）
+## 3. 迁移备份（Along Agent `scripts/along-backup.mjs`，BC-09-01/07）
 
-流程照方案 §2.7.4：协调停写检查（`ALONG_EVENT_INGEST` 非 on 且 fork 进程退出时允许备份，否则拒绝并提示先停写）→ 业务库与 orchestrator.sqlite 用 `VACUUM INTO`（一致性快照，SD-10；**不做**热文件复制——BC-09-07）→ DSH stateDir 其余内容归档：`work/` 工单目录、`worker-bin`/`worker-gitconfig`/锁文件等状态文件（会话记录落盘根目录由 harness 装配，脚本按「stateDir 内实测存在即归档、不在则提示人工登记」处理）→ Hy-Memory 目录（`~/.along/memory/`，存在即复制）与配置（profile 配置目录、pairing.json、bridge-token）→ 产出 `manifest.json`（每文件 sha256 + 大小 + 来源）。「Skill 版本」一项显式登记为阶段 A 不适用（无 Skill 版本链；prompt 版本随 orchestrator.sqlite 覆盖）。
+流程照方案 §2.7.4：协调停写检查（`ALONG_EVENT_INGEST` 非 on 且 Along Agent 进程退出时允许备份，否则拒绝并提示先停写）→ 业务库与 orchestrator.sqlite 用 `VACUUM INTO`（一致性快照，SD-10；**不做**热文件复制——BC-09-07）→ DSH stateDir 其余内容归档：`work/` 工单目录、`worker-bin`/`worker-gitconfig`/锁文件等状态文件（会话记录落盘根目录由 harness 装配，脚本按「stateDir 内实测存在即归档、不在则提示人工登记」处理）→ Hy-Memory 目录（`~/.along/memory/`，存在即复制）与配置（profile 配置目录、pairing.json、bridge-token）→ 产出 `manifest.json`（每文件 sha256 + 大小 + 来源）。「Skill 版本」一项显式登记为阶段 A 不适用（无 Skill 版本链；prompt 版本随 orchestrator.sqlite 覆盖）。
 
 联测记录见 §5。
 
 ## 4. along 仓库装配核对
 
-`host/agent-host.mjs`（配对模块已落）：`ALONG_EVENT_INGEST` 开关、新端点 `/events|/sync|/sync/ack`（`/events` 30s 超时）、回执透传（200/400/409）、`identity_in_body` 接口侧拒绝、配对身份幂等注册、桥接凭证随全部回环调用（含情境评估专用 URL）、旧 DSH 分支 on 时 409——与方案 §2.4/§4.2 逐条核对一致（核对记录见 §5）。`host/server.mjs` 是静态开发服务器，手机入口是 agent-host，本轮不改（web 原则上零改动）。启停顺序：Host SIGINT → `server.close` → 进程退出；fork 停机逆序见 §1.12。回退路径（BC-09-03/04）：`ALONG_EVENT_INGEST` 改回 off 即旧链路照旧，fork 业务库与 DSH 状态不清（代码核对：Host 无任何清库/删除路径；fork `shutdown` 只关句柄不删文件）。
+`host/agent-host.mjs`（配对模块已落）：`ALONG_EVENT_INGEST` 开关、新端点 `/events|/sync|/sync/ack`（`/events` 30s 超时）、回执透传（200/400/409）、`identity_in_body` 接口侧拒绝、配对身份幂等注册、桥接凭证随全部回环调用（含情境评估专用 URL）、旧 DSH 分支 on 时 409——与方案 §2.4/§4.2 逐条核对一致（核对记录见 §5）。`host/server.mjs` 是静态开发服务器，手机入口是 agent-host，本轮不改（web 原则上零改动）。启停顺序：Host SIGINT → `server.close` → 进程退出；Along Agent 停机逆序见 §1.12。回退路径（BC-09-03/04）：`ALONG_EVENT_INGEST` 改回 off 即旧链路照旧，Along Agent 业务库与 DSH 状态不清（代码核对：Host 无任何清库/删除路径；Along Agent `shutdown` 只关句柄不删文件）。
 
 ## 5. 联测与红线回归结果
 
-本轮（2026-11-15）实际执行的检查与结果；fork 门禁 `pnpm check`（typecheck + vitest + tsdown build）与 along 门禁 `npm run check` 由工作流统一执行，本模块按分工只跑单个测试文件与联测脚本。
+本轮（2026-11-15）实际执行的检查与结果；Along Agent 门禁 `pnpm check`（typecheck + vitest + tsdown build）与 along 门禁 `npm run check` 由工作流统一执行，本模块按分工只跑单个测试文件与联测脚本。
 
-- **fork 类型检查**：`node node_modules/typescript/bin/tsc --noEmit -p .`（等价 `pnpm typecheck`）→ 无错误（装配、夹具、phaseA 规格全部过编译）。
-- **fork 端到端**：`node node_modules/vitest/vitest.mjs run tests/along-phaseA.spec.ts` → **3 passed**（BC-08-11/BC-08-03/BC-00-05/BC-07-01/BC-07-02/BC-07-03/BC-07-04 主 E2E、隔离负向、凭证探针）。
-- **fork 阶段 0 骨架**：`tests/along-phase0.spec.ts` → **8 passed**（`configuredProbe()` 现在跑真实装配，新增装配存在性与回环探测 200 断言）。
-- **fork 沿模块回归**：`tests/along-{store,inbox,changeset,worklink,runrecord,bridge,store-acceptance}.spec.ts` → **137 passed**；`tests/along-*-verify.spec.ts` 五件 → **91 passed**；`tests/{runtime,http,deployment}.spec.ts` → **100 passed**（夹具改动对既有核心规格零回归）。
+- **Along Agent 类型检查**：`node node_modules/typescript/bin/tsc --noEmit -p .`（等价 `pnpm typecheck`）→ 无错误（装配、夹具、phaseA 规格全部过编译）。
+- **Along Agent 端到端**：`node node_modules/vitest/vitest.mjs run tests/along-phaseA.spec.ts` → **3 passed**（BC-08-11/BC-08-03/BC-00-05/BC-07-01/BC-07-02/BC-07-03/BC-07-04 主 E2E、隔离负向、凭证探针）。
+- **Along Agent 阶段 0 骨架**：`tests/along-phase0.spec.ts` → **8 passed**（`configuredProbe()` 现在跑真实装配，新增装配存在性与回环探测 200 断言）。
+- **Along Agent 沿模块回归**：`tests/along-{store,inbox,changeset,worklink,runrecord,bridge,store-acceptance}.spec.ts` → **137 passed**；`tests/along-*-verify.spec.ts` 五件 → **91 passed**；`tests/{runtime,http,deployment}.spec.ts` → **100 passed**（夹具改动对既有核心规格零回归）。
 - **along 仓库新链路**：`node --test test/along-bridge.test.mjs test/event-queue.test.mjs test/event-queue-verify.test.mjs test/pairing-host-verify.test.mjs` → **36 passed**，含 BC-09-03（off/on 单消费切换）、BC-08-01/02（回执前不删待同步项、同号重试）、BC-07-05（归属拒绝与 404 同码）、真实 Host 装配（配对升级、鉴权门、凭证不出 Mac）；`test/recent-health-context.test.mjs` → **4 passed**。
-- **BC-09-01 备份冒烟**（`/tmp/along-backup-smoke/run-smoke.mjs` 对 `scripts/along-backup.mjs`）：目录锁在 → 退出码 1 并给停写指引；停写后 → 备份完成（5 个文件；along.sqlite/orchestrator.sqlite 的 `VACUUM INTO` 快照可打开，manifest 含每文件 sha256 与表计数 goal=1/message=1，与源一致）；工单目录 `work/`、`worker-bin`、`bridge-token` 均归档；manifest 的 `skill_versions` 显式登记阶段 A 不适用。worker 会话记录落盘根目录在 fork 仓内不可证（§2.7.4），脚本以 `worker_session_records` 说明项 + `--extra-dir` 处理，待运行中 stateDir 实测后登记。
+- **BC-09-01 备份冒烟**（`/tmp/along-backup-smoke/run-smoke.mjs` 对 `scripts/along-backup.mjs`）：目录锁在 → 退出码 1 并给停写指引；停写后 → 备份完成（5 个文件；along.sqlite/orchestrator.sqlite 的 `VACUUM INTO` 快照可打开，manifest 含每文件 sha256 与表计数 goal=1/message=1，与源一致）；工单目录 `work/`、`worker-bin`、`bridge-token` 均归档；manifest 的 `skill_versions` 显式登记阶段 A 不适用。worker 会话记录落盘根目录在 Along Agent 仓内不可证（§2.7.4），脚本以 `worker_session_records` 说明项 + `--extra-dir` 处理，待运行中 stateDir 实测后登记。
 - **BC-09-07 热复制演示**：对持有未提交事务的源库做文件复制，副本读到 1 条 message（源库提交后 2 条）——副本缺已提交数据、不构成一致快照；`VACUUM INTO` 快照计数与备份时刻源库一致 → 热复制不是备份，脚本只走快照，已记录于此。
-- **BC-09-04 回退不清库**：代码核对——along Host 无任何清库/删除路径（`host/agent-host.mjs` 全文无删除端点）；fork `shutdown()` 只关句柄、放锁，不删文件；E2E 重启场景证明停写期间入队的 delivery 在重启后由泵续投、业务行原样可查（tests/along-phaseA.spec.ts ⑧–⑩）。
+- **BC-09-04 回退不清库**：代码核对——along Host 无任何清库/删除路径（`host/agent-host.mjs` 全文无删除端点）；Along Agent `shutdown()` 只关句柄、放锁，不删文件；E2E 重启场景证明停写期间入队的 delivery 在重启后由泵续投、业务行原样可查（tests/along-phaseA.spec.ts ⑧–⑩）。
 
 ## 6. 实现中的修正与备注
 
 1. **runrecord 终结读修正**（跨模块接缝，集成 E2E 发现）：goal-create 路径的工单在派工时尚无 goal，WorkLink 行 `goal_id` 为 NULL；终结时从该 work 的最后一条 applied ChangeSet 反查 goal（`src/along/runrecord.ts` `finalize`），执行说明消息才能挂到目标上——否则 BC-08-11 的「按目标查完整对话」缺出站半边。仅读路径修正，WorkLink 写入仍单 owner（worklink）。
 2. **filteredReason 的类型落点**：`TriggerDisposition.filtered` 是 `Reason` 对象（code+values），泵的 `filteredReason` 用 `reasonText` 格式化成串再落 `delivery.last_error`/终态原因。
 3. **夹具布局备注**：测试把 `alongStateDir` 放在夹具 stateDir 之下（`<tmp>/along-data`）仅为临时目录清理方便——隔离守卫检查的是与 executionRoot（`<stateDir>/work`）的包含关系，phaseA 的负向用例证明放进 `work/` 即拒绝启动；生产路径是 `~/.along/along-data`（SD-5），在 DSH stateDir 之外。
-4. **E2E 未跑真机 HTTPS/配对**（方案 §7.6 已声明）：fork/along 测试全绿 + 回环契约（§4.2）两端按同一文档实现并经测试替身联调；真机联调随阶段 B 接线时执行。
+4. **E2E 未跑真机 HTTPS/配对**（方案 §7.6 已声明）：Along Agent/along 测试全绿 + 回环契约（§4.2）两端按同一文档实现并经测试替身联调；真机联调随阶段 B 接线时执行。

@@ -74,7 +74,7 @@ memory.forget({ userId: boundUserId, goalId: boundGoalId }, memoryId)
 
 ## 4. 实施记录
 
-独立模块第一版已实现，改动仍在工作树，未提交/部署。主实现为 `src/along/memory/`；`AlongStore.memory` 在现有存储句柄上装配，schema 1→2 添加治理表；构建新增 `along-memory` 导出，Python owner 脚本纳入包文件。未修改阶段 A 的 Runtime 装配或手机页面。
+独立模块第一版已纳入仓库（`6abf690`），正式部署另行验收。主实现为 `src/along/memory/`；`AlongStore.memory` 在现有存储句柄上装配，schema 1→2 添加治理表；构建新增 `along-memory` 导出，Python owner 脚本纳入包文件。未修改阶段 A 的 Runtime 装配或手机页面。
 
 ### 4.1 自动验证
 
@@ -129,7 +129,7 @@ node scripts/along-memory-verify.mjs /Users/zwh/.along/verification/phase0-memor
 - 构建产物 `lib/along-memory.js` 的原场景冒烟：批次 `pending`，查询 `degraded: true`，未撤回有效记忆仍为 1 条；`git diff --check` 通过。
 - 独立只读核实固定源码快照：**PASS（本次 P1 范围）**。复跑 4 项新增测试及记忆/传输 35 项测试均通过，并独立确认回退会变红；额外合成场景覆盖提取或清理等待途中再次撤回、本地提交失败、重开库、用户/目标范围隔离、成功删除后不重复清空、撤回不复活且无重复有效版本。未修改原仓源码，未调用真实模型；真实 SDK 长期运行与崩溃恢复仍在 §4.3 的待验收范围。
 
-该轮只修 P1；两项 P2 的后续修复见 §4.5。当前 Runtime 接线见 §5，定时作业仍在阶段 E。改动尚未提交或部署。
+该轮只修 P1；两项 P2 的后续修复见 §4.5。当前 Runtime 接线见 §5，定时记忆维护见 §6。代码已纳入 `6abf690`；正式部署另行验收。
 
 ### 4.5 P2：按撤回范围屏蔽，按到期边界判定当前冲突
 
@@ -146,7 +146,7 @@ node scripts/along-memory-verify.mjs /Users/zwh/.along/verification/phase0-memor
 - 构建产物 `lib/along-memory.js` 冒烟：跨目标同文记忆重建与过期后的新事实两场景均 `ok: true`；源码/测试与固定核实快照一致，`git diff --check` 通过。
 - 独立只读核实固定快照：**PASS（两项 P2 范围）**。独立实跑记忆/传输 43 项、新增筛选 8 项均通过；额外隔离合成检查 6 项覆盖共享来源跨目标撤回、独立证据重建、合法过期 conflict 引用、未过期冲突继续保护，以及关系目标的用户/目标/状态/来源先后校验。独立分别回退也确认 2 项范围测试、3 项过期测试变红。核实未改原工作树或快照，未调用真实模型；全量 `pnpm check` 的通过证据由本轮实施侧提供。
 
-本轮两项 P2 已完成实现、自动验证与独立核实，未改手机页面、Runtime 或 Python SDK。改动尚未提交或部署；真实 SDK 的扩大质量集与长期运行边界仍以 §4.3 为准。
+本轮两项 P2 已完成实现、自动验证与独立核实，未改手机页面、Runtime 或 Python SDK。代码已纳入 `6abf690`，正式部署另行验收；真实 SDK 的扩大质量集与长期运行边界仍以 §4.3 为准。
 
 ## 5. Runtime 接线方案（2026-11-16，按用户反馈修订）
 
@@ -158,7 +158,7 @@ node scripts/along-memory-verify.mjs /Users/zwh/.along/verification/phase0-memor
 - `Runtime.along.memory` 拥有模块；Along Worker 工具使用 WorkLink 动态绑定的用户与目标范围注册查询/撤回，加入 allow-list，沿用严格 schema 和 Harness lossless JSON 输出。聊天语义由 Worker 理解，不增加关键词规则或确认流程。
 - `along_conversation_read` 保留原始对话的时间与顺序，并提供当前有效记忆及带状态的旧版本/候选/冲突/停用上下文。当前明确要求优先；新信息通常比旧信息更能说明当前偏好，但不是机械按时间覆盖所有事实，由模型结合语义理解与更正。旧版本不能伪装成当前有效事实，但无需完全对模型隐藏。
 - 按用户反馈，不引入整段历史截止、通用 DSH 历史封锁或模型请求序列重置。明确“忘记”仍停用对应记忆，并过滤直接被撤回的来源；其他旧聊天继续可读。现有无完整派生来源图的摘要不能承诺精确脱敏，本轮不追求清除模型所有已读上下文。原始手机历史展示与 sync 不改变。
-- 停机先停止投递和执行，等待记忆 owner/batch 关闭，再关业务库并释放锁。批处理入口保留给 E，当前不偷偷增加即时提取、定时器或休眠调度。
+- 停机先停止投递和执行，等待记忆 owner/batch 关闭，再关业务库并释放锁。本次接线不增加即时提取；后续已接入的定时调度见 §6。
 
 验收：真实 Runtime 工具注册与动态范围、跨用户/跨目标拒绝、SDK 未配置或故障的 SQLite 降级、查询与撤回输出 lossless JSON、当前指令/新旧版本的状态与顺序可读、明确忘记仅停用对应记忆和直接来源而保留其他聊天、历史与已有任务保留、重启后仍生效、停机先关闭记忆再关闭库、GitHub profile 不受影响。运行针对性测试和完整 `pnpm check`；真实 SDK/模型冒烟只使用合成中文数据，未执行的真机/长期质量验收保留为待验。
 
@@ -168,7 +168,7 @@ node scripts/along-memory-verify.mjs /Users/zwh/.along/verification/phase0-memor
 
 - Runtime 已装配 `MemoryService`，工具经 WorkLink 动态绑定用户/目标，共用严格 lossless JSON 输出；Python 脚本通过包内路径解析。停机等待记忆模块关闭后再关业务库。
 - `VITEST_MAX_WORKERS=4 pnpm check`：78 个文件、1490 项测试通过，类型检查和构建通过。新增 Runtime 场景覆盖 SDK 故障降级、跨用户/目标隔离、原文与新旧版本可读、明确停用而不截断无关聊天、重启和关闭顺序；配置测试覆盖缺省/完整/缺字段/相对路径。
-- 不新增即时提取或定时器；生产批量提取仍待 E 的统一作业接入。真实 SDK/模型接线结果另行登记，手机部署和长期质量验收不因本轮自动测试通过而完成。
+- 本次 Runtime 接线未新增即时提取或定时器；后续定时批量提取见 §6。真实 SDK/模型接线结果另行登记，手机部署和长期质量验收不因本轮自动测试通过而完成。
 
 ### 5.2 真实链路中的参数反馈
 

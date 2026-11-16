@@ -10,10 +10,11 @@
 - **原因**：先在自己的 Mac 和 iPhone 上验证「有记忆、能跟进、少打扰」，再决定是否面向外部用户。
 - **影响**：不建设公网接入、注册、计费和多租户运维；业务对象仍保留 `user_id` 归属检查。
 
-## D2 基于 DSH Super Agent fork
+## D2 基于 DSH Super Agent 构建 Along Agent
 
-- **决策**：在 `along-superagent` fork 上扩展，复用事件评估、授权、派工、执行与恢复机制。
+- **决策**：在 Along Agent 工程中扩展 DSH Super Agent，复用事件评估、授权、派工、执行与恢复机制。
 - **影响**：扩展优先落在 Source、业务服务、工具和运行装配层，必要时才改核心模型。
+- **命名（2026-11-16）**：Agent 工程统一称为 **Along Agent**，本地目录 `along-superagent`、包名及插件 ID `dsh-superagent`、远端地址保持不变。命名整理的范围、方案及验收见 Along 的 `docs/agent-architecture.md`。
 
 ## D3 全链路自动化：目标与任务校验后自动生效
 

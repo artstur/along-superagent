@@ -1,5 +1,5 @@
 /**
- * The Host↔fork loopback API (design §2.4/§4.2, SD-2): routes under `/along-source/api/*`, registered next to
+ * The Host↔Along Agent loopback API (design §2.4/§4.2, SD-2): routes under `/along-source/api/*`, registered next to
  * `/orchestrator` on the same loopback-only web server. This module owns the contract's enforcement side;
  * `host/along-bridge.mjs` in the `along` repository is the calling side.
  *
