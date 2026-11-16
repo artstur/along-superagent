@@ -213,7 +213,7 @@ export class Runtime extends Service implements SourceHost {
           along?.dispatch(event)
           // Notify the main Session only about domain events it did not initiate itself.
           const basis = 'ticketId' in event.data ? store.tickets.get(event.data.ticketId)?.mandate.basis.via : undefined
-          const maintenanceEvent = basis === 'scheduled' || basis === 'health'
+          const maintenanceEvent = basis === 'scheduled' || basis === 'health' || basis === 'task_due'
           const notice = this.quiet || maintenanceEvent ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
           // A person's message that reached an open ticket is the ticket's; the main Session hears of it in the same transaction,

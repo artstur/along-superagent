@@ -157,14 +157,17 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const summaries = store.latestHealthSummaries(bound.userId)
           .filter(summary => summary.adapter === 'known') // 待适配类型不进模型上下文（001 §4.4）
           .filter(summary => args.type === undefined || summary.type === args.type)
-        host.healthFollowup?.read(ticketId, summaries)
-        return { summaries: summaries.map(summaryView) }
+        const result = host.healthFollowup?.read(ticketId, summaries) ?? { summaries }
+        return { ...result, summaries: result.summaries.map(summaryView) }
       },
     }),
     alongTool({
       name: 'along_chat_reply',
       description: 'Persist the user-facing answer to this work\'s original chat. Read along_conversation_read first. Respond to observations or ask one essential question without creating a goal. After applied changes describe the result. One answer per original event; retries with identical text reuse it. Identity and conversation are host-bound. Superseded inputs return conflicted_input: let the newer work answer.',
-      schema: z.object({ text: z.string().trim().min(1).max(1200) }).strict(),
+      schema: z.object({ text: z.string().trim().min(1).max(1200),
+        notify: z.enum(['recommendation_ready', 'task_result']).optional().describe('Only when delivering the requested recommendation or an actionable execution result in a goal. Omit for an ordinary chat answer, acknowledgement or plan edit.'),
+        task_id: ALONG_ID_SCHEMA.optional().describe('For a result on a specific task, use its verified ID within this goal.')
+      }).strict(),
       execute: async args => store.atomic(() => {
         const bound = scope()
         if (bound.triggerEventId === undefined) throw new Error('no chat is bound to this ticket')
@@ -179,11 +182,17 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           return { status: 'replied', message_id: existing.id, reused: true }
         }
         if (!store.isCurrentChatInput(bound.userId, source.eventId, goalId)) return { status: 'conflicted', reason: 'conflicted_input' }
+        const goal = goalId && store.getGoal(bound.userId, goalId)
+        const task = args.task_id && store.getTask(bound.userId, args.task_id)
+        if (args.notify && (!goal || goal.status !== 'active')) throw new Error('notifications require an active bound goal')
+        if (args.task_id && (!args.notify || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
+        const notification = args.notify && goal ? { event_id: eventId, kind: args.notify,
+          revision: task ? task.currentRevision : goal.currentRevision } : undefined
         const message = store.appendMessage({ userId: bound.userId, eventId, role: 'assistant', direction: 'outbound',
           text: args.text, causationId: root, replyToMessageId: source.id })
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
-        store.appendSync({ userId: bound.userId, kind: 'message', goalId, messageId: message.id,
-          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root } })
+        store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId: args.task_id, messageId: message.id,
+          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}) } })
         return { status: 'replied', message_id: message.id, reused: false }
       }),
     }),
