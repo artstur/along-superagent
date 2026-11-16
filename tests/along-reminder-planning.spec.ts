@@ -88,14 +88,38 @@ it('requires task-linked original words for an exact clock and recurring action,
     ['每天凌晨2点前入睡','入睡','每天凌晨2点前入睡','入睡','2027-01-03T18:00:00Z'],
     ['上午10点提醒我喝水，下午3点提醒我取快递','取快递','上午10点提醒我喝水','取快递',first],
     ['上午10点提醒我喝水和下午3点提醒我取快递','取快递','上午10点提醒我喝水和下午3点提醒我取快递','取快递',first],
+    ['上午10点开会请提醒我提前准备材料','准备材料','上午10点开会请提醒我提前准备材料','准备材料',first],
+    ['原本上午10点提醒我喝水的安排取消','喝水','上午10点提醒我喝水','喝水',first],
+    ['不要上午10点提醒我喝水','喝水','上午10点提醒我喝水','喝水',first],
     ['上午10点开会，请提醒我准备材料','准备材料','上午10点开会，请提醒我准备材料','准备材料',first],
   ] as const) expect(await submit(text,content,quote,action,at)).toMatchObject({status:'invalid'})
+  expect(await submit('上午10点提醒我喝水','喝水','上午10点提醒我喝水','喝水')).toMatchObject({status:'applied'})
   const positive='每周一上午10点提醒我预约周二课程'
   expect(await submit(positive,'预约周二课程',positive,'预约周二课程',first,'weekly')).toMatchObject({status:'applied'})
   expect(await submit(positive,'预约周二课程',positive,'预约周二课程','2027-01-05T02:00:00Z','weekly')).toMatchObject({status:'invalid'})
   expect(await submit(positive,'预约牙医',positive,'预约牙医',first,'weekly')).toMatchObject({status:'invalid'})
   expect(supportsRecurrence('禁止每周一上午提醒我预约周二课程',positive.slice(0,4),'预约周二课程','预约周二课程','weekly',1)).toBe(false)
   expect(nextDailyTime(first,timezone,Date.parse('2027-01-26T05:00:00Z'),first,1)).toBe('2027-02-01T02:00:00.000Z')
+})
+it('binds an overall delegation to each named action and its own day, including the day before class',async()=>{
+  now();const {say,commit,store,goal}=fixture()
+  const booking='每周二和周五上陶艺课，前一天要预约'
+  const daily='每天凌晨2点前要收拾完画具'
+  say('我想'+booking+'。'+daily+'。请帮我安排任务和提醒，具体提醒时刻你来安排。')
+  const create=(content:string,at:string,repeat:string,evidence:string,action:string)=>({
+    op:'task.create',content,scheduled_at:at,repeat,reminder_plan:{...agent,evidence,action}})
+  const monday=create('预约周二陶艺课',first,'weekly',booking,'预约陶艺课')
+  const thursday=create('预约周五陶艺课','2027-01-07T02:00:00Z','weekly',booking,'陶艺课')
+  const cleanup=create('收拾画具','2027-01-03T17:30:00Z','daily',daily,'收拾画具')
+  expect(await commit([{...thursday,scheduled_at:first}])).toMatchObject({status:'invalid'})
+  expect(await commit([{...monday,content:'预约周二牙医'}])).toMatchObject({status:'invalid'})
+  expect(await commit([monday,thursday,cleanup])).toMatchObject({status:'applied'})
+  const tasks=store.goalDetail(user,goal.id).tasks
+  expect(tasks.find(t=>t.content===monday.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'weekly',weekday:1})
+  expect(tasks.find(t=>t.content===thursday.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'weekly',weekday:4})
+  expect(tasks.find(t=>t.content===cleanup.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'daily'})
+  say('我想'+booking+'。这次只提醒一次。')
+  expect(await commit([monday])).toMatchObject({status:'invalid'})
 })
 it.each([
   ['weekly','每周一上午提醒我预约周二课程','预约周二课程','2027-01-04T02:00:00.000Z','2027-01-11T02:00:00.000Z'],

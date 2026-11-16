@@ -219,8 +219,21 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           throw new Error('no goal is bound to this ticket; only a ChangeSet whose first op is goal.create can be committed')
         }
         const ops = ALONG_OPS_SCHEMA.parse(args.ops.map(op => op.op === 'goal.create' && op.domain === 'custom' ? { ...op, metric: null } : op))
-        return host.service.commitChangeSet(
+        const result = host.service.commitChangeSet(
           { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true })
+        if (result.status === 'invalid') {
+          const guidance:Record<string,string> = {
+            reminder_plan_required:'Every new task needs reminder_plan in that op. If the action has a time or deadline, choose the next useful future instant as source:agent, repeat:once with explanation. For a genuine missing window use needs_time with one specific question; explicitly declined or untimed work uses off.',
+            task_scoped_repeat_evidence_required:'Do not keep retrying similar recurrence fields. If you cannot point to a verbatim clause and a shared task action, immediately schedule JUST the next useful occurrence: repeat:"once", scheduled_at:future ISO offset, reminder_plan:{state:"scheduled",source:"agent",explanation:"why this time; only this one occurrence is arranged"}. An explicitly delegated weekly pottery booking may quote "每周二和周五上陶艺课，前一天要预约" with action:"陶艺课" and content:"预约周二陶艺课"/"预约周五陶艺课"; select Monday/Thursday, respectively. Daily cleanup may cite "每天凌晨2点前要收拾完画具" with action:"收拾完画具" and matching content. No new user confirmation required for a safe one-off arrangement.',
+            user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For user source, quote the single original clock + reminder verb + exact task action, and pass that action. If cadence was also rejected, schedule the next occurrence once.',
+            daily_mandate_required:'When daily reminders have not been delegated for this action, schedule the next useful occurrence as source:agent and repeat:once.',
+            weekly_plan_required:'If weekly evidence is incomplete, schedule a concrete next occurrence once, or ask for the essential booking window.',
+            reminder_declined:'The user declined reminders. Keep or update the action with reminder_plan:{state:"off",reason:"opt_out"} and omit scheduled_at.',
+          }
+          const remedy = result.reason && guidance[result.reason]
+          if (remedy) return {...result,guidance:remedy+' Correct the invalid operations and use a fresh idempotency_key.'}
+        }
+        return result
       },
     }),
   ]

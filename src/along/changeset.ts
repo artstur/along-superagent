@@ -323,7 +323,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     if (!plan && scope.requireReminderPlan && (op.op === 'task.create' || userMessage && (changesTiming || fields.content !== undefined)))
       return refuse('invalid','reminder_plan_required')
     if (plan === 'keep') {
-      if (!existing?.reminderPlan || changesTiming) return refuse('invalid','cannot_keep_reminder_plan')
+      const mandate = existing && store.health.daily(existing.id)
+      if (!existing?.reminderPlan || changesTiming || mandate?.action && fields.content && !fields.content.includes(mandate.action)) return refuse('invalid','cannot_keep_reminder_plan')
       if (userMessage && existing.reminderPlan.state==='scheduled' && declinesReminder(userMessage.text,fields.content??existing.content))
         return refuse('invalid','reminder_declined')
       continue
@@ -347,7 +348,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     if (cadence === 'weekly' && (!plan || plan.state!=='scheduled')) return refuse('invalid','weekly_plan_required')
     if (cadence === 'daily') {
       const time = fields.scheduled_at === undefined ? existing?.scheduledAt : fields.scheduled_at
-      if (!time || !userMessage.timezone || !hasDailyMandate(userMessage.text)) return refuse('invalid','daily_mandate_required')
+      if (!time || !userMessage.timezone || (!plan && !hasDailyMandate(userMessage.text))) return refuse('invalid','daily_mandate_required')
       try { new Intl.DateTimeFormat('en', {timeZone:userMessage.timezone}) } catch { return refuse('invalid','invalid_timezone') }
     }
   }
