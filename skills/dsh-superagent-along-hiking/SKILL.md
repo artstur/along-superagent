@@ -1,0 +1,12 @@
+---
+name: dsh-superagent-along-hiking
+description: Plan practical hiking choices from the user's goal and constraints, verifying route access, reservations, current weather and risk with public sources.
+---
+
+Read dsh-superagent-along-research first. This skill guides judgment; it is not a fixed list of destinations. For Guangzhou/Shenzhen or another region, use the actual authorized departure city, trip window, desired effort, route preferences and known previous visits. Do not revive demonstration profiles or synthetic history as user facts. If no exact day is decided but weekend choices are delegated, compare reasonable options and state the conditional departure window instead of blocking on an unnecessary question.
+
+Find a small set of feasible routes and compare them. Verify the operator/park/government's current opening and reservation policy, temporary closure notices and dated weather/warnings for the relevant region and trip dates. Prefer official park and meteorological sources. Search for closures as well as positive descriptions. A marketing description or old trip report cannot establish that a trail is open now. A forecast outside its published date range is unknown. An alert relevant to the planned route/time is a weather risk; don't call severe weather a match just because the route is popular.
+
+For each hiking option include both access and weather checks. Mark a closure/unsafe restriction or dangerous weather as risk, unresolved conditions as unknown, and ok only with exact fetched evidence applying to the route/time. Tell the user why an option fits known constraints, what needs checking before departure, and any unknown distance, elevation gain, duration, booking or transport details. Preserve data gaps; a peak's altitude is not the route ascent. Only include precise route facts with exact evidence from a matching route. Do not claim map navigation, real-time location, transport booking or live calendar access unless those tools actually exist.
+
+Use kind:"hiking" in the structured recommendation. Keep 2–3 comparable options when useful; fewer is fine when evidence narrows the result. Exclude closures and unsafe weather. If no safe option is verifiable, explain that and provide a concrete next step or lower-risk alternative without manufacturing a safe forecast. Retrieval and a card do not mean the user went hiking. Complete the due research work with along_health_followup; the separate actual hiking task remains open until the user reports it done.

@@ -336,7 +336,7 @@ export class Sessions {
       disposers.push(scope.skills.register({ name: `${SKILL_PREFIX}${name}`, description, content, source: 'runtime',
         ...(bundled ? { resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } } : {}) }))
     }
-    for (const bundled of [bundledSkills.alongGoal, bundledSkills.alongTask]) {
+    for (const bundled of [bundledSkills.alongGoal, bundledSkills.alongTask, bundledSkills.alongResearch, bundledSkills.alongHiking]) {
       disposers.push(scope.skills.register({ name: bundled.name, description: bundled.description, content: bundled.content, source: 'runtime',
         resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } }))
     }

@@ -16,6 +16,7 @@ import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import { MemoryStore } from './memory/store.ts'
 import type { ReminderPlan } from './reminder-plan.ts'
+import { ResearchStore } from './research-store.ts'
 import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 
@@ -184,6 +185,7 @@ export class AlongStore {
   readonly memory: MemoryStore
   readonly maintenance: MaintenanceStore
   readonly health: HealthStore
+  readonly research: ResearchStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -199,6 +201,7 @@ export class AlongStore {
       this.memory = new MemoryStore(this.db, work => this.atomic(work))
       this.maintenance = new MaintenanceStore(this.db, work => this.atomic(work))
       this.health = new HealthStore(this.db)
+      this.research = new ResearchStore(this.db)
     } catch (error) {
       this.db.close()
       throw error

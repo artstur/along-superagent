@@ -7,6 +7,9 @@
  *
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
+import { isDeepStrictEqual } from 'node:util'
+import { recommendation, RECOMMENDATION_INPUT } from './recommendation.ts'
+import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
 import { alongTool } from './tool.ts'
@@ -36,6 +39,7 @@ export interface AlongToolsHost {
   /** Runtime-owned memory, optional for standalone business-tool callers. */
   readonly memory?: MemoryService
   readonly healthFollowup?: HealthFollowup
+  readonly web?: () => ResearchWeb | undefined
   /** Reverse lookup of the host-bound scope for a ticket — worklink's `workScopeForTicket` in production (§2.5). */
   readonly scopeFor: (ticketId: string) => CommitScope | undefined
 }
@@ -79,7 +83,14 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if (bound.allowedGoalId !== undefined) return bound.allowedGoalId
     throw new Error('no goal is bound to this ticket; pass goal_id to name the goal to read')
   }
+  const researchScope = () => {
+    const bound=scope()
+    if(!bound.allowedGoalId)throw new Error('research requires a bound existing goal')
+    if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
+    return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId}
+  }
   return [
+    ...researchTools(store.research,researchScope,host.web??(()=>undefined)),
     alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
       schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{
         const bound=scope(),page=store.listGoals(bound.userId,{limit:20,cursor:args.cursor})
@@ -165,6 +176,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
       name: 'along_chat_reply',
       description: 'Persist the user-facing answer to this work\'s original chat. Read along_conversation_read first. Respond to observations or ask one essential question without creating a goal. After applied changes describe the result. One answer per original event; retries with identical text reuse it. Identity and conversation are host-bound. Superseded inputs return conflicted_input: let the newer work answer.',
       schema: z.object({ text: z.string().trim().min(1).max(1200),
+        recommendation: RECOMMENDATION_INPUT.optional().describe('Structured live recommendation. Read the research skill; use only source ids and exact quotes from this ticket’s Along web tools. URLs and times are supplied by the host.'),
         notify: z.enum(['recommendation_ready', 'task_result']).optional().describe('Only when delivering the requested recommendation or an actionable execution result in a goal. Omit for an ordinary chat answer, acknowledgement or plan edit.'),
         task_id: ALONG_ID_SCHEMA.optional().describe('For a result on a specific task, use its verified ID within this goal.')
       }).strict(),
@@ -178,21 +190,24 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const eventId = `reply_${createHash('sha256').update(source.id).digest('hex').slice(0, 40)}`
         const existing = store.getMessage(bound.userId, `msg:${bound.userId}:${eventId}`)
         if (existing) {
-          if (existing.text !== args.text) throw new Error('reply already exists with different text')
+          if (existing.text !== args.text || (store.research.reply(existing.id) ? !isDeepStrictEqual(store.research.reply(existing.id)?.input,args) : args.recommendation!==undefined)) throw new Error('reply already exists with different content')
           return { status: 'replied', message_id: existing.id, reused: true }
         }
         if (!store.isCurrentChatInput(bound.userId, source.eventId, goalId)) return { status: 'conflicted', reason: 'conflicted_input' }
         const goal = goalId && store.getGoal(bound.userId, goalId)
         const task = args.task_id && store.getTask(bound.userId, args.task_id)
         if (args.notify && (!goal || goal.status !== 'active')) throw new Error('notifications require an active bound goal')
-        if (args.task_id && (!args.notify || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
-        const notification = args.notify && goal ? { event_id: eventId, kind: args.notify,
+        if (args.task_id && ((!args.notify&&!args.recommendation) || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
+        const structured = args.recommendation ? recommendation(store.research,researchScope(),args.recommendation) : undefined
+        const notify = structured ? (structured.status==='unavailable'?undefined:'recommendation_ready') : args.notify
+        const notification = notify && goal ? { event_id: eventId, kind: notify,
           revision: task ? task.currentRevision : goal.currentRevision } : undefined
         const message = store.appendMessage({ userId: bound.userId, eventId, role: 'assistant', direction: 'outbound',
           text: args.text, causationId: root, replyToMessageId: source.id })
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
+        store.research.saveReply(message.id,args,structured,notification)
         store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId: args.task_id, messageId: message.id,
-          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}) } })
+          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}), ...(structured ? {recommendation:structured} : {}) } })
         return { status: 'replied', message_id: message.id, reused: false }
       }),
     }),

@@ -59,6 +59,7 @@ import { packagePath } from '../infra/paths.ts'
 import { AlongStore, assertAlongDataIsolation } from '../along/store.ts'
 import { createWorkLink, type WorkLinkModule } from '../along/worklink.ts'
 import { HealthFollowup } from '../along/health.ts'
+import { researchWeb } from '../along/web-research.ts'
 import { AlongMaintenance } from '../along/maintenance.ts'
 
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
@@ -243,7 +244,7 @@ export class Runtime extends Service implements SourceHost {
         // The Along worker tools (design §2.3.6): registered by `executorTools` for the assembled deployment;
         // the scope lookup is the worklink module's host-bound reverse mapping (BC-07-04) — the model cannot
         // specify user, ticket or goal.
-        ...(along ? { healthFollowup: along.healthFollowup, maintenance: along.maintenance, along: { service: along.service, memory: along.memory, healthFollowup: along.healthFollowup, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
+        ...(along ? { healthFollowup: along.healthFollowup, maintenance: along.maintenance, along: { web: () => researchWeb(ctx), service: along.service, memory: along.memory, healthFollowup: along.healthFollowup, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
