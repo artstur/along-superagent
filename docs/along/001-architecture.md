@@ -90,7 +90,7 @@ Inbox 按用户和 `event_id` 去重，同号不同内容返回冲突。业务�
 
 ### 4.4 健康数据范围
 
-首期沿用 [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) 已读取的 7 类与现有口径（D5），窗口与字段见 [ios/README](../../../Along/ios/README.md)。原始样本留在手机，服务端只收汇总。
+首期沿用 [HealthKitReader](https://github.com/artstur/Along/blob/main/ios/AlongHealth/Sources/HealthKitReader.swift) 已读取的 7 类与现有口径（D5），窗口与字段见 [ios/README](https://github.com/artstur/Along/blob/main/ios/README.md)。原始样本留在手机，服务端只收汇总。
 
 | 类型 | 变化语义 | 筛选时怎样比较 |
 | --- | --- | --- |

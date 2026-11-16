@@ -1,4 +1,6 @@
-# dsh-superagent 功能概览
+# GitHub / 飞书编程 Agent 功能概览
+
+> 本文说明保留的编程 Agent 来源，适用于 GitHub / 飞书部署。Along 手机与 Mac 本地链路见[当前 Along 运行图](along/009-current-runtime.md)；全部入口见[文档导航](README.md)。
 
 dsh-superagent 是一个替团队持续接活的编程 Agent。它关注一个 GitHub 仓库，也可以接入飞书，把符合权限和规则的请求变成任务，安排 Agent 执行，再把 PR、答复或需要人决定的问题送回原来的讨论里。
 
