@@ -397,3 +397,12 @@ it('renews only the host-bound event budget on a reused ticket, preserving retry
  const t=tool(reopened)
  expect(()=>t.schema.parse({query:'公开路线资料',purpose:'route',budgetEventId:'invented'})).toThrow()
 })
+it('does not infer overall clear alerts from mixed active warnings or the absence of a single warning category',()=>{
+ const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
+ for(const quote of ['当前无雷暴预警，暴雨预警正在生效','当前无雷暴预警','当前无气象灾害预警信号，但预计有暴雨']){
+  const source=store.research.save(scope,{title:'合成官方气象',url:'https://www.sz.gov.cn/alerts',content:quote,purpose:'alerts',fetched:true,publishedAt:new Date().toISOString()})
+  const input=plan(route.id,access.id,weather.id)
+  input.options[0]!.checks[1]!.alertEvidence=[{sourceId:source.id,quote}]
+  expect(recommendation(store.research,scope,input)).toMatchObject({status:'partial',options:[{status:'conditional',checks:[{status:'ok'},{status:'unknown'}]}]})
+ }
+})

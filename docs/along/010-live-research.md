@@ -51,3 +51,5 @@ message sync payload 可选 `recommendation`：`{version:1,kind:'hiking'|'genera
 投影负例补充：无当前警报、已解除以及假设警报的句子不作为生效警报证据，“没有暴雨”等否定句不作为恶劣天气依据。事实类别同时核对value，不信任model label/purpose；关键检查未通过时，仅保留有已抓取有效route依据的纯路线度量，其余参数归入未知，防止“route/小贴士/无需预约”绕行。
 
 同任务人类反馈预算：旧due ticket被合法resume后，WorkLink已绑定新human事件，回复身份正常；原16预算却按ticket累计导致“发新消息重试”无效。预算现按宿主持久event分桶（既有operation TEXT内编码event/operation），同事件重试与重启仍共用16，新显式消息或新due事件各有16。来源receipt保持原user/goal/ticket范围，仍可复用未过期旧依据，不改Router/Engine、不改任务状态、不新增目标。
+
+无某一类别预警不等于整体无预警；clear 证据若同时含有效警报或恶劣天气正向条款，或仅说明特定类别没有预警，均保留未知，不给出整体无警报结论。

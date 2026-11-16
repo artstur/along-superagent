@@ -93,7 +93,9 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
    if(kind==='hiking'&&check.kind==='weather'){
     const validAlert=(source:ResearchEvidence)=>source.fetched&&primary(source)&&['alerts','weather'].includes(source.purpose)&&Date.parse(source.expiresAt)>now
     const alertClear=check.alertStatus==='clear'&&alertSources.length>0&&alertSources.every((source,index)=>validAlert(source)
-      &&(!source.publishedAt||recentPublication(source,now))&&noActiveAlert(normalized(check.alertEvidence![index]!.quote)))
+      &&(!source.publishedAt||recentPublication(source,now))&&noActiveAlert(normalized(check.alertEvidence![index]!.quote))
+      &&!activeAlert(check.alertEvidence![index]!.quote)&&!severeWeather(check.alertEvidence![index]!.quote)
+      &&!/(?:雷暴|暴雨|台风|雷电|大风|强风|高温|thunderstorm|typhoon|heavy rain|strong wind)/i.test(check.alertEvidence![index]!.quote))
     const alertRisk=check.alertStatus==='risk'&&alertSources.length>0&&alertSources.every((source,index)=>validAlert(source)&&recentPublication(source,now)&&activeAlert(check.alertEvidence![index]!.quote))
     const forecastRisk=check.alertStatus!=='risk'&&check.status==='risk'&&primaryCurrent&&sources.every(source=>recentPublication(source,now))&&check.evidence.some(item=>severeWeather(item.quote))
     if(alertRisk||forecastRisk){status='risk';summary='已核实的气象警报或恶劣天气影响尚未排除，暂不安排该路线。'}
