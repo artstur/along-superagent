@@ -104,8 +104,15 @@ export class HealthStore {
     return this.get(eventId)!
   }
   reminderPlan(taskId:string): ReminderPlan | undefined {
-    const row=this.db.prepare('SELECT plan FROM task_reminder_plan WHERE task_id=?').get(taskId)
-    return row && JSON.parse(String(row.plan)) as ReminderPlan
+    const row = this.db.prepare(`SELECT p.plan, d.timezone, d.wall_time, d.weekday FROM task_reminder_plan p
+      LEFT JOIN task_daily d ON d.task_id=p.task_id WHERE p.task_id=?`).get(taskId)
+    if (!row) return undefined
+    const plan = JSON.parse(String(row.plan)) as ReminderPlan
+    if (plan.state !== 'scheduled' || plan.repeat === 'once') return plan
+    if (row.timezone == null || row.wall_time == null || (plan.weekday ?? null) !== row.weekday) {
+      return { state:'scheduled', source:plan.source, explanation:plan.explanation, repeat:'once' }
+    }
+    return { ...plan, timezone:String(row.timezone), wallTime:String(row.wall_time) }
   }
   savePlan(taskId:string,plan:ReminderPlan | undefined):void {
     if (!plan) { this.db.prepare('DELETE FROM task_reminder_plan WHERE task_id=?').run(taskId); return }

@@ -1,4 +1,5 @@
 import { mkdtempSync,rmSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -91,6 +92,7 @@ it('requires task-linked original words for an exact clock and recurring action,
     ['上午10点开会请提醒我提前准备材料','准备材料','上午10点开会请提醒我提前准备材料','准备材料',first],
     ['原本上午10点提醒我喝水的安排取消','喝水','上午10点提醒我喝水','喝水',first],
     ['不要上午10点提醒我喝水','喝水','上午10点提醒我喝水','喝水',first],
+    ['后天上午10点提醒我喝水','喝水','后天上午10点提醒我喝水','喝水',first],
     ['上午10点开会，请提醒我准备材料','准备材料','上午10点开会，请提醒我准备材料','准备材料',first],
   ] as const) expect(await submit(text,content,quote,action,at)).toMatchObject({status:'invalid'})
   expect(await submit('上午10点提醒我喝水','喝水','上午10点提醒我喝水','喝水')).toMatchObject({status:'applied'})
@@ -115,17 +117,44 @@ it('binds an overall delegation to each named action and its own day, including 
   expect(await commit([{...monday,content:'预约周二牙医'}])).toMatchObject({status:'invalid'})
   expect(await commit([monday,thursday,cleanup])).toMatchObject({status:'applied'})
   const tasks=store.goalDetail(user,goal.id).tasks
-  expect(tasks.find(t=>t.content===monday.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'weekly',weekday:1})
+  expect(tasks.find(t=>t.content===monday.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'weekly',weekday:1,timezone,wallTime:first})
+  const synced=store.workspaceSync(user,0,200).items.find(i=>i.kind==='task_updated')!.payload as {snapshot:{tasks:{content:string,reminderPlan?:unknown}[]}}
+  expect(synced.snapshot.tasks.find(t=>t.content===monday.content)?.reminderPlan).toMatchObject({timezone,wallTime:first})
   expect(tasks.find(t=>t.content===thursday.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'weekly',weekday:4})
   expect(tasks.find(t=>t.content===cleanup.content)?.reminderPlan).toMatchObject({source:'agent',repeat:'daily'})
-  say('我想'+booking+'。这次只提醒一次。')
+  const booked=tasks.find(t=>t.content===monday.content)!
+  say('请将预约的提醒推迟半小时')
+  expect(await commit([{op:'task.update',task_id:booked.id,base_revision:booked.currentRevision,fields:{
+    scheduled_at:'2027-01-04T02:30:00.000Z',reminder_plan:agent}}])).toMatchObject({status:'applied'})
+  expect(store.getTask(user,booked.id)?.reminderPlan).toMatchObject({repeat:'weekly',weekday:1,timezone,wallTime:'2027-01-04T02:30:00.000Z'})
+  expect(store.health.daily(booked.id)?.evidence).toBe('e_1')
+  say('我想'+booking+'。请帮我安排任务和提醒。这次只提醒一次。')
   expect(await commit([monday])).toMatchObject({status:'invalid'})
 })
+it('migrates a schema-5 daily mandate without rewriting the prior task or inventing a reminder source',()=>{
+  now();const dir=mkdtempSync(join(tmpdir(),'along-plan-v5-'));dirs.push(dir)
+  const path=join(dir,'along.sqlite'),original=new AlongStore(path)
+  original.assertUser(user,device)
+  const g=original.insertGoal({userId:user,domain:'custom'})
+  const t=original.insertTask({userId:user,goalId:g.id,content:'旧任务',scheduledAt:first})
+  original.health.setDaily(t.id,{eventId:'original_mandate',zone:timezone,wallTime:first})
+  original.close()
+  const raw=new DatabaseSync(path)
+  raw.exec(`DROP TABLE task_reminder_plan; ALTER TABLE task_daily DROP COLUMN weekday; ALTER TABLE task_daily DROP COLUMN evidence_quote;
+    ALTER TABLE task_daily DROP COLUMN task_action; UPDATE meta SET value='5' WHERE key='schema_version';`)
+  raw.close()
+  const upgraded=new AlongStore(path);stores.push(upgraded)
+  const migrated=upgraded.getTask(user,t.id)!
+  expect(migrated.scheduledAt).toBe(first)
+  expect(migrated.reminderPlan).toBeUndefined()
+  expect(upgraded.health.daily(t.id)).toEqual({evidence:'original_mandate',zone:timezone,wallTime:first})
+})
 it.each([
-  ['weekly','每周一上午提醒我预约周二课程','预约周二课程','2027-01-04T02:00:00.000Z','2027-01-11T02:00:00.000Z'],
-  ['weekly','每周四上午提醒我预约周五课程','预约周五课程','2027-01-07T02:00:00.000Z','2027-01-14T02:00:00.000Z'],
-  ['daily','每天提醒我散步十分钟','散步十分钟','2027-01-04T02:00:00.000Z','2027-01-05T02:00:00.000Z'],
-])('renews the committed %s reminder via the registered due Worker at its delegated local day',async(repeat,quote,action,at,next)=>{
+  ['weekly','每周一上午提醒我预约周二课程','预约周二课程','2027-01-04T02:00:00.000Z','2027-01-11T02:00:00.000Z',timezone,undefined],
+  ['weekly','每周四上午提醒我预约周五课程','预约周五课程','2027-01-07T02:00:00.000Z','2027-01-14T02:00:00.000Z',timezone,undefined],
+  ['daily','每天提醒我散步十分钟','散步十分钟','2027-01-04T02:00:00.000Z','2027-01-05T02:00:00.000Z',timezone,undefined],
+  ['daily','每天提醒我整理画具','整理画具','2027-03-13T07:30:00.000Z','2027-03-14T07:30:00.000Z','America/New_York','2027-03-15T06:30:00.000Z'],
+] as const)('renews the committed %s reminder via the registered due Worker at its delegated local day',async(repeat,quote,action,at,next,zone,following)=>{
   now()
   const h=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...s.settings().policy,sources:{along:{allowed:[{id:user}],admission:{}}}}}))
   try {
@@ -138,7 +167,7 @@ it.each([
     const goal=store.insertGoal({userId:user,domain:'custom'});store.appendGoalRevision({userId:user,goalId:goal.id,title:'合成预约',status:'active'});store.ensureInputVersion(user,goal.id)
     const event='synthetic_week'
     const accepted=along.service.acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:goal.id,
-      occurred_at:new Date().toISOString(),timezone,payload:{event_type:'along.user_message',text:quote}},{userId:user,deviceId:device})
+      occurred_at:new Date().toISOString(),timezone:zone,payload:{event_type:'along.user_message',text:quote}},{userId:user,deviceId:device})
     expect(accepted.status).toBe('accepted')
     const trigger='along:'+user+':'+event
     await vi.waitFor(()=>expect(store.getDelivery(trigger)?.status).toBe('delivered'),{timeout:10000})
@@ -156,8 +185,19 @@ it.each([
     await h.runTool(dw,'along_health_read',{})
     expect(await h.runTool(dw,'along_health_followup',{outcome:'keep',types:[],reason:'保留既有节奏。'})).toMatchObject({status:'recorded'})
     const task=store.goalDetail(user,goal.id).tasks[0]!
-    expect(task).toMatchObject({scheduledAt:next,previousDailyOccurrence:at,reminderPlan:{repeat,...(repeat==='weekly'?{weekday:localWeekday(at,timezone)}:{})}})
+    expect(task).toMatchObject({scheduledAt:next,previousDailyOccurrence:at,reminderPlan:{repeat,timezone:zone,wallTime:at,...(repeat==='weekly'?{weekday:localWeekday(at,zone)}:{})}})
     const notes=store.workspaceSync(user,0,200).items.filter(i=>(i.payload as {notification?:{kind:string}}).notification?.kind==='reminder_due')
     expect(notes).toHaveLength(1)
+    if (following) {
+      await h.runTool(dw,'orchestrator_report',{state:'ready',summary:'下一次已排。'})
+      vi.setSystemTime(Date.parse(next)+1000)
+      await h.runtime.pump();await h.runtime.idle()
+      const id=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due'&&!t.ended)!.id
+      const second='worker-'+id;await vi.waitFor(()=>expect(h.tools.has(second)).toBe(true))
+      await h.runTool(second,'along_health_read',{})
+      await h.runTool(second,'along_health_followup',{outcome:'keep',types:[],reason:'回到原当地钟点。'})
+      const snapshot=store.workspaceSync(user,0,200).items.at(-1)!.payload as {snapshot:{tasks:unknown[]}}
+      expect(snapshot.snapshot.tasks[0]).toMatchObject({scheduledAt:following,reminderPlan:{wallTime:at,timezone:zone}})
+    }
   } finally {await h.stop()}
 },25000)

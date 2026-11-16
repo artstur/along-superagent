@@ -18,7 +18,7 @@
  * test vectors in `tests/along-changeset.spec.ts`. Layout is not part of the ChangeSet protocol (SD-7).
  */
 import { z } from 'zod'
-import { PLAN, declinesReminder, localWeekday, planError, publicPlan, type PlanInput, type Repeat } from './reminder-plan.ts'
+import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, type PlanInput, type Repeat } from './reminder-plan.ts'
 import { hasDailyMandate } from './task-schedule.ts'
 import { randomToken, type AlongStore, type ChangeSetRow, type ChangeSetSave, type GoalRevisionRow, type TaskRow } from './store.ts'
 
@@ -314,20 +314,33 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
   const message = scope.triggerEventId ? store.getMessage(scope.userId, `msg:${scope.userId}:${scope.triggerEventId}`) : undefined
   const userMessage = message?.role === 'user' && message.direction === 'inbound' ? message : undefined
   const reminderNotes: string[] = []
+  type Mandate = NonNullable<ReturnType<AlongStore['health']['daily']>>
+  const retained = new Map<ChangeSetOp,Mandate>()
   for (const op of input.ops) {
     if (op.op !== 'task.create' && op.op !== 'task.update') continue
     const fields = op.op === 'task.create' ? op : op.fields
     const existing = op.op === 'task.update' ? store.getTask(scope.userId,op.task_id) : undefined
     const plan = fields.reminder_plan
     const changesTiming = fields.scheduled_at !== undefined || fields.repeat !== undefined
-    if (!plan && scope.requireReminderPlan && (op.op === 'task.create' || userMessage && (changesTiming || fields.content !== undefined)))
+    const reopening = op.op === 'task.update' && op.fields.status === 'open' && existing?.status !== 'open'
+    if (!plan && scope.requireReminderPlan && (op.op === 'task.create' || reopening || userMessage && (changesTiming || fields.content !== undefined)))
       return refuse('invalid','reminder_plan_required')
     if (plan === 'keep') {
       const mandate = existing && store.health.daily(existing.id)
-      if (!existing?.reminderPlan || changesTiming || mandate?.action && fields.content && !fields.content.includes(mandate.action)) return refuse('invalid','cannot_keep_reminder_plan')
+      if (!existing?.reminderPlan || changesTiming || reopening) return refuse('invalid','cannot_keep_reminder_plan')
+      if (mandate?.action && mandate.quote && fields.content) {
+        const source = store.getMessage(scope.userId, `msg:${scope.userId}:${mandate.evidence}`)
+        if (!source || !supportsRecurrence(source.text,mandate.quote,mandate.action,fields.content,
+          mandate.weekday ? 'weekly' : 'daily',mandate.weekday ?? 1)) return refuse('invalid','cannot_keep_reminder_plan')
+      }
       if (userMessage && existing.reminderPlan.state==='scheduled' && declinesReminder(userMessage.text,fields.content??existing.content))
         return refuse('invalid','reminder_declined')
       continue
+    }
+    if (!userMessage && !plan && existing?.reminderPlan && fields.scheduled_at) {
+      if (existing.reminderPlan.state!=='scheduled') return refuse('invalid','reminder_requires_user_chat')
+      const prior=store.health.daily(existing.id)
+      if (prior?.weekday && localWeekday(fields.scheduled_at,prior.zone)!==prior.weekday) return refuse('invalid','weekly_plan_required')
     }
     if (plan) {
       const content = fields.content ?? existing!.content
@@ -337,7 +350,19 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       if (plan.state !== 'off' && userMessage && (declinesReminder(userMessage.text,content) ||
         existing?.reminderPlan?.state==='off' && existing.reminderPlan.reason==='opt_out'
         && !/提醒|闹钟|通知|remind|alert|notif/i.test(userMessage.text))) return refuse('invalid','reminder_declined')
-      const error = planError(plan,time,repeat,content,userMessage)
+      // Changing the clock on the same action preserves its established scope unless the
+      // new input explicitly limits it to one occurrence. The old user event remains the evidence.
+      const prior = existing && store.health.daily(existing.id)
+      if (plan.state==='scheduled' && prior?.quote && prior.action && userMessage && time && !singleOccurrence(userMessage.text,content,prior.action)
+        && (!fields.repeat || fields.repeat===(prior.weekday?'weekly':'daily'))) {
+        const original = store.getMessage(scope.userId,`msg:${scope.userId}:${prior.evidence}`)
+        if (original && userMessage.timezone===prior.zone && Number.isFinite(Date.parse(time))
+          && (!prior.weekday || localWeekday(time,prior.zone)===prior.weekday)
+          && supportsRecurrence(original.text,prior.quote,prior.action,content,prior.weekday?'weekly':'daily',prior.weekday??1)) {
+          retained.set(op,prior)
+        } else if (!fields.repeat) return refuse('invalid','task_scoped_repeat_evidence_required')
+      }
+      const error = planError(plan,time,retained.has(op)?'once':repeat,content,userMessage)
       if (error) return refuse('invalid',error)
       if (plan.state==='needs_time' && existing?.reminderPlan?.state==='off' && existing.reminderPlan.reason==='opt_out')
         return refuse('invalid','reminder_declined')
@@ -463,19 +488,22 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       }
     }
   }
-  function applyPlan(task:TaskRow, plan:PlanInput, repeat:Repeat, time:string|undefined):void {
+  function applyPlan(task:TaskRow, plan:PlanInput, repeat:Repeat, time:string|undefined, prior?:Mandate):void {
+    if (prior) repeat=prior.weekday?'weekly':'daily'
     const weekday=repeat==='weekly' && time && userMessage?.timezone ? localWeekday(time,userMessage.timezone) : undefined
     const next=publicPlan(plan,repeat,weekday)
     store.health.savePlan(task.id,next)
-    if (plan.state==='scheduled' && repeat!=='once' && userMessage) {
+    if (prior && time) store.health.setDaily(task.id,{...prior,eventId:prior.evidence,wallTime:time})
+    else if (plan.state==='scheduled' && repeat!=='once' && userMessage) {
       store.health.setDaily(task.id,{eventId:userMessage.eventId,zone:userMessage.timezone!,wallTime:time!,
         weekday,quote:plan.evidence,action:plan.action})
     } else store.health.setDaily(task.id)
-    if (JSON.stringify(task.reminderPlan)===JSON.stringify(next) && task.scheduledAt===time) return
+    if (JSON.stringify(task.reminderPlan)===JSON.stringify(store.health.reminderPlan(task.id)) && task.scheduledAt===time) return
     if (plan.state==='needs_time') reminderNotes.push(plan.question)
     if (plan.state==='scheduled' && plan.source==='agent') {
       const local=new Intl.DateTimeFormat('zh-CN',{timeZone:userMessage!.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(time!))
-      reminderNotes.push(`我为「${task.content}」安排了 ${local}（${userMessage!.timezone}）的提醒。${plan.explanation}`)
+      const cadence = repeat==='once' ? '本次仅排这一次。' : repeat==='daily' ? '按当地时间每天提醒。' : `按当地时间每周${'一二三四五六日'[weekday!-1]}提醒。`
+      reminderNotes.push(`我为「${task.content}」安排了 ${local}（${userMessage!.timezone}）的提醒。${cadence}${plan.explanation}`)
     }
   }
   for (const op of input.ops) {
@@ -507,23 +535,24 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       const revision = store.appendTaskRevision({ taskId: op.task_id, userId: scope.userId, content: op.fields.content,
         status: op.fields.status, scheduledAt: inactive ? null : op.fields.scheduled_at, basisChangeset: changesetId, originEventId })
       const task = store.assertTaskOwner(scope.userId, op.task_id), status = task.status
-      if (status !== 'open') {
-        store.health.setDaily(task.id)
-        store.health.savePlan(task.id,undefined)
-      } else if (plan && plan !== 'keep') applyPlan(prior,plan,op.fields.repeat??'once',task.scheduledAt)
-      else if (!task.scheduledAt || op.fields.repeat === 'once') store.health.setDaily(task.id)
-      else if (op.fields.repeat === 'daily' && message) store.health.setDaily(task.id, {
-        eventId: message.eventId, zone: message.timezone!, wallTime: task.scheduledAt })
-      else if (op.fields.scheduled_at) {
-        const previous = store.health.daily(task.id)
-        if (previous) store.health.setDaily(task.id,{...previous,eventId:previous.evidence,wallTime:task.scheduledAt})
+      if (status==='open') {
+        if (plan && plan !== 'keep') applyPlan(prior,plan,op.fields.repeat??'once',task.scheduledAt,retained.get(op))
+        else if (!task.scheduledAt || op.fields.repeat === 'once') store.health.setDaily(task.id)
+        else if (op.fields.repeat === 'daily' && message) store.health.setDaily(task.id, {
+          eventId: message.eventId, zone: message.timezone!, wallTime: task.scheduledAt })
+        else if (op.fields.scheduled_at) {
+          const previous = store.health.daily(task.id)
+          if (previous) store.health.setDaily(task.id,{...previous,eventId:previous.evidence,wallTime:task.scheduledAt})
+        }
+        if (!plan && !userMessage && op.fields.scheduled_at !== undefined && prior.reminderPlan?.state==='scheduled') {
+          if (task.scheduledAt) store.health.savePlan(task.id,{...prior.reminderPlan,source:'agent',explanation:input.reason.slice(0,240)})
+          else store.health.savePlan(task.id,undefined)
+        }
       }
       touchedTasks.push({ task_id: op.task_id, revision, status })
     } else if (op.op === 'task.cancel') {
       const revision = store.appendTaskRevision({ taskId: op.task_id, userId: scope.userId, status: 'cancelled',
         basisChangeset: changesetId, originEventId })
-      store.health.setDaily(op.task_id)
-      store.health.savePlan(op.task_id,undefined)
       touchedTasks.push({ task_id: op.task_id, revision, status: 'cancelled' })
     }
   }

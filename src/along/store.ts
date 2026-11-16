@@ -462,6 +462,10 @@ export class AlongStore {
         input.taskId, revision, input.userId, task.goalId, content, status, scheduledAt, input.basisChangeset, input.originEventId, now)
       this.run('UPDATE user_task SET content = ?, status = ?, scheduled_at = ?, completed_feedback_event_id = ?, current_revision = ?, updated_at = ? WHERE id = ?',
         content, status, scheduledAt, completed, revision, now, input.taskId)
+      if (status !== 'open') {
+        this.health.setDaily(input.taskId)
+        this.health.savePlan(input.taskId,undefined)
+      }
       return revision
     })
   }

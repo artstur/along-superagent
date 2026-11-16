@@ -14,7 +14,7 @@ export const PLAN = z.discriminatedUnion('state', [
 export type PlanInput = z.infer<typeof PLAN>
 export type Repeat = 'once'|'daily'|'weekly'
 export type ReminderPlan = Exclude<PlanInput,{state:'scheduled'}> |
-  {state:'scheduled'; source:'agent'|'user'; explanation:string; repeat:Repeat; weekday?:number}
+  {state:'scheduled'; source:'agent'|'user'; explanation:string; repeat:Repeat; weekday?:number; timezone?:string; wallTime?:string}
 
 export function localWeekday(date: string, zone:string):number {
   const day=new Intl.DateTimeFormat('en-US',{timeZone:zone,weekday:'short'}).format(new Date(date))
@@ -50,8 +50,17 @@ function precedingBookingDay(message: string, quote: string, action: string, con
   }
   return false
 }
+export function singleOccurrence(message: string, content: string, action: string):boolean {
+  const once = /(?:仅|只)(?:需要|要|需)?(?:这次|此次|本次|提醒这次|提醒一次|一次)|一次性|just once|only once|one.off/i
+  return clauses(message).some(clause => {
+    const limit = once.exec(clause)
+    if (!limit) return false
+    const subject = clause.slice(0,limit.index).replace(/^(?:但|但是|不过|这次|本次|此次|这项|这个任务|这些|我|都|请)+/,'').trim()
+    return !subject || content.includes(subject) || clause.includes(action)
+  })
+}
 export function supportsRecurrence(message:string,quote:string,action:string,content:string,repeat:Repeat,weekday:number):boolean {
-  if (!message.includes(quote) || declinesReminder(message,content)) return false
+  if (!message.includes(quote) || declinesReminder(message,content) || singleOccurrence(message,content,action)) return false
   const delegated=delegatesPlan(message)
   if (repeat==='weekly' && delegated && precedingBookingDay(message,quote,action,content,weekday)) return true
   if (!mentionsAction(content,quote,action)) return false
@@ -97,15 +106,31 @@ function clockInQuote(quote:string,time:string,zone:string,action:string):boolea
   }
   return false
 }
+function sameSpecifiedDay(quote:string,action:string,time:string,message:MessageRow):boolean {
+  const zone=message.timezone!
+  const civil=(instant:string)=>new Intl.DateTimeFormat('sv-SE',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(instant))
+  const qualifier=quote.slice(0,quote.indexOf(action))
+  const appointed=civil(time)
+  const date=/\b(\d{4}-\d\d-\d\d)\b/.exec(qualifier)
+  if (date && date[1]!==appointed) return false
+  const relative=/今天|今日|明天|明日|后天|today|tomorrow/i.exec(qualifier)?.[0]
+  if (relative) {
+    const offset=/后天/.test(relative)?2:/明天|明日|tomorrow/i.test(relative)?1:0
+    const day=Date.parse(civil(message.occurredAt??message.receivedAt)+'T00:00:00Z')+offset*86400000
+    if (new Date(day).toISOString().slice(0,10)!==appointed) return false
+  }
+  const selectedDays=weekdays(qualifier)
+  return !selectedDays.length || selectedDays.includes(localWeekday(time,zone))
+}
 export function planError(plan:PlanInput,time:string|null|undefined,repeat:Repeat,content:string,message:MessageRow|undefined):string|undefined {
   if (plan.state!=='scheduled') return time || repeat!=='once' ? 'inactive_plan_has_schedule' : undefined
-  if (!message?.timezone || !time || !/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/i.test(time) ||
+  if (!message?.timezone || !time || !z.iso.datetime({offset:true}).safeParse(time).success ||
     !Number.isFinite(Date.parse(time)) || Date.parse(time)<=Date.now()) return 'future_reminder_and_user_timezone_required'
   try {localWeekday(time,message.timezone)} catch {return 'invalid_timezone'}
   const quote=plan.evidence
   if (plan.source==='user' && (!quote || !message.text.includes(quote) || /[，,。；;!?！？\n]/.test(quote) ||
     !plan.action || !quote.includes(plan.action) || !content.includes(plan.action) || /^(?:提醒|安排|预约|通知|完成|进行)$/.test(plan.action) || !/提醒|叫我|通知|闹钟|remind|alert|notif/i.test(quote) ||
-    /[点时](?:前|之前|以前)|\d[:：]\d\d\s*(?:前|之前|以前)|deadline|due by/i.test(quote) || !clockInQuote(quote,time,message.timezone,plan.action))) return 'user_clock_evidence_required'
+    /[点时](?:前|之前|以前)|\d[:：]\d\d\s*(?:前|之前|以前)|deadline|due by/i.test(quote) || !clockInQuote(quote,time,message.timezone,plan.action) || !sameSpecifiedDay(quote,plan.action,time,message))) return 'user_clock_evidence_required'
   if (repeat!=='once' && (!quote || !plan.action || !supportsRecurrence(message.text,quote,plan.action,content,repeat,localWeekday(time,message.timezone)))) return 'task_scoped_repeat_evidence_required'
   return undefined
 }
@@ -127,6 +152,7 @@ export function declinesReminder(text:string,content:string):boolean {
     const trailing = /(?:的?(?:安排|通知|提醒|闹钟|计划))?(?:已)?(?:取消|停止|关闭|撤销|不需要|不用|不要)了?$/i.exec(after)
     const prefix = negative.exec(before)
     if (!prefix && !trailing) return false
+    if (!trailing && /(?:别|勿|不要)(?:太|过)(?:早|晚)(?:地)?$/.test(before)) return false
     const target = (trailing ? after.slice(0,trailing.index) : after)
       .replace(/^(?:我|本人|有关|关于|去|做|的|这条|这项|这个任务|这件事|了|\s)+/,'').trim()
     const subject = before.replace(/.*(?:取消|关闭|撤销|禁止|停止|不要|不用|别)/,'')
