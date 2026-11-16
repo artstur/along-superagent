@@ -121,3 +121,13 @@ it('honors an explicit preserve-next-instant instruction instead of accepting a 
   expect(()=>assertAlongReport(host,ticketId,'ready')).toThrow('requested_weekly_plan_incomplete')
  }finally{await h.stop()}
 })
+it('does not accept shortening the requested action while persisting otherwise valid weekly metadata',async()=>{
+ const {h,store,task,worker,ticketId,event,goal}=await fixture()
+ try {
+  const read=(await h.runTool(worker,'along_goal_read',{})).goal as any
+  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'weekly_shorten',base_revision:read.current_revision,input_version:read.input_version,reason:'合成缩短行动反例',ops:[{op:'task.update',task_id:task.id,base_revision:1,fields:{content:'查天气',repeat:'weekly',reminder_plan:{state:'scheduled',source:'agent',explanation:'保留既有时刻',evidence:quote,action:'查天气'}}}]})).toMatchObject({status:'applied'})
+  expect(store.getTask(user,task.id)).toMatchObject({status:'open',content:'查天气',reminderPlan:{repeat:'weekly'}})
+  const host={service:{alongStore:store},scopeFor:()=>({userId:user,allowedGoalId:goal.id,triggerEventId:event})}
+  expect(()=>assertAlongReport(host,ticketId,'ready')).toThrow('requested_weekly_plan_incomplete')
+ }finally{await h.stop()}
+})

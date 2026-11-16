@@ -42,7 +42,8 @@ function weeklyCompletion(host:CompletionHost,ticketId:string) {
  const preservedAt=keepNext&&prior.scheduledAt&&Date.parse(prior.scheduledAt)>Date.parse(source.receivedAt)?prior.scheduledAt:undefined
  const plan=task.reminderPlan,mandate=store.health.daily(task.id),at=task.scheduledAt
  const original=mandate&&store.getMessage(bound.userId,`msg:${bound.userId}:${mandate.evidence}`)
- const valid=expected.validTimezone&&task.status==='open'&&plan?.state==='scheduled'&&plan.repeat==='weekly'&&plan.weekday===expected.weekday
+ const valid=expected.validTimezone&&supportsRecurrence(source.text,expected.quote,expected.action,task.content,'weekly',expected.weekday)
+  &&task.status==='open'&&plan?.state==='scheduled'&&plan.repeat==='weekly'&&plan.weekday===expected.weekday
   &&plan.timezone===expected.zone&&mandate?.weekday===expected.weekday&&mandate.zone===expected.zone
   &&!!original&&original.role==='user'&&original.direction==='inbound'&&!!mandate.quote&&!!mandate.action
   &&supportsRecurrence(original.text,mandate.quote,mandate.action,task.content,'weekly',expected.weekday)
