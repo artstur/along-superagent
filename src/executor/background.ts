@@ -14,11 +14,22 @@ interface Jobs {
   readonly events: { subscribe(filter: { owner: string }, listener: (event: { type: string }) => void): () => void }
 }
 /** What the Executor uses of DSH's subagents: joining a worker's subagents that work, its subagents, and releasing them. */
-interface Subagents {
+interface LegacySubagents {
   waitForChildren(parent: Agent): Promise<boolean>
   listChildren(parentSessionId: string): Promise<readonly { id: string }[]>
   drainChildren(parent: Agent, childIds: readonly string[]): Promise<void>
 }
+/** DSH 0.2.2 moved discovery and joining to the whole tree. Its drain is terminal, not an Assignment stop. */
+interface TreeSubagents {
+  waitForTreeWork(root: Agent): Promise<boolean>
+  listDescendants(rootSessionId: string): Promise<readonly { kind: 'child' | 'diagnostic'; id: string; activity?: string; mode?: string }[]>
+  interrupt(childId: string, authority: { kind: 'ancestor'; agent: Agent }): void
+}
+type Subagents = LegacySubagents | TreeSubagents
+const treeApi = (service: Subagents): service is TreeSubagents =>
+  'waitForTreeWork' in service && typeof service.waitForTreeWork === 'function'
+  && 'listDescendants' in service && typeof service.listDescendants === 'function'
+  && 'interrupt' in service && typeof service.interrupt === 'function'
 /** How long a stop waits for a killed job to end, collecting its end so the worker is not woken to hear of it. */
 const KILL_WAIT_MS = 10_000
 /** How long a release of subagents may take; it can hold up a shutdown, so DSH's own callers bound it too. */
@@ -49,7 +60,8 @@ const joins = new WeakMap<Agent, Promise<boolean>>()
 function childrenEnd(subagents: Subagents, agent: Agent): Promise<boolean> {
   let join = joins.get(agent)
   if (!join) {
-    join = subagents.waitForChildren(agent).finally(() => { joins.delete(agent) })
+    join = (treeApi(subagents) ? subagents.waitForTreeWork(agent) : subagents.waitForChildren(agent))
+      .finally(() => { joins.delete(agent) })
     joins.set(agent, join)
   }
   return join
@@ -141,6 +153,7 @@ export async function collectJob(ctx: Context, sessionId: string, job: { id: str
 export async function stopSubagents(ctx: Context, agent: Agent, keepInbox = false): Promise<void> {
   const subagents = subagentsOf(ctx)
   if (!subagents) return
+  if (treeApi(subagents)) return stopTreeWork(ctx, subagents, agent, keepInbox)
   // The catalog lists every subagent the Session had; one that ended has no agent.
   const live = (await subagents.listChildren(agent.id)).map(child => child.id).filter(id => ctx.agents.get(id as SessionId))
   if (!live.length) return
@@ -149,6 +162,44 @@ export async function stopSubagents(ctx: Context, agent: Agent, keepInbox = fals
     if (agent.status !== 'idle') cancelled.add(agent)
     agent.cancel({ kind: 'user' }, { keepInbox })
     await until(agent.whenIdle(), undefined, DRAIN_LIMIT_MS)
+  }
+}
+
+/** Interrupt only this worker's descendants; leave the reusable root's admission open for later Assignments. */
+async function stopTreeWork(ctx: Context, subagents: TreeSubagents, agent: Agent, keepInbox: boolean): Promise<void> {
+  const descendants = await subagents.listDescendants(agent.id)
+  if (descendants.some(child => child.kind === 'diagnostic')) throw new Error('Cannot verify the worker subagent tree for cleanup')
+  const live = descendants.filter(child => child.kind === 'child'
+    && (child.mode === 'external' || child.activity === 'running' || ctx.agents.get(child.id as SessionId)))
+  if (!live.length) return
+  const failures: unknown[] = []
+  const idle: Promise<void>[] = []
+  let interrupted = live.some(child => child.activity === 'running' || ctx.agents.get(child.id as SessionId))
+  // Join before interrupts: external activations have no Session and their catalog activity is always inactive.
+  const joined = subagents.waitForTreeWork(agent)
+  void joined.catch(() => {})
+  try {
+    for (const child of live) try {
+      // The service rechecks exact live ancestry. Never use the broader trusted-user authority here.
+      subagents.interrupt(child.id, { kind: 'ancestor', agent })
+      const local = ctx.agents.get(child.id as SessionId)
+      if (local) {
+        // 0.2.2 interrupt preserves parked FIFO input. An ended Assignment must not leave it runnable.
+        local.cancel({ kind: 'parent' }, { keepInbox: false })
+        idle.push(local.whenIdle())
+      }
+    } catch (error) { failures.push(error) }
+    const stopped = await until(Promise.all([...idle, joined]), undefined, DRAIN_LIMIT_MS)
+    if (stopped === false) failures.push(new Error('Worker subagent cleanup timed out'))
+    else interrupted ||= stopped.at(-1) === true
+    if (failures.length) throw new AggregateError(failures, `Stopping the subagent tree of ${agent.id} failed`)
+  } finally {
+    // Child settlement can wake its parent. Match the legacy stop without dropping the next Assignment's inbox.
+    if (interrupted || failures.length) {
+      if (agent.status !== 'idle') cancelled.add(agent)
+      agent.cancel({ kind: 'user' }, { keepInbox })
+      await until(agent.whenIdle(), undefined, DRAIN_LIMIT_MS)
+    }
   }
 }
 
