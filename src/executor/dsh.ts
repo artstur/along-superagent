@@ -452,7 +452,9 @@ export class DshExecutor implements Executor {
     const later = ticket.assignments.length > 1
     const told = later && await this.host.sessions.holds(sessionId, first)
     if (!current()) return
-    const retried = ticket.assignments.at(-2)?.endedReason === 'retried' ? { note: RETRIED } : {}
+    const retried = ticket.assignments.at(-2)?.endedReason === 'retried' ? {
+      note: ticket.mandate.basis.via === 'scheduled' ? 'Scheduled maintenance retry after backoff. Continue the host-bound batch from its durable checkpoint.' : RETRIED,
+    } : {}
     const assignmentText = ticket.execution?.assignment ?? ''
     const { text: brief, chars, read } = capped(assignmentText, ASSIGNMENT_CHARS, `ticket/${ticket.id}/assignment`)
     const card = told || !source ? undefined : await this.triggerCard(ticket, source.id)

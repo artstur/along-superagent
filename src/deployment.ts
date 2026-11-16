@@ -11,6 +11,12 @@ import { SetupError } from './setup.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
+const AlongMemoryConfig: s<{ python: string; dataDir: string; envFile: string } | null> = s.union([s.const(null), s.object({
+    python: absolute('Python executable with hy-memory 2.0.16 installed.').required(),
+    dataDir: absolute('Private Hy-Memory projection directory, outside the worker root.').required(),
+    envFile: absolute('Private 0600 memory provider env file; credential values are never plugin configuration.').required(),
+  })]).default(null).description('Optional host-only memory backend. Without it, Along still governs memory locally and reports SQLite fallback.')
+
 /** Plugin configuration of the dsh-superagent entry. Volatile fields apply without a restart because dsh-superagent reads them on each use; changing `stateDir` remounts the plugin. */
 export const Config = s.object({
   stateDir: absolute('Directory for the database, locks, worker shims, the agent\'s git configuration and, by default, the ticket directories.').required(),
@@ -20,6 +26,11 @@ export const Config = s.object({
     .description('Pages of thread context one assessment may read.').volatile(),
   admissionContextTimeoutMs: s.number().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).step(1)
     .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
+  alongStateDir: absolute('Directory of the Along business database and its bridge token; required only when the Along local deployment is configured (the Along Source enabled and GitHub explicitly disabled), and never read for a GitHub profile. Optional.'),
+  alongMemory: AlongMemoryConfig,
+  alongMaintenanceTime: s.string().pattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/).default('03:00')
+    .description('Daily Along memory maintenance time in the Mac local timezone (24-hour HH:mm). Saved changes apply on the next pass; overdue and running batches are preserved.').volatile(),
+  alongBridgeTokenFile: absolute('File of the Host↔Along Agent bridge token (32-byte hex, mode 0600, generated on first start); required only for the Along local deployment. Optional.'),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
@@ -27,6 +38,14 @@ export interface Machine {
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
+  /** Along business database directory (`~/.along/along-data` in the reference layout); set only for the Along local deployment (design §1.3/§4.7, SD-5). */
+  alongStateDir?: string
+  /** File of the Host↔Along Agent bridge token; set only for the Along local deployment. */
+  alongBridgeTokenFile?: string
+  /** Host-only Python backend paths; absent means explicit SQLite-only degradation. */
+  alongMemory?: { python: string; dataDir: string; envFile: string }
+  /** Local HH:mm; read at each pass so the DSH plugin configuration can update it live. */
+  alongMaintenanceTime?: Volatile<string>
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
@@ -38,8 +57,12 @@ const MOVED: Record<string, string> = {
 export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }
+  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, alongStateDir, alongBridgeTokenFile, alongMemory, alongMaintenanceTime } = config
+  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, alongMaintenanceTime,
+    // Optional Along keys (design §4.7): read only when the local deployment assembles; `undefined` for a GitHub profile.
+    ...(alongStateDir !== undefined ? { alongStateDir } : {}),
+    ...(alongBridgeTokenFile !== undefined ? { alongBridgeTokenFile } : {}),
+    ...(alongMemory != null ? { alongMemory } : {}) }
 }
 
 export const GithubAccountsSchema = z.object({
@@ -51,9 +74,18 @@ export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
 export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
 
 export interface Deployment extends Machine {
+  repository?: string
+  github?: { cli: string; login: string; noreply: string }
+  feishu?: FeishuBot
+}
+export interface GithubDeployment extends Deployment {
   repository: string
   github: { cli: string; login: string; noreply: string }
-  feishu?: FeishuBot
+}
+/** Require a configured GitHub capability at a GitHub-only boundary. */
+export function requireGithub(deployment: Deployment): GithubDeployment {
+  if (!deployment.repository || !deployment.github) throw new Error('The GitHub Source has no configured repository or agent account')
+  return deployment as GithubDeployment
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
 
@@ -84,7 +116,7 @@ function parsed<T>(schema: z.ZodType<T>, text: string): T | undefined {
   return result.success ? result.data : undefined
 }
 /** Verify the agent's GitHub CLI identity and push access to the configured repository. */
-export async function resolveDeployment(machine: Machine, github: unknown, probe: Probe, path = process.env.PATH ?? ''): Promise<Deployment> {
+export async function resolveDeployment(machine: Machine, github: unknown, probe: Probe, path = process.env.PATH ?? ''): Promise<GithubDeployment> {
   const { stateDir } = machine
   const accounts = GithubAccountsSchema.parse(github ?? {})
   const remote = accounts.repository

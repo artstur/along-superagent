@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
-import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
+import { UserError, followupOwners, key, reasonText, liveTicket, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
   from '../../core/index.ts'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
 import { AssessmentSchema, EvalReadSchema, WorktreeNameSchema, type MasterAssessor } from '../assessment.ts'
@@ -91,6 +91,16 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
   // A stop of it for another ticket is the Engine's to judge.
   const earlier = decided.get(item.trigger_id)
   if (earlier && item.kind === 'ignore') return { refused: `Decided in this call with ${earlier}, whose Decision took its batch` }
+  const settings = host.store.settings()
+  const trigger = host.store.triggers.get(item.trigger_id)
+  const localAlong = settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
+  const allowedChat = trigger?.source === 'along' && trigger.human && trigger.meta.event_type === 'along.user_message'
+    && trigger.actor?.source === 'along' && settings.policy.sources.along?.allowed.some(user => user.id === trigger.actor!.id)
+  const needsConversation = localAlong && allowedChat && host.store.triggers.disposition(item.trigger_id)?.decisionId === undefined
+  const stopTarget = item.kind === 'stop' ? host.store.tickets.get(item.ticket_id!) : undefined
+  if (needsConversation && (item.kind === 'ignore' || item.kind === 'stop' && (!stopTarget || !liveTicket(stopTarget)))) {
+    return { refused: 'Along user chat needs conversational work, even an observation. Accept or attach it; stop only a live Ticket. The Worker decides whether to create a goal and stores a reply with along_chat_reply.' }
+  }
   switch (item.kind) {
     case 'accept': {
       const before = host.store.triggers.disposition(item.trigger_id)?.decisionId

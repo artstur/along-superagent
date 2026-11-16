@@ -18,10 +18,12 @@ export type DeploymentForm = ConfigPageForm | undefined
 type Op = Parameters<ConfigPageForm['mutate']>[0][number]
 
 const MACHINE_LIMITS = ['promptMaxChars', 'admissionContextMaxPages', 'admissionContextTimeoutMs'] as const
-type Limits = Record<typeof MACHINE_LIMITS[number], string>
+const MACHINE_FIELDS = [...MACHINE_LIMITS, 'alongMaintenanceTime'] as const
+type Limits = Record<typeof MACHINE_FIELDS[number], string>
 const text = (value: unknown): string => typeof value === 'string' || typeof value === 'number' ? String(value) : ''
 const limitsOf = (values: object | undefined): Limits =>
-  Object.fromEntries(MACHINE_LIMITS.map(key => [key, text((values as Record<string, unknown> | undefined)?.[key])])) as Limits
+  Object.fromEntries(MACHINE_FIELDS.map(key => [key, text((values as Record<string, unknown> | undefined)?.[key]
+    ?? (key === 'alongMaintenanceTime' ? '03:00' : ''))])) as Limits
 
 export function usePageForm(form: ConfigForm<Record<string, unknown>> | undefined): DeploymentForm {
   const subscribe = useCallback((listener: () => void) => form ? form.subscribe(listener) : () => {}, [form])
@@ -34,12 +36,14 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
   const { t, notify } = usePanel()
   const snapshot = form?.state
   const editable = snapshot?.status === 'ready' && snapshot.writable
+  const showMaintenance = setup.machine.alongMaintenanceTime !== undefined
   // Pass `revision` only while DSH serves writable values so a draft started before `ready` rebases once writable.
   const draft = useDraft({ saved: limitsOf(editable ? snapshot.value : setup.machine), revision: editable ? snapshot.revision : undefined,
     reload: async () => {},
     save: async (value, revision, base) => {
-      const ops: Op[] = MACHINE_LIMITS.filter(key => value[key].trim() !== base[key].trim())
-        .map(key => value[key].trim() ? { op: 'set', path: [key], value: Number(value[key]) } : { op: 'unset', path: [key] })
+      const ops: Op[] = MACHINE_FIELDS.filter(key => (key !== 'alongMaintenanceTime' || showMaintenance) && value[key].trim() !== base[key].trim())
+        .map(key => value[key].trim() ? { op: 'set', path: [key],
+          value: key === 'alongMaintenanceTime' ? value[key].trim() : Number(value[key]) } : { op: 'unset', path: [key] })
       if (!form || !await form.mutate(ops, revision)) throw new Error(t('deploymentRefused'))
       notify(t('saved'))
       return { revision: revision + 1, restarting: false }
@@ -72,6 +76,10 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
           <span className="dt-field-head">{t('deploymentStateDir')}<InfoTip text={t('deploymentStateDirHint')} /></span>
           <span className="dt-mono">{setup.machine.stateDir}</span>
         </div>
+        {showMaintenance && <Field label={t('deploymentMaintenanceTime')} hint={t('deploymentMaintenanceTimeHint')}>
+          <Input type="time" step={60} required value={draft.value.alongMaintenanceTime} disabled={!editable}
+            onChange={event => draft.edit({ ...draft.value, alongMaintenanceTime: event.target.value })} />
+        </Field>}
       </Section>
       <Section title={t('deploymentLimits')} hint={t('deploymentLimitsHint')}>
         {limit('promptMaxChars', t('deploymentPromptMaxChars'))}

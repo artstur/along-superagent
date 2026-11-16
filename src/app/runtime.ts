@@ -10,15 +10,17 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { lockSync } from 'proper-lockfile'
 import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+import type { DomainEvent } from '../core/ports.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
 import type { Deployment, Machine } from '../deployment.ts'
-import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
+import { environmentOf, executionRoot, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem } from '../setup.ts'
 import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../executor/dsh.ts'
 import { ticketCard } from './cards.ts'
@@ -46,10 +48,65 @@ import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
+import { registerAlongSource, type AlongApiHost } from '../along/api.ts'
+import { startDeliveryPump } from '../along/delivery.ts'
+import { createChangeSetModule } from '../along/changeset.ts'
+import { createInbox } from '../along/inbox.ts'
+import { createRunRecord, type RunRecordModule } from '../along/runrecord.ts'
+import { AlongService } from '../along/service.ts'
+import { createAlongMemory, MemoryService } from '../along/memory/index.ts'
+import { packagePath } from '../infra/paths.ts'
+import { AlongStore, assertAlongDataIsolation } from '../along/store.ts'
+import { createWorkLink, type WorkLinkModule } from '../along/worklink.ts'
+import { HealthFollowup } from '../along/health.ts'
+import { AlongMaintenance } from '../along/maintenance.ts'
 
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
 const now = (): string => new Date().toISOString()
+
+/**
+ * The Along local-deployment assembly (design §2.7.1, stage-a-tech-design.md): one per Runtime, present only
+ * when the settings configure the Along local deployment (Along Source enabled and GitHub explicitly
+ * disabled, `setup.ts` `localDeployment`). Owns the business database handle and its directory lock, the
+ * business facade, the mapping/record modules, the bridge token of the loopback API and the delivery pump.
+ */
+export interface AlongRuntime {
+  /** The business facade the loopback API and the Along worker tools call. */
+  readonly service: AlongService
+  /** Host-owned governance, backend lifecycle and batch entry for stage E. */
+  readonly memory: MemoryService
+  readonly maintenance: AlongMaintenance
+  readonly healthFollowup: HealthFollowup
+  /** The worklink module: domain events → WorkLink rows, and the host-bound commit scope lookup. */
+  readonly worklink: WorkLinkModule
+  /** The record module: Worker ends → RunRecord rows and the outbound execution note (never a model call). */
+  readonly runrecord: RunRecordModule
+  /** The bridge token the loopback API expects (generated on first start); exists only in this process. */
+  readonly bridgeToken: string
+  /** The business data directory this assembly locked and opened (`alongStateDir`). */
+  readonly stateDir: string
+  /** Committed domain events → the mapping/record modules through the orchestrator store's `afterCommit`
+   * (§2.7.2): a rolled-back Engine transaction leaves no row, a committed one always lands. */
+  dispatch(event: DomainEvent): void
+  /** Stops the delivery pump; `stop()` runs it before closing the business database (§2.7.1 停机逆序). */
+  stopDeliveryPump(): void
+}
+
+/** Reads the bridge token file, generating a 0600 32-byte hex file on first start (design §4.7). A file with
+ * other content fails startup: a wrong token would 401 every Host→Along Agent call. The token never leaves this Mac. */
+function bridgeTokenOf(file: string): string {
+  try {
+    const token = readFileSync(file, 'utf8').trim()
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error(`The Along bridge token file (${file}) does not hold a 32-byte hex token; restore it or delete the file to regenerate`)
+    return token
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error
+    const token = randomBytes(32).toString('hex')
+    writeFileSync(file, `${token}\n`, { mode: 0o600 })
+    return token
+  }
+}
 
 /**
  * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
@@ -82,6 +139,11 @@ export class Runtime extends Service implements SourceHost {
   private stopping?: Promise<void>
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
+  /** The Along local-deployment assembly; `undefined` unless the settings configure one (design §2.7.1). */
+  readonly along?: AlongRuntime
+  private alongStore?: AlongStore
+  private alongRelease?: () => void
+  private alongPumpStop?: () => void
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
   constructor(ctx: Context, readonly machine: Machine, restart: () => void) {
@@ -96,6 +158,14 @@ export class Runtime extends Service implements SourceHost {
     try {
       const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
+      // Along local deployment (design §2.7.1): assembled from the seeded settings before the Engine exists, so
+      // domain-event dispatch, the loopback API and the worker tools all see it. A failure closes the business
+      // store and releases its directory lock in the catch below, next to the orchestrator ones.
+      const along = this.along = this.assembleAlong()
+      const policyFor: typeof settingsPolicy = (settings, scope) => {
+        const base = settingsPolicy(settings, scope)
+        return along ? along.healthFollowup.policy(along.maintenance.policy(base, settings), settings) : base
+      }
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
@@ -123,7 +193,7 @@ export class Runtime extends Service implements SourceHost {
         closing: () => this.closing(), environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
-      this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
+      this.settings = new Settings({ store, sources, policyFor, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
@@ -133,11 +203,18 @@ export class Runtime extends Service implements SourceHost {
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
       const { assessor, executor } = this
-      const policy = () => settingsPolicy(store.settings(), sources)
-      const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
+      const policy = () => policyFor(store.settings(), sources)
+      const engine = this.engine = new Engine({ repo: store, scope: sources, policy,
+        assessor: { request: candidate => { if (!along?.maintenance.assess(candidate) && !along?.healthFollowup.assess(candidate)) assessor.request(candidate) },
+          release: id => assessor.release(id) }, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          // Along domain-event dispatch first (design §2.7.2): through the orchestrator store's afterCommit so a
+          // rolled-back Engine transaction leaves no business row; the notice logic below ignores the ordering.
+          along?.dispatch(event)
           // Notify the main Session only about domain events it did not initiate itself.
-          const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
+          const basis = 'ticketId' in event.data ? store.tickets.get(event.data.ticketId)?.mandate.basis.via : undefined
+          const maintenanceEvent = basis === 'scheduled' || basis === 'health'
+          const notice = this.quiet || maintenanceEvent ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
           // A person's message that reached an open ticket is the ticket's; the main Session hears of it in the same transaction,
           // and of one for an ended ticket once it resumes, unless it routed the message there itself.
@@ -146,14 +223,14 @@ export class Runtime extends Service implements SourceHost {
           if (followup) sessions.relay(followup.id, followup.text)
           // Notify the ticket's conversations whenever it ends via a pull request.
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
-          if (ended && setup.configured()) {
+          if (ended && setup.configured() && setup.deployment.repository) {
             const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
             for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
           }
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
-      const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }
+      const evaluateDue = () => { along?.maintenance.tick(); along?.healthFollowup.tick(); engine.evaluateDue(); evals.set(evalsHealth(store)) }
       const passes = this.passes = new Passes({ engine: { receive: trigger => engine.receive(trigger), evaluateDue }, effects,
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
@@ -162,11 +239,20 @@ export class Runtime extends Service implements SourceHost {
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
-        quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
+        quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } },
+        // The Along worker tools (design §2.3.6): registered by `executorTools` for the assembled deployment;
+        // the scope lookup is the worklink module's host-bound reverse mapping (BC-07-04) — the model cannot
+        // specify user, ticket or goal.
+        ...(along ? { healthFollowup: along.healthFollowup, maintenance: along.maintenance, along: { service: along.service, memory: along.memory, healthFollowup: along.healthFollowup, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
       try { opened?.close() } finally { release() }
+      // The Along assembly may have failed partway (or a later step failed after it): close the business store
+      // and release its directory lock the same way (design §2.7.1).
+      const alongRelease = this.alongRelease
+      this.alongRelease = undefined
+      try { this.alongStore?.close() } finally { try { alongRelease?.() } catch { /* already released */ } }
       throw error
     }
   }
@@ -201,6 +287,9 @@ export class Runtime extends Service implements SourceHost {
   private async initialize(): Promise<void> {
     // Register management HTTP routes before setup completes so operators can fix setup problems in the UI.
     this.disposers.push(registerHttp(this.ctx, this.httpHost()))
+    // The loopback Along routes (design §2.7.1): registered next to `/orchestrator` before setup completes so a
+    // not-yet-configured local deployment still answers the Host's probe and pairing (the API 503s until assembled).
+    if (this.along) this.disposers.push(registerAlongSource(this.ctx, this.alongApiHost()))
     if (!await this.setup.run(this.store.settings())) {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
@@ -214,7 +303,79 @@ export class Runtime extends Service implements SourceHost {
     this.executor.resume()
     this.passes.start()
     this.effects.start()
+    // The delivery pump (design §2.2.2/§2.7.1): starts only once the engine runs, so a claimed delivery row always
+    // finds a live intake; the lifetime abort stops it with the Runtime and claimed rows expire back into the scan.
+    if (this.along) {
+      this.alongPumpStop = startDeliveryPump(this.along.service.alongStore, {
+        receive: trigger => this.passes.receive(trigger),
+        filteredReason: triggerId => {
+          const reason = this.store.triggers.disposition(triggerId)?.filtered
+          return reason === undefined ? undefined : reasonText(reason)
+        },
+        report: error => this.ctx.logger.warn('along delivery pump: %s', String(error)),
+      }, this.lifetime)
+    }
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
+  }
+  /** The loopback API's host view: the assembled facade (503 before it exists), the bridge token and the Settings
+   * facade that adds a paired user to `sources.along.allowed` (design §2.4.1). */
+  private alongApiHost(): AlongApiHost {
+    const runtime = this
+    return { get along() { return runtime.along?.service }, bridgeToken: runtime.along?.bridgeToken, settings: runtime.settings }
+  }
+  /**
+   * Assembles the Along local deployment (design §2.7.1): settings configure it when the Along Source is enabled
+   * and GitHub is explicitly disabled (`setup.ts` `localDeployment`). Order: optional config keys → execution-root
+   * containment (BC-07-02) → directory lock → business store → facade over the inbox/changeset factories → the
+   * mapping/record modules → the bridge token. Throws with configuration guidance when the local deployment is
+   * configured without its keys; a GitHub profile never reads them.
+   */
+  private assembleAlong(): AlongRuntime | undefined {
+    const settings = this.store.settings()
+    if (!(settings.sources.along?.enabled === true && settings.sources.github?.enabled === false)) return undefined
+    const { alongStateDir, alongBridgeTokenFile } = this.machine
+    if (!alongStateDir || !alongBridgeTokenFile) {
+      throw new Error('The Along local deployment needs the alongStateDir and alongBridgeTokenFile configuration keys (absolute paths in the dsh-superagent profile configuration); without them the Along business database cannot be opened')
+    }
+    // BC-07-02 fail-fast (the storage module's canonical guard): neither directory may contain the other —
+    // workers run under the same account, so the placement is the business data boundary, not a sandbox.
+    assertAlongDataIsolation(alongStateDir, executionRoot(settings, this.machine.stateDir))
+    mkdirSync(alongStateDir, { recursive: true, mode: 0o700 })
+    const alongCompromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
+    this.alongRelease = lockSync(alongStateDir, { stale: 30_000, onCompromised: alongCompromised })
+    const alongStore = this.alongStore = new AlongStore(join(alongStateDir, 'along.sqlite'))
+    const memory = this.machine.alongMemory ? createAlongMemory(alongStore, { ...this.machine.alongMemory,
+      script: packagePath('scripts', 'along-memory-service.py'), workerRoot: executionRoot(settings, this.machine.stateDir) })
+      : new MemoryService(alongStore, {
+        extract: async () => { throw new Error('memory backend unavailable') },
+        search: async () => { throw new Error('memory backend unavailable') },
+        clearUser: async () => { throw new Error('memory backend unavailable') }, close: async () => {},
+      })
+    const report = (error: unknown) => { this.ctx.logger.warn('along: %s', String(error)) }
+    const worklink = createWorkLink({ store: alongStore, repo: this.store, report })
+    const runrecord = createRunRecord({ store: alongStore, repo: this.store,
+      prompts: sessionId => this.store.get(KV.sessions.prompts(sessionId)), report })
+    const maintenance = new AlongMaintenance({ store: alongStore, memory, repo: this.store,
+      engine: () => this.engine, settings: () => this.store.settings(), available: () => !!this.machine.alongMemory,
+      time: () => this.machine.alongMaintenanceTime?.get() ?? '03:00',
+      paused: () => this.paused(), closing: () => this.closing() })
+    const healthFollowup = new HealthFollowup({ store: alongStore, repo: this.store, engine: () => this.engine,
+      settings: () => this.store.settings(), paused: () => this.paused(), closing: () => this.closing() })
+    return {
+      service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore) }),
+      worklink, runrecord, memory, maintenance, healthFollowup,
+      bridgeToken: bridgeTokenOf(alongBridgeTokenFile),
+      stateDir: alongStateDir,
+      dispatch: event => {
+        // Committed events only (§2.7.2): the orchestrator store's afterCommit drops them on a rollback.
+        this.store.afterCommit(() => {
+          worklink.onDomainEvent(event); runrecord.onDomainEvent(event)
+          if ('ticketId' in event.data) maintenance.record(event.data.ticketId,
+            'assignmentId' in event.data ? event.data.assignmentId : undefined)
+        })
+      },
+      stopDeliveryPump: () => { this.alongPumpStop?.(); this.alongPumpStop = undefined },
+    }
   }
   private httpHost(): HttpHost {
     const runtime = this
@@ -244,10 +405,24 @@ export class Runtime extends Service implements SourceHost {
     } finally {
       // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
       this.setup.restore()
-      try { this.store.close() } finally {
-        const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release its state directory lock: %s',
-          String(error)) }
-        await this.releaseLock?.().catch(unreleased)
+      try {
+        // Along stop order (design §2.7.1 停机逆序): pump → business database → orchestrator store → both locks.
+        this.along?.stopDeliveryPump()
+        try { await this.along?.memory.close() }
+        finally {
+          try { await this.along?.maintenance.idle() }
+          finally { this.alongStore?.close(); this.alongStore = undefined }
+        }
+      } finally {
+        try { this.store.close() } finally {
+          const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release its state directory lock: %s',
+            String(error)) }
+          await this.releaseLock?.().catch(unreleased)
+          const alongRelease = this.alongRelease
+          this.alongRelease = undefined
+          try { alongRelease?.() } catch (error) { this.ctx.logger.warn('dsh-superagent could not release the Along directory lock: %s',
+            String(error)) }
+        }
       }
     }
   }

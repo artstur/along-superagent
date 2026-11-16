@@ -557,6 +557,8 @@ const TEXT = {
   deploymentPromptMaxChars: ['提示词配置的最大字符数', 'Largest prompt configuration / characters'],
   deploymentContextPages: ['一次研判可读的线程页数', 'Thread pages one Assessment may read'],
   deploymentContextTimeout: ['一次上下文读取的时限 / 毫秒', 'Time limit of one context read / ms'],
+  deploymentMaintenanceTime: ['记忆维护时间', 'Memory maintenance time'],
+  deploymentMaintenanceTimeHint: ['每天按 Mac 本地时间执行。保存后生效，已到期和正在执行的批次会保留。', 'Runs daily in the Mac local timezone. Saved changes preserve overdue and running batches.'],
   deploymentRefused: ['DSH 拒绝了这次修改：设置可能已在别处修改。放弃修改后可看到当前值。', 'DSH refused the change; the settings may have changed elsewhere. Discard to see the current values.'],
   deploymentNoForms: ['这个 DSH 版本不提供配置表单，这些值只能在 DSH 配置文件的 dsh-superagent 条目里修改。', 'This DSH version has no configuration forms; change these values in the dsh-superagent entry of the DSH configuration file.'],
   deploymentReadOnly: ['只有本机上的浏览器可以修改这些值。', 'Only a browser on this machine can change these values.'],

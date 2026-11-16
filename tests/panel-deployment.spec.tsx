@@ -20,6 +20,7 @@ it('saves this machine\'s settings in the Deployment settings through DSH\'s con
   expect(text()).not.toContain('@agent-bot')
   for (const moved of ['仓库克隆', '工单 worktree 目录', '禁用的命令']) expect(text()).not.toContain(moved)
   expect(text()).toContain(zh.deploymentIntro)
+  expect(document.querySelector('input[type="time"]')).toBeNull()
   // A limit applies at once, so a draft of one says only that it is unsaved, even while Assignments run.
   await type(field<HTMLInputElement>(zh.deploymentContextTimeout), '20000')
   expect(document.querySelector('.dt-savebar')?.textContent).toBe(`${zh.draftKept}${zh.discard}${zh.save}`)
@@ -28,6 +29,23 @@ it('saves this machine\'s settings in the Deployment settings through DSH\'s con
   expect(document.querySelector('.dt-toast')?.textContent).toBe(zh.saved)
   expect(text()).not.toContain(zh.savedRestarting)
   expect(field<HTMLInputElement>(zh.deploymentContextTimeout).value).toBe('20000')
+})
+
+it('saves the Along maintenance time as a string through the shared DSH deployment form and displays read-only values', async () => {
+  server.setup = { ...server.setup, machine: { ...server.setup.machine, alongMaintenanceTime: '03:00' } }
+  const { form, mutations } = fakeForm()
+  server.form = form
+  at({ page: 'settings', query: { group: 'deployment' } })
+  await mount()
+  expect(field<HTMLInputElement>(zh.deploymentMaintenanceTime)).toMatchObject({ type: 'time', value: '03:00', disabled: false })
+  await type(field<HTMLInputElement>(zh.deploymentMaintenanceTime), '02:15')
+  await click(zh.save)
+  expect(mutations).toEqual([{ revision: 1, ops: [{ op: 'set', path: ['alongMaintenanceTime'], value: '02:15' }] }])
+  expect(document.querySelector('.dt-toast')?.textContent).toBe(zh.saved)
+  server.setup = { ...server.setup, machine: { ...server.setup.machine, alongMaintenanceTime: '02:15' } }
+  server.form = undefined
+  await remount()
+  expect(field<HTMLInputElement>(zh.deploymentMaintenanceTime)).toMatchObject({ value: '02:15', disabled: true })
 })
 
 it('keeps a refused Deployment change as a draft, and shows the settings read-only without a writable form', async () => {

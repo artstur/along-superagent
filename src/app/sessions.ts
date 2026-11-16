@@ -56,10 +56,13 @@ declare module '@deepseek-ai/cordis' {
  * The DSH tools an Executor Session works with: files, search, the shell and its jobs, the web, skills, its todo list and
  * subagents. It gets no other tool the profile has, whenever it was registered: none that asks or shows a person something,
  * changes the profile, schedules work or starts goals outside the worker slots, the pause and a person's hold, starts or
- * messages other Sessions, or edits documents.
+ * messages other Sessions, or edits documents. The Along business tools are appended here (003 §1) so they stay
+ * unmasked by the `restrict` allow-list once `executorTools` registers them; the list only filters names the
+ * Session actually has, so without the Along service installed nothing changes.
  */
-const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
-  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
+export const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
+  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
+  'along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_health_followup', 'along_goal_overview', 'along_changes_commit', 'along_chat_reply', 'along_memory_search', 'along_memory_forget']
 /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
 const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
   + 'end the turn instead of waiting for them.'
@@ -245,7 +248,15 @@ export class Sessions {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
+      const along = current?.mandate.actor?.source === 'along'
+      const maintenance = current?.mandate.basis.via === 'scheduled'
+      const settings = host.store.settings()
+      const alongRouter = master && settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+        + (maintenance ? '\n\n## Scheduled memory maintenance\nCall along_maintenance_run with {}. This host tool owns extraction, cleanup, validation, credentials and durable checkpoints. Repeat pending only without retry_at. With retry_at report failed and end the turn; the scheduler handles backoff. Report ready only after done. Do not ask the user, edit files, modify goals/tasks or post chat. Do not read private storage or extract memories yourself.' : '')
+        + (along ? `\n\n## Along personal goal work\nThis ticket maintains the user's personal goal workspace, not this repository. The following Along contract governs the business task.\n${bundledSkills.alongGoal.content}\n\n${bundledSkills.alongTask.content}\n\nBefore planning, read along_conversation_read and use along_memory_search for relevant long-term context. Current explicit instructions take priority. Read timestamps, source order and memory status: recent information usually describes the current preference better, while an older fact may still apply. Use history to understand corrections instead of mechanically replacing everything by time. memory history contains superseded/candidate/conflict/withdrawn evidence, not automatically effective facts. A withdrawn record is inactive; do not revive it from an old summary. needsClarification signals stored ambiguity: inspect current intent and history, and ask only when you cannot resolve it. degraded means SQLite fallback, not permission to invent context. On an explicit request to forget, use along_memory_forget and acknowledge it; do not delete chat or cancel/reschedule existing goals/tasks.` : '')
+        + (current?.mandate.basis.via === 'health' ? '\n\n## Automatic health follow-up\nThis is a non-human health event. Read along_goal_read, along_conversation_read, along_health_read and relevant memory. Use along_goal_overview to respect other goals, explicit priorities and hard constraints while writing only this goal. An aggregate does not prove a specific task was completed. An open sleep window or missing record is not a deficit. Decide which of the seven health types actually affect this goal; persist those types with along_health_followup (empty when unrelated). Do not create, edit or archive goals. You may adjust tasks only through validated changes. Read the current summaries before finishing. Use keep without chat when no adjustment is justified; use update after applied changes and ask only for an essential missing fact. Call along_health_followup before reporting ready. Do not use along_chat_reply because there is no user message. New chat supersedes this work; on conflicted_input report dropped and let newer work handle it. Never invent zero or clinical thresholds.' : '')
+        + (alongRouter ? '\n\n## Along local conversation routing\nThis installation serves personal goal conversations, not repository change requests. Every admitted Along user_message needs conversational work, including observations and questions. Accept it as a Ticket or attach it when the existing routing rules permit; a Worker reads the original conversation and responds with along_chat_reply. The Worker decides whether goal/task changes are justified. An observation needs a response without creating a goal; it is never ignored merely because it asks for no repository change. Preserve user stops, pause and authorization.' : '')
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
@@ -289,7 +300,8 @@ export class Sessions {
   private workOnly(agent: Agent, ticketId: string): (() => void)[] {
     const store = this.host.store
     const parent = scopeParentOf(agent)
-    const allow = WORK_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
+    const scheduled = store.tickets.get(ticketId)?.mandate.basis.via === 'scheduled'
+    const allow = scheduled ? [] : WORK_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
     return [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(() => {
       const current = store.tickets.get(ticketId)
       return !current || !liveTicket(current) ? 'Ticket ended; new work needs a new authorized ticket' : undefined
@@ -322,6 +334,10 @@ export class Sessions {
       const description = bundled?.description ?? (body.replace(/\s+/g, ' ').slice(0, 120) || 'Custom dsh-superagent operational skill.')
       disposers.push(scope.skills.register({ name: `${SKILL_PREFIX}${name}`, description, content, source: 'runtime',
         ...(bundled ? { resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } } : {}) }))
+    }
+    for (const bundled of [bundledSkills.alongGoal, bundledSkills.alongTask]) {
+      disposers.push(scope.skills.register({ name: bundled.name, description: bundled.description, content: bundled.content, source: 'runtime',
+        resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } }))
     }
     binding.skills = { revision: version.revision, dispose: () => { disposers.forEach(dispose => dispose()) } }
   }

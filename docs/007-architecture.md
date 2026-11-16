@@ -283,7 +283,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 - Executor tools bind reported pull requests with `readPull` and `claimPull`, using the GitHub context exposed by Runtime.
 - MasterAssessor reads repository files with `readRepositoryPath`.
 - Sessions and Prompts register built-in skills only for GitHub and Feishu. Migration converts their schema-10 records.
-- Setup probes only GitHub and Feishu account fields (`SETUP_FIELDS`). Only those Sources receive account setup problems through `SourceContext.problem`.
+- Setup probes GitHub and Feishu account fields (`SETUP_FIELDS`). Along enabled without GitHub selects a local deployment; changing between local and GitHub deployments also restarts setup. Only account Sources receive account setup problems through `SourceContext.problem`.
 
 
 ## Modules
@@ -363,6 +363,25 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/host.ts` | `SourceHost`, `SourceContext`, `Health`, `health` and the fixed health texts |
 | `src/sources/poll.ts` | What GitHub and Feishu polling share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, and `pollThreads`, which keeps a failure on its Thread as `pollError` |
 | `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with their CI, and subscribed Threads |
+| `src/sources/along.ts` | Optional local Along Source descriptor and plugin, exported as `./along-source`; scopes supported events and configures allowed users, with phone ingress implemented separately |
+| `src/along/schema.ts` | The DDL of `along.sqlite` with its schema version, one baseline of idempotent statements |
+| `src/along/migrate.ts` | The schema version check and the single-transaction migration of `along.sqlite`, which refuses databases newer than this build and older ones it cannot migrate |
+| `src/along/store.ts` | `AlongStore`, the only writer of `along.sqlite`: ownership checks, object and input versions, messages ordered by the server's `seq`, paged goal, task, message and change-set reads, health summaries, Inbox rows, the delivery queue with its lease and failure paths, work links, run records and the sync outbox, all inside `atomic` savepoints; `assertAlongDataIsolation` keeps the business directory outside the worker execution root |
+| `src/along/service.ts` | `AlongService`, the facade the Runtime assembles: the loopback API's single entry, with the inbox and changeset factories injected |
+| `src/along/legacy-import.ts` | `importLegacy`, the stable-ID idempotent import of the phone's old export (`g_health`/`g_finance`/`g_custom`, messages renumbered in export order) with a counts-and-hashes report |
+| `src/along/memory/index.ts` | Standalone Along memory factory and exports; the host owns lifecycle, bound tool scope and batch invocation |
+| `src/along/health-schema.ts` | Schema-4 health evaluation baselines and durable dispatch outbox |
+| `src/along/health-store.ts` | Host-bound health snapshots, relevant types and evaluated baselines |
+| `src/along/health.ts` | Automatic per-goal health follow-up admission, dispatch, coalescing and result tools |
+| `src/along/maintenance-schema.ts` | Schema-3 persistent night schedule and outstanding maintenance batches |
+| `src/along/maintenance-store.ts` | AlongStore-owned schedule, frozen input range, batch checkpoints and backoff |
+| `src/along/maintenance.ts` | Internal scheduled Trigger, host-verified policy, deterministic DSH acceptance, scoped batch tool, completion checks and quiet run records |
+| `src/along/memory/model.ts` | Strict memory proposals, governed states, evidence and backend port contracts |
+| `src/along/memory/schema.ts` | Additive schema-2 governance, suppression, cleanup, logical-operation and SDK-attempt tables |
+| `src/along/memory/store.ts` | AlongStore-owned memory persistence on the same SQLite handle and transactions; evidence, revisions, withdrawal and recovery |
+| `src/along/memory/service.ts` | Batched extraction governance, scoped recall, immediate withdrawal, conservative planner history filtering and SQLite fallback |
+| `src/along/memory/hy-client.ts` | Private persistent Python JSONL owner with explicit environment allow-list, timeout termination and restart |
+| `src/along/memory/tools.ts` | Runtime-registered host-bound memory search/forget tools with strict JSON output |
 | `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses |
 | `src/sources/github-pull.ts` | The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and `pullEndNotices`, the chat notice of a Ticket that ended merged or closed |
 | `src/sources/github-channel.ts` | The GitHub Channel: comments and review thread replies, `sent` or `gone` |
@@ -397,7 +416,17 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/locales.ts` | All copy in both languages, and the glossary of [001 Domain model](001-domain.md) |
 | `src/client/client.css`, `css.d.ts` | The panel's stylesheet, loaded as text |
 
-`src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled.
+`src/sources/github.ts`, `src/sources/feishu.ts` and `src/sources/along.ts` are the Source plugin entries, built by `tsdown.config.ts` and exported as `./github-watch`, `./feishu-watch` and `./along-source`. The bundle inserts the Runtime and the three Source plugins, with Feishu and Along disabled by default. Along can run without GitHub when its stored Source is enabled and GitHub is not enabled.
+
+| `src/along/api.ts` | Authenticated loopback API for the Along business service |
+| `src/along/changeset.ts` | Validated, versioned and idempotent automatic goal/task changes |
+| `src/along/delivery.ts` | Persistent inbox delivery pump and restart-safe retry |
+| `src/along/envelope.ts` | Strict Along event schemas and canonical payload hashing |
+| `src/along/inbox.ts` | Transactional acceptance, ownership, receipts and duplicate/conflict handling |
+| `src/along/runrecord.ts` | Deterministic registration of worker execution records and outbound notes |
+| `src/along/tool.ts` | Shared strict lossless JSON output for Along business and memory tools |
+| `src/along/tools.ts` | Host-bound goal, conversation, task, health and ChangeSet worker tools |
+| `src/along/worklink.ts` | Stable event/thread/ticket/assignment mapping and business work scopes |
 
 ## Tests
 
@@ -424,6 +453,11 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/delivery.spec.ts` | `AgentDelivery` |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
+| `tests/along-phase0.spec.ts` | Along feasibility probes: GitHub startup blocker, a test Source's explicit and proactive routing, subprocess environment limits, and scoped tool registration; these do not certify production Along readiness |
+| `tests/along-store.spec.ts` | The Along business store: schema migration and durability guards, message causality by the server's order (BC-08-07), multi-goal links without copied bodies (BC-08-08), restart persistence and version primitives (BC-08-11), ownership answers without existence leaks, the directory isolation guard (BC-07-02), the delivery queue's lease, backoff and failure syncs, and the idempotent legacy import (BC-09-02) |
+| `tests/along-store-acceptance.spec.ts` | Independent acceptance re-verification of the Along store: cross-user seq isolation, tampered resends, cursor negatives and delayed links (BC-08-07), link authorization and no partial rows (BC-08-08), counter continuity and rejected rows across a real reopen (BC-08-11), isolation-guard boundary traps (BC-07-02), import numbering, reordered keys, changed and appended re-imports, and the global fixed-id boundary (BC-09-02), plus schema completeness and migration rollback |
+| `tests/along-memory.spec.ts` | Stage-D evidence, correction/conflict, scope, withdrawal/reopen, context filtering, failure recovery and schema-1 migration against real SQLite |
+| `tests/along-memory-transport.spec.ts` | Persistent private Python transport, process reuse, credential filtering, deadlines, restart and isolation |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
 | `tests/http.spec.ts` | The same-origin and loopback checks, the status of each kind of failure, the body limit, path parameters and queries |
@@ -446,6 +480,23 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
 
 `tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.
+
+| `tests/along-bridge-verify.spec.ts` | Along phase-A contract and integration verification: bridge-verify |
+| `tests/along-bridge.spec.ts` | Along phase-A contract and integration verification: bridge |
+| `tests/along-changeset-verify.spec.ts` | Along phase-A contract and integration verification: changeset-verify |
+| `tests/along-changeset.spec.ts` | Along phase-A contract and integration verification: changeset |
+| `tests/along-inbox-verify.spec.ts` | Along phase-A contract and integration verification: inbox-verify |
+| `tests/along-inbox.spec.ts` | Along phase-A contract and integration verification: inbox |
+| `tests/along-phaseA-verify.spec.ts` | Along phase-A contract and integration verification: phaseA-verify |
+| `tests/along-phaseA.spec.ts` | Along phase-A contract and integration verification: phaseA |
+| `tests/along-memory-runtime.spec.ts` | Runtime-owned memory, scoped tools, current/historical context, fallback, restart and shutdown acceptance |
+| `tests/along-health-followup.spec.ts` | Health-only Runtime dispatch, task updates, baselines, stale chat protection, scope and malformed inputs |
+| `tests/along-maintenance.spec.ts` | Scheduled memory work through actual Runtime/Engine/tools, replay, frozen paging, backoff, restart, pause, stopping, isolation and completion |
+| `tests/along-phaseB.spec.ts` | Chat response, explicit goal creation, corrections, stale-input refusal and sync through registered worker tools |
+| `tests/along-runrecord-verify.spec.ts` | Along phase-A contract and integration verification: runrecord-verify |
+| `tests/along-runrecord.spec.ts` | Along phase-A contract and integration verification: runrecord |
+| `tests/along-worklink-verify.spec.ts` | Along phase-A contract and integration verification: worklink-verify |
+| `tests/along-worklink.spec.ts` | Along phase-A contract and integration verification: worklink |
 
 ## Persistence
 

@@ -13,13 +13,29 @@ import { Store } from '../../src/app/store.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../../src/sources/feishu.ts'
 import { githubKind } from '../../src/sources/github.ts'
+import { alongKind } from '../../src/sources/along.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Trigger } from '../../src/core/index.ts'
+import type { Machine } from '../../src/deployment.ts'
 import { testMachine } from './deployment.ts'
 
 export const MEMBER = 'ou_alice'
 export const CHAT = 'oc_team'
+
+/** Options of `startRuntime` beyond the seed. */
+export interface StartOptions {
+  /** Reuse this directory instead of creating a temp one — restart semantics: nothing is provisioned or
+   * re-seeded (everything must come from the persisted orchestrator/along databases), `stop()` keeps the files
+   * so a later `startRuntime(undefined, { dir })` reopens them, and the Along Source registers before `ready`
+   * so deliveries queued before the stop find their Source installed (BC-08-11/BC-09-04). */
+  dir?: string
+  /** Overrides the Along business data directory (the BC-07-02 negative test places it inside the execution root). */
+  alongStateDir?: string
+  /** Production memory backend configuration; tests replace only external SDK I/O. */
+  alongMemory?: Machine['alongMemory']
+  alongMaintenanceTime?: Machine['alongMaintenanceTime']
+}
 
 /** Build a Feishu mention trigger from Alice in `oc_team`, using the digits in `id` as the timestamp offset in seconds. */
 export function feishu(id: string, text: string, overrides: Record<string, unknown> = {}): Trigger {
@@ -131,9 +147,14 @@ export function subagentRuntime(agents: Map<string, FakeAgent>) {
   return { service, settle, spawn, live: (id: string) => !!children.get(id)?.live }
 }
 
-/** @param seed - writes to the database before the Runtime opens it, such as records an earlier version stored. */
-export async function startRuntime(seed?: (store: Store) => void) {
-  const directory = mkdtempSync(join(tmpdir(), 'orchestrator-host-'))
+/** @param seed - writes to the database before the Runtime opens it, such as records an earlier version stored.
+ * Refused together with `options.dir`: a restarted runtime must read everything from the persisted files (design
+ * tests/along-phaseA.spec.ts — seeding a restart would fake the BC-08-11 assertion). */
+export async function startRuntime(seed?: (store: Store) => void, options: StartOptions = {}) {
+  const reused = options.dir !== undefined
+  if (reused && seed) throw new Error('a reused runtime directory keeps its persisted state; do not seed it')
+  const directory = options.dir ?? mkdtempSync(join(tmpdir(), 'orchestrator-host-'))
+  const alongStateDir = options.alongStateDir ?? join(directory, 'along-data')
   const AGENT = join(directory, 'agent-gh'), BOT = join(directory, 'lark-bot')
   const repository = { default_branch: 'master', permissions: { push: true } }
   vi.spyOn(Commands.prototype, 'gh').mockImplementation(async args => args[1] === 'user' ? { login: 'agent-bot' } : repository)
@@ -165,7 +186,6 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const steps = new Map<string, () => void>(), claims = new Map<string, () => void>()
   const tools = new Map<string, Map<string, RegisteredTool>>()
   const deliveries = vi.fn<(request: Delivery) => void>()
-  let http!: HttpHandler
   const resolveDefault = async (id: string) => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } }
   const controller = {
     create: vi.fn(async ({ sessionId }: { sessionId: string }) => {
@@ -235,7 +255,21 @@ export async function startRuntime(seed?: (store: Store) => void) {
   }
   const reader = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
   const persistence = { flush: vi.fn(async () => {}), open: vi.fn(async () => reader) }
-  const webServer = { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }
+  // Prefix dispatch (design §2.7.3): the Runtime registers `/orchestrator` and `/along-source` side by side, so
+  // keeping only the last handler would break one of them; the longest matching prefix serves a request.
+  const httpHandlers = new Map<string, HttpHandler>()
+  const webServer = { host: '127.0.0.1', port: 3082,
+    register: (route: { kind?: string; path?: string; handler: HttpHandler }) => {
+      const key = route.kind === 'prefix' ? route.path ?? '/' : '/'
+      httpHandlers.set(key, route.handler)
+      return () => { httpHandlers.delete(key) }
+    } }
+  const dispatchHttp: HttpHandler = (req, res) => {
+    const path = new URL((req as { url?: string }).url ?? '/', 'http://localhost').pathname
+    const prefix = [...httpHandlers.keys()].filter(key => path.startsWith(key)).sort((a, b) => b.length - a.length)[0]
+    if (prefix === undefined) throw new Error(`no registered handler for ${path}`)
+    return httpHandlers.get(prefix)!(req, res)
+  }
   const jobs = jobRegistry(id => agents.get(id))
   const subagents = subagentRuntime(agents)
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
@@ -244,18 +278,29 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const ctx = new Context()
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
-  const seeded = new Store(join(directory, 'orchestrator.sqlite'))
+  // A reused directory reopens the persisted state as-is — no provisioning, no seed (BC-08-11 reads its
+  // restart assertions from the files the previous run wrote). The Along Source registers before `ready` so
+  // deliveries queued before the stop find their Source installed on the first pump tick instead of being
+  // closed as filtered (`scope` refuses uninstalled kinds terminally).
   const sources = { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT } } }
-  seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), sources }))
-  seed?.(seeded)
-  seeded.close()
-  const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())
+  if (!reused) {
+    const seeded = new Store(join(directory, 'orchestrator.sqlite'))
+    seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), sources }))
+    seed?.(seeded)
+    seeded.close()
+  }
+  const runtime = new Runtime(ctx, testMachine({ stateDir: directory,
+    alongStateDir, alongBridgeTokenFile: join(alongStateDir, 'bridge-token'), alongMemory: options.alongMemory,
+    alongMaintenanceTime: options.alongMaintenanceTime }), vi.fn())
+  if (reused) runtime.sources.register(alongKind)
   await runtime.ready
-  runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
-  const settings = runtime.store.settings()
-  runtime.store.saveSettings({ ...settings, eval: { ...settings.eval, mode: 'auto' },
-    policy: { ...settings.policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } } },
-    sources: { ...sources, feishu: { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
+  if (!reused) {
+    runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
+    const settings = runtime.store.settings()
+    runtime.store.saveSettings({ ...settings, eval: { ...settings.eval, mode: 'auto' },
+      policy: { ...settings.policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } } },
+      sources: { ...sources, feishu: { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
+  }
   deliveries.mockClear()
 
   /** Parsed JSON payloads delivered to `sessionId`. */
@@ -285,15 +330,23 @@ export async function startRuntime(seed?: (store: Store) => void) {
     let status = 0, text = ''
     const chunks = json === undefined ? [] : [Buffer.from(JSON.stringify(json))]
     const req = { method, url: `/orchestrator/api/${path}`, headers: { host: '127.0.0.1:3082', 'x-orchestrator-request': '1' }, async *[Symbol.asyncIterator]() { yield* chunks } }
-    await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
+    await dispatchHttp(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
-  async function stop() { await runtime.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) }
+  /** A loopback `/along-source/api` call (design §4.2): bridge auth and bound identity headers ride in `headers`. */
+  async function alongApi(method: string, path: string, json?: unknown, headers: Record<string, string> = {}) {
+    let status = 0, text = ''
+    const chunks = json === undefined ? [] : [Buffer.from(JSON.stringify(json))]
+    const req = { method, url: `/along-source/api/${path}`, headers: { host: '127.0.0.1:3082', ...headers }, async *[Symbol.asyncIterator]() { yield* chunks } }
+    await dispatchHttp(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
+    return { status, body: JSON.parse(text) as Record<string, unknown> }
+  }
+  async function stop() { await runtime.stop(); vi.restoreAllMocks(); if (!reused) rmSync(directory, { recursive: true, force: true }) }
   /** The Session's model takes its next step, which takes the messages steered in since its last. */
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, api, controller, subprocess, hooks, resolveDefault, stop,
-    jobs, subagents, step, claim }
+  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, api, alongApi, controller, subprocess, hooks, resolveDefault, stop,
+    jobs, subagents, step, claim, reused }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

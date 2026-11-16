@@ -141,9 +141,10 @@ function admissionOf(settings: Settings, source: string, row: string | undefined
 const STRENGTH: Readonly<Record<Admission, number>> = { ignore: 0, inferred: 1, explicit: 2 }
 
 /** Compute how a settings change from `old` to `now` affects the authorization or matched rules of each open ticket. */
-export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Settings, scope: (settings: Settings) => SourceScope):
+export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Settings, scope: (settings: Settings) => SourceScope,
+  policyFor: typeof settingsPolicy = settingsPolicy):
   Map<string, PolicyEffect> {
-  const before = settingsPolicy(old, scope(old)), after = settingsPolicy(now, scope(now))
+  const before = policyFor(old, scope(old)), after = policyFor(now, scope(now))
   const effects = new Map<string, PolicyEffect>()
   for (const ticket of tickets) {
     const rules = (ticket.mandate.basis.rules ?? []).flatMap((id): NonNullable<PolicyEffect['rules']> => {
@@ -155,7 +156,7 @@ export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Se
     if (before.revalidate(ticket.mandate) && !after.revalidate(ticket.mandate)) {
       // With the previous accept mode and rules, the Mandate holds unless the sender or receiving scope lost authorization.
       const asBefore = { ...now, eval: old.eval, policy: { ...now.policy, rules: old.policy.rules } }
-      if (!settingsPolicy(asBefore, scope(now)).revalidate(ticket.mandate)) {
+      if (!policyFor(asBefore, scope(now)).revalidate(ticket.mandate)) {
         Object.assign(effect, { requesterAllowed: false, requester: ticket.mandate.actor })
       } else if (ticket.mandate.strength === 'inferred' && old.eval.mode === 'auto' && now.eval.mode !== 'auto') effect.proactive = false
     }
@@ -211,6 +212,7 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
     },
     admitsInferred: rules => mode === 'auto' && rules.length > 0 && rules.every(id => settings.policy.rules.some(rule => rule.enabled && rule.id === id)),
     revalidate(mandate: Mandate) {
+      if (mandate.basis.via === 'scheduled' || mandate.basis.via === 'health') return false // Only an assembled host can revalidate scheduled capabilities.
       // Revalidation rules follow docs/002 (Eval path; Resume revalidates).
       const { basis } = mandate
       const { source } = basis
