@@ -99,3 +99,13 @@ describe('setup', () => {
     await refuses('feishuCliFailed', { output: expect.stringContaining('not configured') })
   })
 })
+
+
+it('keeps the optional memory backend absent unless all host paths are configured', () => {
+  expect(machineOf(Config({ stateDir: '/srv/state' }))).not.toHaveProperty('alongMemory')
+  const alongMemory = { python: '/srv/venv/bin/python', dataDir: '/srv/memory', envFile: '/srv/memory.env' }
+  expect(machineOf(Config({ stateDir: '/srv/state', alongMemory })).alongMemory).toEqual(alongMemory)
+  // @ts-expect-error Profile input can be incomplete at runtime.
+  expect(() => Config({ stateDir: '/srv/state', alongMemory: {} })).toThrow()
+  expect(() => Config({ stateDir: '/srv/state', alongMemory: { ...alongMemory, envFile: 'relative' } })).toThrow()
+})

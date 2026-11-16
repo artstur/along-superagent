@@ -25,4 +25,4 @@ Along Host 返回新协议能力及绑定用户，App 按用户隔离缓存与�
 - Xcode 27.2：`xcodebuild ... -sdk iphoneos -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO build` 成功。没有因此宣称已签名安装或已在手机上运行。
 - **真实模型与 Harness**：隔离 profile，Harness 0.2.2-rc.3 / MiniMax-M3.1-Flash，只有合成对话。`.artifacts/along-phaseb-chat-ready/proof.json` 为 `ok:true`：① 现象得到回应且无目标；② 行动意图创建 custom 目标、无数值 metric、带任务；③ 聊天纠正把任务改为睡前读纸质书。3 条答复落库，相关工单结束。一次无目标读取被正确拒绝，模型随后继续处理；修复后的记录没有 lossless JSON 错误。验证 profile 已停止。
 
-未验收：实际 iPhone 的 HTTPS 配对/离线重连/安装体验，生产数据迁移与完整恢复；健康新协议、记忆生命周期接线、完整通知策略、跨目标协调和统一批量作业仍属于后续范围。本轮成功样例不代表任意中文表达的语义质量均已通过。
+未验收：实际 iPhone 的 HTTPS 配对/离线重连/安装体验，生产数据迁移与完整恢复；健康新协议、完整通知策略、跨目标协调和统一批量作业仍属于后续范围；记忆生命周期与聊天工具后续已接入 Runtime，见 [记忆实施记录](006-memory-implementation.md) §5。本轮成功样例不代表任意中文表达的语义质量均已通过。

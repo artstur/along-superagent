@@ -12,7 +12,7 @@ Plugin configuration holds the state directory and machine limits. Use the panel
 
 ### Local Along extension
 
-This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Configure absolute `alongStateDir` and `alongBridgeTokenFile` paths alongside `stateDir`; the business data must be outside the worker directory. Runtime assembles the business store, loopback ingress, worker tools and delivery pump, and generates the bridge token file on first startup. It starts without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. The iPhone reaches this API through Along Host with `ALONG_EVENT_INGEST=on` and `ALONG_BRIDGE_TOKEN_FILE` naming the same file. See the Along repository's `docs/stage-b-tech-design.md` for the chat cutover and local validation; health, memory lifecycle wiring and batch scheduling remain separate work.
+This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Configure absolute `alongStateDir` and `alongBridgeTokenFile` paths alongside `stateDir`; the business data must be outside the worker directory. Runtime assembles the business store, loopback ingress, worker tools and delivery pump, and generates the bridge token file on first startup. It starts without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. The iPhone reaches this API through Along Host with `ALONG_EVENT_INGEST=on` and `ALONG_BRIDGE_TOKEN_FILE` naming the same file. See the Along repository's `docs/stage-b-tech-design.md` for the chat cutover and local validation; health and batch scheduling remain separate work. Runtime now owns memory lifecycle and exposes scoped memory tools.
 
 ### Permissions and isolation
 
@@ -21,6 +21,17 @@ The bundle defines `dsh-superagent-worker` for Executors and `dsh-superagent-rou
 Opening a blank managed Session in the Web UI can select the profile's default preset. dsh-superagent restores its role-specific preset before the first turn.
 
 Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
+
+Along memory backend is configured only on the Mac in the `dsh-superagent` plugin configuration:
+
+```yaml
+alongMemory:
+  python: /Users/<user>/.along/venv/bin/python
+  dataDir: /Users/<user>/.along/memory
+  envFile: /Users/<user>/.along/memory.env
+```
+
+Use Python 3.12 with `hy-memory==2.0.16`. The env file must be mode 0600 and contain the memory LLM/embedding configuration; put credential values only there. The packaged Python owner starts on first SDK use, outside Worker directories. Omit `alongMemory` to retain local governance and explicit SQLite fallback; this does not silently disable conversations. Current and status-labelled historical memories help the model understand updates, with current explicit intent taking priority. Batch extraction is exposed at `Runtime.along.memory.runBatch(userId)` for the stage-E scheduler; configuring the backend alone does not start a timer.
 
 ## Prerequisites
 

@@ -104,7 +104,7 @@ export class MemoryService {
 
   /** Missing recall never widens a scope; an outage returns explicitly marked SQLite fallback. */
   async search(scope: { userId: string; goalId?: string }, query: string, limit = 10): Promise<{
-    memories: GovernedMemory[]; degraded: boolean; needsClarification: boolean
+    memories: GovernedMemory[]; history: GovernedMemory[]; degraded: boolean; needsClarification: boolean
   }> {
     if (this.closed) throw new Error('memory service closed')
     if (typeof query !== 'string' || !query.trim() || query.length > 2000) throw new Error('invalid memory query')
@@ -125,7 +125,13 @@ export class MemoryService {
     const needsClarification = this.store.memory.memories(scope.userId).some(item => item.status === 'conflict'
       && (item.goalId === undefined || item.goalId === scope.goalId)
       && (item.expiresAt === undefined || Date.parse(item.expiresAt) > now))
-    return { memories: ranked.slice(0, size), degraded, needsClarification }
+    return { memories: ranked.slice(0, size), history: this.history(scope).slice(0, size), degraded, needsClarification }
+  }
+  /** Non-current evidence remains intelligible to the planner, with its status and source order intact. */
+  private history(scope: { userId: string; goalId?: string }): GovernedMemory[] {
+    return this.store.memory.memories(scope.userId).filter(item => item.status !== 'active'
+      && (item.goalId === undefined || item.goalId === scope.goalId))
+      .sort((a, b) => b.sourceSeq - a.sourceSeq || b.revision - a.revision)
   }
   /** Synchronous and local. Chat history and goals/tasks are deliberately untouched (D13/D16). */
   forget(scope: { userId: string; goalId?: string }, memoryId: string): { withdrawnIds: string[] } {
@@ -135,12 +141,12 @@ export class MemoryService {
     if (!item || (item.goalId !== undefined && item.goalId !== scope.goalId)) throw new Error('memory resource not found')
     return { withdrawnIds: this.store.memory.forget(scope.userId, memoryId) }
   }
-  /** Host context builder: raw history remains in the DB for display, revoked evidence never returns to a planner. */
+  /** Host context builder: current facts and labelled history stay distinct; unrelated old conversation remains readable. */
   context<T extends Pick<MessageRow, 'id' | 'userId' | 'text'>>(scope: { userId: string; goalId?: string }, messages: T[]): {
-    messages: T[]; memories: GovernedMemory[]
+    messages: T[]; memories: GovernedMemory[]; history: GovernedMemory[]
   } {
     return { messages: messages.filter(message => message.userId === scope.userId && this.store.memory.contextAllowed(scope.userId, message.id, message.text)),
-      memories: this.store.memory.effective(scope.userId, scope.goalId) }
+      memories: this.store.memory.effective(scope.userId, scope.goalId), history: this.history(scope).slice(0, 20) }
   }
   async close(): Promise<void> {
     if (this.closed) return

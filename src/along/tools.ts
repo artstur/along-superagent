@@ -5,9 +5,12 @@
  * declares a `user_id`/`goal_id` write path, and strict schemas reject anything extra. Reads paginate; health
  * summaries with an unadapted type (`adapter='pending'`) never reach the model context (001 §4.4).
  *
- * Memory tools (`along_memory_search`/`along_memory_forget`) wait for Hy-Memory in Stage D (D6, SD-3).
+ * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
 import { z } from 'zod'
+import { alongTool } from './tool.ts'
+import type { MemoryService } from './memory/service.ts'
+import { memoryTools } from './memory/tools.ts'
 import { createHash } from 'node:crypto'
 import type { Tool } from '../app/tools/tool.ts'
 import type { CommitScope } from './changeset.ts'
@@ -16,40 +19,21 @@ import { ALONG_BASE_REVISION_SCHEMA, ALONG_ID_SCHEMA, ALONG_INPUT_VERSION_SCHEMA
 import type { AlongService } from './service.ts'
 import type { GoalRevisionRow, HealthSummaryRow, TaskRow } from './store.ts'
 
-/**
- * Same contract as the shared `tool()` helper, defined locally: this module must not load app runtime code
- * (`app/tools/tool.ts` sits on the pre-existing tool.ts → resources.ts → executor/dsh.ts → assessment.ts
- * cycle, and entering it from the Along side would leave `assessment.ts` reading a half-initialized module).
- */
-function jsonOutput(value: unknown): unknown {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (Array.isArray(value)) return value.map(jsonOutput)
-  if (value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
-    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).map(([name, item]) => [name, jsonOutput(item)]))
-  }
-  throw new Error('Along tool returned a non-JSON value')
-}
-// Harness 0.2.2 checks lossless JSON before rendering. Optional object fields are absent on the wire;
-// invalid array items, non-finite numbers and non-JSON objects still fail rather than becoming null.
-const alongTool = <S extends z.ZodType>(definition: { name: string; description: string; schema: S
-  execute: (args: z.infer<S>, signal: AbortSignal) => Promise<unknown> }): Tool => ({ ...definition,
-    execute: async (args: z.infer<S>, signal: AbortSignal) => jsonOutput(await definition.execute(args, signal)),
-  }) as unknown as Tool
-
 // Custom goals have no configurable metric. Make that invariant explicit in the model's parameter schema
 // instead of an object/null union. The complete business schema still validates the derived operations.
 const [createGoalOperation, ...otherOperations] = ALONG_OPS_SCHEMA.element.options
-const TOOL_OPS_SCHEMA = z.array(z.union([
+const TOOL_CREATE_GOAL_SCHEMA = z.discriminatedUnion('domain', [
   createGoalOperation.extend({ domain: z.literal('custom'), metric: z.null().optional().describe('Omit for custom goals; the host supplies null.') }),
   createGoalOperation.extend({ domain: z.enum(['health', 'finance']), metric: ALONG_METRIC_SCHEMA }),
-  ...otherOperations,
-])).min(1)
+])
+const TOOL_OPS_SCHEMA = z.array(z.discriminatedUnion('op', [TOOL_CREATE_GOAL_SCHEMA, ...otherOperations])).min(1)
 
 /** Host dependencies of the Along tools; the Runtime assembles them when the Along service is installed. */
 export interface AlongToolsHost {
   /** The assembled business service: reads through the store, commits through the changeset module. */
   readonly service: Pick<AlongService, 'alongStore' | 'commitChangeSet'>
+  /** Runtime-owned memory, optional for standalone business-tool callers. */
+  readonly memory?: MemoryService
   /** Reverse lookup of the host-bound scope for a ticket — worklink's `workScopeForTicket` in production (§2.5). */
   readonly scopeFor: (ticketId: string) => CommitScope | undefined
 }
@@ -91,6 +75,10 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     throw new Error('no goal is bound to this ticket; pass goal_id to name the goal to read')
   }
   return [
+    ...(host.memory ? memoryTools(host.memory, () => {
+      const bound = scope()
+      return { userId: bound.userId, goalId: bound.allowedGoalId }
+    }) : []),
     alongTool({
       name: 'along_goal_read',
       description: 'Read the current state of one Along goal: domain, status, current revision, input version, title, metric and context, with its tasks and optionally its full revision history. Reads are bound to the dispatched goal; commit base_revision/input_version come from current_revision/input_version here.',
@@ -113,7 +101,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     }),
     alongTool({
       name: 'along_conversation_read',
-      description: 'Read one page of the bound goal\'s conversation, newest page first, chronologically inside a page by seq; pass next_before_seq to page further back. Includes the user\'s messages and the system-side execution notes.',
+      description: 'Read one page of the bound goal\'s conversation, newest page first, chronologically inside a page by seq; pass next_before_seq to page further back. Includes original messages, timestamps, effective memories and status-labelled memory_history. Current explicit intent takes priority; use source order and meaning to understand updates.',
       schema: z.object({
         before_seq: z.number().int().min(0).optional().describe('Copy next_before_seq from the previous page.'),
         limit: z.number().int().min(1).max(50).optional().describe('Messages per page, 20 by default and 50 at most.'),
@@ -128,7 +116,8 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const page = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
           { beforeSeq: args.before_seq, limit }) : { items: history.slice(-limit),
             nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
-        return { messages: page.items.map(message =>
+        const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, page.items)
+        return { ...(context ? { memories: context.memories, memory_history: context.history } : {}), messages: (context?.messages ?? page.items).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
           ...(page.nextCursor !== undefined ? { next_before_seq: Number(page.nextCursor) } : {}) }
       },

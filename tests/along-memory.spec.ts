@@ -270,7 +270,7 @@ describe('withdrawal and context (BC-04-08..11/14)', () => {
     release([])
     expect(await lookup).toMatchObject({ degraded: true, memories: [{ content: kept.text }] })
   })
-  it('withdraws immediately, preserves history/tasks, filters summaries, survives reopen and blocks old extraction', async () => {
+  it('withdraws immediately, preserves history/tasks, keeps labelled historical context, survives reopen and blocks old extraction', async () => {
     const source = message(); await service.runBatch(USER)
     const memory = effective()[0]!
     const summary = store.appendMessage({ userId: USER, eventId: 'e_summary', role: 'assistant', direction: 'outbound', text: '用户喜欢晚饭前运动' })
@@ -278,7 +278,8 @@ describe('withdrawal and context (BC-04-08..11/14)', () => {
     const counts = store.counts(USER), tasks = store.listTasks(USER).items
     expect(service.forget({ userId: USER }, memory.id).withdrawnIds).toEqual([memory.id])
     expect((await service.search({ userId: USER }, '运动')).memories).toHaveLength(0)
-    expect(service.context({ userId: USER }, [source, summary]).messages).toHaveLength(0)
+    expect(service.context({ userId: USER }, [source, summary]).messages).toEqual([summary])
+    expect(service.context({ userId: USER }, [source, summary]).history).toEqual([expect.objectContaining({ id: memory.id, status: 'withdrawn' })])
     expect(store.getMessage(USER, source.id)?.text).toBe(source.text)
     expect(store.counts(USER)).toEqual(counts); expect(store.listTasks(USER).items).toEqual(tasks)
     await service.close(); store.close()

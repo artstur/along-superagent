@@ -17,6 +17,7 @@ import { alongKind } from '../../src/sources/along.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Trigger } from '../../src/core/index.ts'
+import type { Machine } from '../../src/deployment.ts'
 import { testMachine } from './deployment.ts'
 
 export const MEMBER = 'ou_alice'
@@ -31,6 +32,8 @@ export interface StartOptions {
   dir?: string
   /** Overrides the Along business data directory (the BC-07-02 negative test places it inside the execution root). */
   alongStateDir?: string
+  /** Production memory backend configuration; tests replace only external SDK I/O. */
+  alongMemory?: Machine['alongMemory']
 }
 
 /** Build a Feishu mention trigger from Alice in `oc_team`, using the digits in `id` as the timestamp offset in seconds. */
@@ -286,7 +289,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: Start
     seeded.close()
   }
   const runtime = new Runtime(ctx, testMachine({ stateDir: directory,
-    alongStateDir, alongBridgeTokenFile: join(alongStateDir, 'bridge-token') }), vi.fn())
+    alongStateDir, alongBridgeTokenFile: join(alongStateDir, 'bridge-token'), alongMemory: options.alongMemory }), vi.fn())
   if (reused) runtime.sources.register(alongKind)
   await runtime.ready
   if (!reused) {

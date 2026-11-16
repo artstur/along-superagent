@@ -375,7 +375,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/memory/store.ts` | AlongStore-owned memory persistence on the same SQLite handle and transactions; evidence, revisions, withdrawal and recovery |
 | `src/along/memory/service.ts` | Batched extraction governance, scoped recall, immediate withdrawal, conservative planner history filtering and SQLite fallback |
 | `src/along/memory/hy-client.ts` | Private persistent Python JSONL owner with explicit environment allow-list, timeout termination and restart |
-| `src/along/memory/tools.ts` | Optional host-bound memory search/forget tools; does not register itself into Runtime |
+| `src/along/memory/tools.ts` | Runtime-registered host-bound memory search/forget tools with strict JSON output |
 | `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses |
 | `src/sources/github-pull.ts` | The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and `pullEndNotices`, the chat notice of a Ticket that ended merged or closed |
 | `src/sources/github-channel.ts` | The GitHub Channel: comments and review thread replies, `sent` or `gone` |
@@ -418,6 +418,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/envelope.ts` | Strict Along event schemas and canonical payload hashing |
 | `src/along/inbox.ts` | Transactional acceptance, ownership, receipts and duplicate/conflict handling |
 | `src/along/runrecord.ts` | Deterministic registration of worker execution records and outbound notes |
+| `src/along/tool.ts` | Shared strict lossless JSON output for Along business and memory tools |
 | `src/along/tools.ts` | Host-bound goal, conversation, task, health and ChangeSet worker tools |
 | `src/along/worklink.ts` | Stable event/thread/ticket/assignment mapping and business work scopes |
 
@@ -482,6 +483,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-inbox.spec.ts` | Along phase-A contract and integration verification: inbox |
 | `tests/along-phaseA-verify.spec.ts` | Along phase-A contract and integration verification: phaseA-verify |
 | `tests/along-phaseA.spec.ts` | Along phase-A contract and integration verification: phaseA |
+| `tests/along-memory-runtime.spec.ts` | Runtime-owned memory, scoped tools, current/historical context, fallback, restart and shutdown acceptance |
 | `tests/along-phaseB.spec.ts` | Chat response, explicit goal creation, corrections, stale-input refusal and sync through registered worker tools |
 | `tests/along-runrecord-verify.spec.ts` | Along phase-A contract and integration verification: runrecord-verify |
 | `tests/along-runrecord.spec.ts` | Along phase-A contract and integration verification: runrecord |

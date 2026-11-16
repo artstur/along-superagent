@@ -37,6 +37,15 @@ it('returns lossless JSON from goal and task tools under the real Harness output
       {...qualitative,domain:'health'},{...qualitative,extra:'untrusted'},{...qualitative,op:'goal.delete'}]) {
       expect(()=>commit.schema.parse({...base,ops:[op]})).toThrow()
     }
+    for (const [operation, path] of [
+      [{ op: 'task.update', task_id: 't_feedback', base_revision: '2', fields: { content: '今天晚饭后散步' } }, ['ops', 0, 'base_revision']],
+      [{ op: 'goal.update', fields: { context: { item: ['临时安排'] } } }, ['ops', 0, 'fields', 'context']],
+    ] as const) {
+      const rejected = commit.schema.safeParse({ ...base, ops: [operation] })
+      expect(rejected.success).toBe(false)
+      if (!rejected.success) expect(rejected.error.issues).toEqual([expect.objectContaining({ code: 'invalid_type', path: [...path] })])
+    }
+
   }finally{store.close();rmSync(directory,{recursive:true,force:true})}
 })
 

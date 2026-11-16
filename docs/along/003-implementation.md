@@ -14,8 +14,8 @@
 | Skill 注册 | 已有，不支持按派工固定版本 | `Sessions.bindSkills`、[Prompts](../../src/app/prompts.ts) |
 | 非编程场景启动 | 已支持显式启用 Along、关闭 GitHub 的本地部署 | [Setup](../../src/app/setup.ts)、[Runtime](../../src/app/runtime.ts) |
 | 定时调度 | 没有，需新增 | 见 [记忆与技能 §4](002-memory-and-skills.md#4-定时批量作业) |
-| 业务存储、完整对话、记忆治理 | 阶段 A 基座在集成；独立记忆治理模块已实现，宿主接线待做 | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
-| Hy-Memory | 固定版本安装、独立常驻进程适配和中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
+| 业务存储、完整对话、记忆治理 | 阶段 A 基座、记忆治理与 Runtime/Worker 工具接线已实现；定时批处理待 E | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
+| Hy-Memory | 固定版本安装、Runtime 生命周期装配及中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
 | 健康 7 类摘要 | Along 已有，需接入新协议 | [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) |
 | 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，fork `tests/along-phaseB.spec.ts` |
 
@@ -43,7 +43,7 @@ Along Host 已有 DSH 上游调用协议，但不能据此推定当前 fork 已�
 | A：骨架与数据契约 | `along.sqlite`、配对、事件 Inbox、对象版本、WorkLink、执行记录登记 | 重启后能查目标、任务和完整对话；重复事件不产生重复工作；每次 Worker 结束都有执行记录且未调用模型 |
 | B：对话到自动维护 | `along.user_message`、目标与任务 Skill、ChangeSet 自动提交、按需通知；Along App 去掉采用按钮、待采用提案和目标编辑与删除入口 | 明确行动意图自动建目标，仅描述现象先回应，缺少意图才询问；聊天纠正生效；「改回去」通过新 ChangeSet 恢复；过时提交不覆盖当前意图；普通变化只展示，需要回答、近期安排有实质变化或执行受阻时才通知；跨目标安排遵守明确优先级和硬约束，其余由 Agent 协调 |
 | C：健康持续跟进 | 7 类摘要接入新协议、按变化语义筛选、合并、主动规则、多目标拆分 | 重复、乱序、跨窗、修订、旧工单和暂停场景去向正确；一条摘要影响两个目标时各自提交，一个冲突不影响另一个 |
-| D：长期记忆 | Hy-Memory 接入、治理状态、批量提取、即时删除、故障降级 | 达到 [记忆与技能 §2.5](002-memory-and-skills.md#25-阶段-d-的质量门槛) 的门槛；Hy-Memory 停掉时仍能用有效记忆规划 |
+| D：长期记忆 | Hy-Memory 接入、记忆更新与带状态的历史上下文、批量提取、明确忘记、故障降级 | 达到 [记忆与技能 §2.5](002-memory-and-skills.md#25-阶段-d-的质量门槛) 的门槛；Hy-Memory 停掉时仍能用有效记忆规划 |
 | E：批量复盘与 Skill | 定时作业、分组复盘、自动发布、版本固定、自动回退 | 每条执行记录有去向；新版本被下一轮实际使用，在途执行不变；错过周期只补跑一次；问题版本自动回退 |
 
 阶段 B 同时更新 Along 的 README、`docs/goal-agent-flow.md` 和相关测试，使其描述迁移后的行为。

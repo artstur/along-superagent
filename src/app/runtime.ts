@@ -54,6 +54,8 @@ import { createChangeSetModule } from '../along/changeset.ts'
 import { createInbox } from '../along/inbox.ts'
 import { createRunRecord, type RunRecordModule } from '../along/runrecord.ts'
 import { AlongService } from '../along/service.ts'
+import { createAlongMemory, MemoryService } from '../along/memory/index.ts'
+import { packagePath } from '../infra/paths.ts'
 import { AlongStore, assertAlongDataIsolation } from '../along/store.ts'
 import { createWorkLink, type WorkLinkModule } from '../along/worklink.ts'
 
@@ -70,6 +72,8 @@ const now = (): string => new Date().toISOString()
 export interface AlongRuntime {
   /** The business facade the loopback API and the Along worker tools call. */
   readonly service: AlongService
+  /** Host-owned governance, backend lifecycle and batch entry for stage E. */
+  readonly memory: MemoryService
   /** The worklink module: domain events → WorkLink rows, and the host-bound commit scope lookup. */
   readonly worklink: WorkLinkModule
   /** The record module: Worker ends → RunRecord rows and the outbound execution note (never a model call). */
@@ -227,7 +231,7 @@ export class Runtime extends Service implements SourceHost {
         // The Along worker tools (design §2.3.6): registered by `executorTools` for the assembled deployment;
         // the scope lookup is the worklink module's host-bound reverse mapping (BC-07-04) — the model cannot
         // specify user, ticket or goal.
-        ...(along ? { along: { service: along.service, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
+        ...(along ? { along: { service: along.service, memory: along.memory, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
@@ -328,13 +332,20 @@ export class Runtime extends Service implements SourceHost {
     const alongCompromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
     this.alongRelease = lockSync(alongStateDir, { stale: 30_000, onCompromised: alongCompromised })
     const alongStore = this.alongStore = new AlongStore(join(alongStateDir, 'along.sqlite'))
+    const memory = this.machine.alongMemory ? createAlongMemory(alongStore, { ...this.machine.alongMemory,
+      script: packagePath('scripts', 'along-memory-service.py'), workerRoot: executionRoot(settings, this.machine.stateDir) })
+      : new MemoryService(alongStore, {
+        extract: async () => { throw new Error('memory backend unavailable') },
+        search: async () => { throw new Error('memory backend unavailable') },
+        clearUser: async () => { throw new Error('memory backend unavailable') }, close: async () => {},
+      })
     const report = (error: unknown) => { this.ctx.logger.warn('along: %s', String(error)) }
     const worklink = createWorkLink({ store: alongStore, repo: this.store, report })
     const runrecord = createRunRecord({ store: alongStore, repo: this.store,
       prompts: sessionId => this.store.get(KV.sessions.prompts(sessionId)), report })
     return {
       service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore) }),
-      worklink, runrecord,
+      worklink, runrecord, memory,
       bridgeToken: bridgeTokenOf(alongBridgeTokenFile),
       stateDir: alongStateDir,
       dispatch: event => {
@@ -375,8 +386,7 @@ export class Runtime extends Service implements SourceHost {
       try {
         // Along stop order (design §2.7.1 停机逆序): pump → business database → orchestrator store → both locks.
         this.along?.stopDeliveryPump()
-        this.alongStore?.close()
-        this.alongStore = undefined
+        try { await this.along?.memory.close() } finally { this.alongStore?.close(); this.alongStore = undefined }
       } finally {
         try { this.store.close() } finally {
           const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release its state directory lock: %s',

@@ -39,12 +39,11 @@ export class MemoryStore {
   blocked(userId: string, messageId: string): boolean {
     return this.rows('SELECT 1 FROM memory_blocked_source WHERE user_id=? AND message_id=?', userId, messageId).length > 0
   }
-  /** Without full summary provenance, a withdrawal starts a fresh planner-history window (display history stays intact). */
+  /** Only directly withdrawn evidence is withheld; unrelated older conversation remains available to planning. */
   contextAllowed(userId: string, messageId: string, text: string): boolean {
     const row = this.rows('SELECT seq,text FROM message WHERE user_id=? AND id=?', userId, messageId)[0]
     if (!row || row.text !== text || this.blocked(userId, messageId)) return false
-    const cutoff = Number(this.rows('SELECT IFNULL(MAX(through_seq),0) AS seq FROM memory_suppression WHERE user_id=?', userId)[0]!.seq)
-    return Number(row.seq) > cutoff
+    return true
   }
   /** Only actual inbound chat is eligible, never task feedback, health events or assistant suggestions. */
   sources(userId: string, ids?: readonly string[], unprocessed = false): MemorySource[] {

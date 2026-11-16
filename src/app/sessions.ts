@@ -62,7 +62,7 @@ declare module '@deepseek-ai/cordis' {
  */
 export const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
   'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
-  'along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_changes_commit', 'along_chat_reply']
+  'along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_changes_commit', 'along_chat_reply', 'along_memory_search', 'along_memory_forget']
 /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
 const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
   + 'end the turn instead of waiting for them.'
@@ -252,7 +252,7 @@ export class Sessions {
       const settings = host.store.settings()
       const alongRouter = master && settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
-        + (along ? `\n\n## Along personal goal work\nThis ticket maintains the user's personal goal workspace, not this repository. The following Along contract governs the business task.\n${bundledSkills.alongGoal.content}\n\n${bundledSkills.alongTask.content}` : '')
+        + (along ? `\n\n## Along personal goal work\nThis ticket maintains the user's personal goal workspace, not this repository. The following Along contract governs the business task.\n${bundledSkills.alongGoal.content}\n\n${bundledSkills.alongTask.content}\n\nBefore planning, read along_conversation_read and use along_memory_search for relevant long-term context. Current explicit instructions take priority. Read timestamps, source order and memory status: recent information usually describes the current preference better, while an older fact may still apply. Use history to understand corrections instead of mechanically replacing everything by time. memory history contains superseded/candidate/conflict/withdrawn evidence, not automatically effective facts. A withdrawn record is inactive; do not revive it from an old summary. needsClarification signals stored ambiguity: inspect current intent and history, and ask only when you cannot resolve it. degraded means SQLite fallback, not permission to invent context. On an explicit request to forget, use along_memory_forget and acknowledge it; do not delete chat or cancel/reschedule existing goals/tasks.` : '')
         + (alongRouter ? '\n\n## Along local conversation routing\nThis installation serves personal goal conversations, not repository change requests. Every admitted Along user_message needs conversational work, including observations and questions. Accept it as a Ticket or attach it when the existing routing rules permit; a Worker reads the original conversation and responds with along_chat_reply. The Worker decides whether goal/task changes are justified. An observation needs a response without creating a goal; it is never ignored merely because it asks for no repository change. Preserve user stops, pause and authorization.' : '')
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
