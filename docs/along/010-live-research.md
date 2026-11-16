@@ -53,3 +53,5 @@ message sync payload 可选 `recommendation`：`{version:1,kind:'hiking'|'genera
 同任务人类反馈预算：旧due ticket被合法resume后，WorkLink已绑定新human事件，回复身份正常；原16预算却按ticket累计导致“发新消息重试”无效。预算现按宿主持久event分桶（既有operation TEXT内编码event/operation），同事件重试与重启仍共用16，新显式消息或新due事件各有16。来源receipt保持原user/goal/ticket范围，仍可复用未过期旧依据，不改Router/Engine、不改任务状态、不新增目标。
 
 无某一类别预警不等于整体无预警；clear 证据若同时含有效警报或恶劣天气正向条款，或仅说明特定类别没有预警，均保留未知，不给出整体无警报结论。
+
+页面发布时间优先正文：Fetch 提取到明确的绝对发布日期时记录正文日期；正文缺失或提取为空时不继承搜索元数据作为发布时间，仅保留内部日期线索。搜索日期标记为 search 来源，正文日期标记为 page 来源；当前警报的近期发布判断只使用 page。无需新抓取服务或数据库迁移，旧缺少来源标记的日期不作已核实当前警报依据。

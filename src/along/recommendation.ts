@@ -38,7 +38,7 @@ const routeMeasure=(fact:{label:string;value:string},origins:ResearchEvidence[])
  &&/距离|长度|里程|爬升|海拔|用时|耗时|distance|length|ascent|elevation|duration/i.test(fact.label)
  &&fact.value.replace(/全程|大约|约|总长|累计|往返|单程|上升|下降|爬升|海拔|高度|公里|千米|分钟|小时|米|hours?|minutes?|km|min|m|h|[0-9\s.,+~～–—/:;，。、()（）-]/gi,'')===''
 
-const recentPublication=(source:ResearchEvidence,now:number)=>!!source.publishedAt&&Date.parse(source.publishedAt)>=now-36*3600_000&&Date.parse(source.publishedAt)<=now+300_000
+const recentPublication=(source:ResearchEvidence,now:number)=>source.publicationBasis==='page'&&!!source.publishedAt&&Date.parse(source.publishedAt)>=now-36*3600_000&&Date.parse(source.publishedAt)<=now+300_000
 const plainRouteTitle=(title:string)=>title.replace(/[（(【\[][^）)】\]]*(?:推荐|首选|备选|不建议|安全|优先)[^）)】\]]*[）)】\]]/g,'').replace(/^(?:推荐|首选|优先|安全路线)[:：]?\s*/,'').trim()||'待核实路线'
 const needsProjection=(kind:Recommendation['kind'],options:Recommendation['options'])=>kind==='hiking'&&(!options.length||options.some(option=>option.status!=='recommended'))
 /** Older clients receive the same conservative conclusion as the structured card. */

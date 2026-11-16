@@ -70,6 +70,14 @@ export function researchWeb(ctx:Context):ResearchWeb|undefined {
    if(value?.[kind+'Provider']!==expected)throw new ResearchError('RESEARCH_REMOTE_PROVIDER_REQUIRED')
   }}
 }
+/** A page’s explicit absolute publication date takes precedence over search-index date hints. */
+export function pagePublication(content:string):string|undefined {
+ const match=/(?:发布时间|发布日期|发布于|Published(?: on)?|Publication date)\s*[:：]?\s*(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?/i.exec(content.slice(0,4000).replace(/\*\*/g,''))
+ if(!match)return undefined
+ const [year,month,day]=match.slice(1).map(Number)
+ const date=new Date(Date.UTC(year!,month!-1,day!))
+ return date.getUTCFullYear()===year&&date.getUTCMonth()===month!-1&&date.getUTCDate()===day?date.toISOString():undefined
+}
 function failure(error:unknown,aborted=false):{code:string;retryable:boolean;action:string}{
  const e=error as {code?:string;message?:string}
  let code=typeof e?.code==='string'?e.code:'WEB_PROVIDER_ERROR'
@@ -133,7 +141,7 @@ export function researchTools(store:ResearchStore,scope:()=>ResearchScope,web:()
    if(final.origin!==url.origin)throw new ResearchError('RESEARCH_PUBLIC_URL_REQUIRED')
    const content=page.body.content.slice(0,24000)
    if(!content.trim())return {status:'empty',untrustedContent:true,sources:[]}
-   s.throwIfAborted();const receipt=store.save(scope(),{url:final.href,title:source.title,content,purpose:args.purpose,publishedAt:source.publishedAt,fetched:true})
+   s.throwIfAborted();const receipt=store.save(scope(),{url:final.href,title:source.title,content,purpose:args.purpose,publishedAt:pagePublication(content),publicationBasis:'page',publicationHint:source.publicationHint??source.publishedAt,fetched:true})
    return {status:'ok',untrustedContent:true,source:receipt,truncated:page.truncated||page.body.content.length>24000}
   },signal)})]
 }

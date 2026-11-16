@@ -19,16 +19,17 @@ export type ResearchPurpose = 'weather' | 'alerts' | 'access' | 'route' | 'gener
 export interface ResearchSource {
  id: string; title: string; url: string; retrievedAt: string; expiresAt: string; publishedAt?: string
 }
-export interface ResearchEvidence extends ResearchSource { content: string; purpose: ResearchPurpose; fetched: boolean }
+export interface ResearchEvidence extends ResearchSource { content: string; purpose: ResearchPurpose; fetched: boolean; publicationBasis?:'page'|'search'; publicationHint?:string }
 const ttl: Record<ResearchPurpose, number> = { weather: 3*3600_000, alerts:3*3600_000, access: 86400_000, route: 7*86400_000, general: 86400_000 }
 /** Scoped web receipts and reply identities on AlongStore’s shared SQLite handle. */
 export class ResearchStore {
  constructor(private readonly db: DatabaseSync) {}
- save(scope: ResearchScope, source: {title: string; url: string; content: string; purpose: ResearchPurpose; publishedAt?: string; fetched: boolean}, now=Date.now()): ResearchEvidence {
+ save(scope: ResearchScope, source: {title: string; url: string; content: string; purpose: ResearchPurpose; publishedAt?: string; fetched: boolean; publicationBasis?:'page'|'search'; publicationHint?:string}, now=Date.now()): ResearchEvidence {
   if (!this.db.prepare('SELECT 1 FROM goal WHERE id=? AND user_id=?').get(scope.goalId,scope.userId)) throw Error('research goal not found')
   const receipt: ResearchEvidence = { id: 'src_'+randomUUID().replaceAll('-',''), title:source.title.slice(0,300),url:source.url,
    retrievedAt:new Date(now).toISOString(),expiresAt:new Date(now+ttl[source.purpose]).toISOString(),
-   ...(source.publishedAt && Number.isFinite(Date.parse(source.publishedAt)) ? {publishedAt:new Date(source.publishedAt).toISOString()}:{}),
+   ...(source.publishedAt && Number.isFinite(Date.parse(source.publishedAt)) ? {publishedAt:new Date(source.publishedAt).toISOString(),publicationBasis:source.publicationBasis??(source.fetched?'page' as const:'search' as const)}:{}),
+   ...(source.publicationHint&&Number.isFinite(Date.parse(source.publicationHint))?{publicationHint:new Date(source.publicationHint).toISOString()}:{}),
    content:source.content.slice(0,24000),purpose:source.purpose,fetched:source.fetched }
   this.db.prepare('INSERT INTO research_source(id,user_id,goal_id,ticket_id,purpose,content,metadata) VALUES(?,?,?,?,?,?,?)')
    .run(receipt.id,scope.userId,scope.goalId,scope.ticketId,source.purpose,receipt.content,JSON.stringify(receipt))

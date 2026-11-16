@@ -8,7 +8,7 @@ import { AlongService } from '../src/along/service.ts'
 import { createInbox } from '../src/along/inbox.ts'
 import { alongTools } from '../src/along/tools.ts'
 import { recommendation, RECOMMENDATION_INPUT, type RecommendationInput } from '../src/along/recommendation.ts'
-import { publicHttpsUrl, publicAddress, assertPublicUrl, researchTools, researchWeb, type ResearchWeb } from '../src/along/web-research.ts'
+import { publicHttpsUrl, publicAddress, assertPublicUrl, pagePublication, researchTools, researchWeb, type ResearchWeb } from '../src/along/web-research.ts'
 import type { ResearchPurpose } from '../src/along/research-store.ts'
 import { startRuntime } from './fixtures/host.ts'
 import { alongKind } from '../src/sources/along.ts'
@@ -405,4 +405,20 @@ it('does not infer overall clear alerts from mixed active warnings or the absenc
   input.options[0]!.checks[1]!.alertEvidence=[{sourceId:source.id,quote}]
   expect(recommendation(store.research,scope,input)).toMatchObject({status:'partial',options:[{status:'conditional',checks:[{status:'ok'},{status:'unknown'}]}]})
  }
+})
+it('uses an explicit page publication date instead of search metadata, and leaves missing page dates unverified',async()=>{
+ const {store,scope}=fixture(),signal=new AbortController().signal
+ let body='# 生态行，绿道游\n\n发布时间：\n\n2019-05-21\n\n绿道总长约16.5公里。'
+ const web:ResearchWeb={assertProvider:()=>{},search:async()=>({sources:[{url:'https://www.baiyunshan.com.cn/bys/jqxw/201905/route.shtml',title:'绿道介绍',summary:'绿道总长约16.5公里',publishedAt:'2026-08-12T16:00:00Z'}],truncated:false}),fetch:async()=>({url:'https://www.baiyunshan.com.cn/bys/jqxw/201905/route.shtml',statusCode:200,body:{kind:'text',content:body},truncated:false})}
+ const tools=researchTools(store.research,()=>scope,()=>web,async value=>publicHttpsUrl(value))
+ const call=async(name:string,args:unknown)=>{const t=tools.find(t=>t.name===name)!;return await t.execute(t.schema.parse(args),signal) as any}
+ const search=await call('along_web_search',{query:'官方绿道长度',purpose:'route'})
+ expect(search.sources[0].publicationBasis).toBe('search')
+ const fetched=await call('along_web_fetch',{source_id:search.sources[0].id,purpose:'route'})
+ expect(fetched.source).toMatchObject({publishedAt:'2019-05-21T00:00:00.000Z',publicationBasis:'page',publicationHint:'2026-08-12T16:00:00.000Z'})
+ body='# 生态行，绿道游\n\n发布时间：\n\n浏览量：400\n\n绿道总长约16.5公里。'
+ const missing=await call('along_web_fetch',{source_id:search.sources[0].id,purpose:'route'})
+ expect(missing.source.publishedAt).toBeUndefined();expect(missing.source.publicationBasis).toBeUndefined()
+ expect(missing.source.publicationHint).toBe('2026-08-12T16:00:00.000Z')
+ expect(pagePublication('发布时间：2019-02-30')).toBeUndefined()
 })
