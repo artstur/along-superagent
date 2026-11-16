@@ -330,6 +330,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
 | `src/app/sessions.ts` | Sessions |
+| `src/app/tool-arguments.ts` | Strict argument parsing with optional tool-scoped repair output before any execution |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
 | `src/app/role-models.ts` | Resolves the Eval and Executor models, and seeds a new Session with its role's model |
@@ -427,6 +428,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/envelope.ts` | Strict Along event schemas and canonical payload hashing |
 | `src/along/inbox.ts` | Transactional acceptance, ownership, receipts and duplicate/conflict handling |
 | `src/along/runrecord.ts` | Deterministic registration of worker execution records and outbound notes |
+| `src/along/argument-recovery.ts` | Along ChangeSet/recommendation type repair paths and complete structural examples, preserving strict identity rejection |
 | `src/along/tool.ts` | Shared strict lossless JSON output for Along business and memory tools |
 | `src/along/tools.ts` | Host-bound goal, conversation, task, health and ChangeSet worker tools |
 | `src/along/worklink.ts` | Stable event/thread/ticket/assignment mapping and business work scopes |
@@ -435,6 +437,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 
 | Test | Covers |
 | --- | --- |
+| `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |

@@ -4,7 +4,7 @@ import type { MessageRow } from './store.ts'
 
 const explanation = z.string().trim().min(2).max(240)
 export const PLAN = z.discriminatedUnion('state', [
-  z.object({ state:z.literal('scheduled'), source:z.enum(['agent','user']), explanation,
+  z.object({ state:z.literal('scheduled'), source:z.enum(['agent','user']).describe('Only agent or user. Never manual, explicit or system.'), explanation:explanation.describe('Required plain-language reason. Mentioning weekly here does not set recurrence; set fields.repeat separately.'),
     evidence:z.string().trim().min(2).max(300).optional().describe('Exact text from this user message for a user-specified clock.'),
     action:z.string().trim().min(2).max(100).optional().describe('User-specified clock or recurring: identifying task action appearing in both the quoted clause and task content.'),
   }).strict(),
@@ -76,7 +76,12 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   if (!/每(?:个)?(?:星期|礼拜|周)|每逢(?:周|星期)|\b(?:weekly|every)\b/i.test(prefix)) return false
   // The day after “book” is the activity day. An explicit weekly appointment or delegated
   // reminder on the weekday before that action can establish the continuing schedule.
-  if (!delegated && !/提醒|通知|安排|预约|预订|叫我|remind|schedule|book/i.test(clause)) return false
+  // An explicit imperative to add a weekly action is a continuing mandate, even without a reminder verb.
+  // Require the quoted instruction itself and a command boundary; reported examples and narratives grant nothing.
+  const addition = /^(?:请)?补上每(?:个)?(?:周|星期|礼拜)/u.test(quote)
+    && /(?:^|[:：])(?:请)?补上每(?:个)?(?:周|星期|礼拜)/u.test(clause)
+    && !/比如|例如|示例|举例|他说|她说|提到|引用|听说/u.test(clause)
+  if (!delegated && !addition && !/提醒|通知|安排|预约|预订|叫我|remind|schedule|book/i.test(clause)) return false
   // A cadence directly qualified by weekdays (every Monday / 每周一和周四) takes
   // precedence over later dates qualifying the activity, including postposed bookings.
   const cadence=/(?:每(?:个)?(?:周|星期|礼拜)|每逢(?:周|星期))([一二三四五六日天](?:\s*(?:和|及|与|、|&|\/)\s*(?:(?:周|星期|礼拜))?[一二三四五六日天])*)/u.exec(prefix)
