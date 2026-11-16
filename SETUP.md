@@ -1,6 +1,6 @@
 # SETUP
 
-> 本文用于 Along Agent 的 GitHub / 飞书编程部署，保留 `dsh-superagent` 技术标识。Along 手机与本地目标部署从 [README](README.md#本地运行) 进入，无需按本文配置 GitHub 账号。
+> 本文用于 GitHub / 飞书编程 Agent 部署，保留 `dsh-superagent` 技术标识。Along 手机与 Mac 本地链路从相邻 Along 工程的[激活指南](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#一条命令激活本机服务2026-11-16)进入，无需配置 GitHub Agent 账号；全部入口见[文档导航](docs/README.md)。
 
 Instructions for an agent that sets up dsh-superagent with its operator. If you are a person, ask your coding agent to read this file and follow it.
 

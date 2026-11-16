@@ -50,6 +50,14 @@ describe('Hy-Memory private stdio owner', () => {
     expect(() => new HyMemoryBackend({ python: '/usr/bin/python3', script: '/tmp/owner.py', dataDir: '/tmp/memory',
       envFile: '/tmp/work/token.env', workerRoot: '/tmp/work' })).toThrow('must not overlap')
   })
+  it('rejects dot-prefixed data and credential paths within the worker root', () => {
+    const workerRoot = join(dir, 'work')
+    const common = { python: '/usr/bin/python3', script: join(dir, 'owner.py'), workerRoot }
+    expect(() => new HyMemoryBackend({ ...common, dataDir: join(workerRoot, '..memory'),
+      envFile: join(dir, 'secret.env') })).toThrow('must not overlap')
+    expect(() => new HyMemoryBackend({ ...common, dataDir: join(dir, 'memory'),
+      envFile: join(workerRoot, '..secret.env') })).toThrow('must not overlap')
+  })
   it('stops a queued request on close instead of launching another process', async () => {
     const client = start(loop("print(json.dumps({'id':r['id'],'ok':True,'result':[]}),flush=True)"))
     await client.search({ userId: 'u', query: 'a', limit: 1 })
