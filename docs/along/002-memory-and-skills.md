@@ -46,6 +46,8 @@
 
 ### 2.4 Hy-Memory 接入（第一期）
 
+独立 Memory Service 的实现、宿主接口与实测记录见 [长期记忆模块实施与验收](006-memory-implementation.md)。模块实现不代表 Runtime、聊天与统一定时作业已经接线；下述规则仍是完整阶段 D 的验收依据。
+
 用 SDK，不引入 MemHub 等桌面产品。一个常驻 Python 进程封装 `HyMemoryClient`，Along 的 Memory Service（TypeScript）通过本机协议调用。Worker 只看到 Memory Service 的业务操作，不直接拿到 SDK。
 
 起步配置（拟议，阶段 0 验证安装，阶段 D 验证质量）：

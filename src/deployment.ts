@@ -20,6 +20,8 @@ export const Config = s.object({
     .description('Pages of thread context one assessment may read.').volatile(),
   admissionContextTimeoutMs: s.number().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).step(1)
     .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
+  alongStateDir: absolute('Directory of the Along business database and its bridge token; required only when the Along local deployment is configured (the Along Source enabled and GitHub explicitly disabled), and never read for a GitHub profile. Optional.'),
+  alongBridgeTokenFile: absolute('File of the Host↔fork bridge token (32-byte hex, mode 0600, generated on first start); required only for the Along local deployment. Optional.'),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
@@ -27,6 +29,10 @@ export interface Machine {
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
+  /** Along business database directory (`~/.along/along-data` in the reference layout); set only for the Along local deployment (design §1.3/§4.7, SD-5). */
+  alongStateDir?: string
+  /** File of the Host↔fork bridge token; set only for the Along local deployment. */
+  alongBridgeTokenFile?: string
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
@@ -38,8 +44,11 @@ const MOVED: Record<string, string> = {
 export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }
+  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, alongStateDir, alongBridgeTokenFile } = config
+  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs,
+    // Optional Along keys (design §4.7): read only when the local deployment assembles; `undefined` for a GitHub profile.
+    ...(alongStateDir !== undefined ? { alongStateDir } : {}),
+    ...(alongBridgeTokenFile !== undefined ? { alongBridgeTokenFile } : {}) }
 }
 
 export const GithubAccountsSchema = z.object({

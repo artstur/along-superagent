@@ -51,6 +51,15 @@ describe('Along phase 0: current startup and extension boundaries', () => {
     expect(h.runtime.configured()).toBe(true)
     expect(h.runtime.deployment).not.toHaveProperty('github')
     expect(h.runtime.deployment).not.toHaveProperty('repository')
+    // Stage A skeleton (design §2.7): the same probe now runs the assembled Along deployment — business store
+    // under the fixture state dir, loopback API answering the Host's probe over the generated bridge token.
+    expect(h.runtime.along).toBeDefined()
+    expect(h.runtime.along!.stateDir).toBe(join(h.directory, 'along-data'))
+    expect(h.runtime.along!.bridgeToken).toMatch(/^[a-f0-9]{64}$/)
+    const sourceProbe = await h.alongApi('GET', 'goals/along-status-probe', undefined,
+      { 'x-along-bridge': '1', 'x-along-bridge-token': h.runtime.along!.bridgeToken,
+        'x-along-user': 'u_00000001', 'x-along-device': 'd_00000001' })
+    expect(sourceProbe).toMatchObject({ status: 200, body: { service: 'along-source', ready: true } })
     expect(h.agents.has(h.runtime.masterId)).toBe(true)
     expect(h.subprocess.spawn.mock.calls).toEqual([])
     const shim = spawnSync(join(h.directory, 'worker-bin', 'gh'), ['api', 'user'], { encoding: 'utf8' })

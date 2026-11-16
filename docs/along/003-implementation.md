@@ -6,7 +6,7 @@
 
 | 能力 | 现状 | 依据与扩展位置 |
 | --- | --- | --- |
-| Trigger 与来源扩展 | 已有，Along Source 最小插件已注册；手机事件接入待实现 | [Trigger](../../src/core/model.ts)、[SourceKind](../../src/sources/kind.ts)、[接入示例](../008-cookbook.md) |
+| Trigger 与来源扩展 | Along Source、配对身份与事件接入已实现；手机真机联调待验 | [Trigger](../../src/core/model.ts)、[SourceKind](../../src/sources/kind.ts)、[阶段 A 集成](005-phase-a-integration.md) |
 | 去重、订阅、评估与路由 | 已有，工作线程语义需适配 | [Intake](../../src/core/intake.ts)、[Engine](../../src/core/engine.ts) |
 | Policy、Mandate 与主动模式 | 复用；默认 `observe`，需新增 Along `auto` 规则 | [授权设计](../002-authorization.md)、[Policy](../../src/policy.ts) |
 | Ticket、Assignment、执行与恢复 | 复用 | [执行机制](../003-execution.md)、[DshExecutor](../../src/executor/dsh.ts) |
@@ -14,10 +14,10 @@
 | Skill 注册 | 已有，不支持按派工固定版本 | `Sessions.bindSkills`、[Prompts](../../src/app/prompts.ts) |
 | 非编程场景启动 | 已支持显式启用 Along、关闭 GitHub 的本地部署 | [Setup](../../src/app/setup.ts)、[Runtime](../../src/app/runtime.ts) |
 | 定时调度 | 没有，需新增 | 见 [记忆与技能 §4](002-memory-and-skills.md#4-定时批量作业) |
-| 业务存储、完整对话、记忆治理 | 新增 | 独立 Along 业务模块与 `along.sqlite` |
-| Hy-Memory | 固定版本安装及真实服务冒烟通过；常驻服务、治理与质量待实现验收 | Python 记忆进程与 Memory Service 适配器 |
+| 业务存储、完整对话、记忆治理 | 阶段 A 基座在集成；独立记忆治理模块已实现，宿主接线待做 | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
+| Hy-Memory | 固定版本安装、独立常驻进程适配和中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
 | 健康 7 类摘要 | Along 已有，需接入新协议 | [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) |
-| 自动生效 | Along 现有采用流程需迁移 | Along Host、共享校验、页面、文档与测试 |
+| 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，fork `tests/along-phaseB.spec.ts` |
 
 Along Host 已有 DSH 上游调用协议，但不能据此推定当前 fork 已实现对应服务，两个仓库的接口要实际联调。[Along 当前技术链路](../../../Along/docs/goal-agent-flow.md)是兼容核对入口。
 

@@ -1,5 +1,6 @@
-/** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, and reporting status. */
+/** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, reporting status, and — when the Along service is installed — reading and committing the Along business state. */
 import { z } from 'zod'
+import { alongTools, type AlongToolsHost } from '../../along/tools.ts'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
 import { claimPull, readPull } from '../../sources/github-pull.ts'
@@ -17,6 +18,8 @@ export interface ExecutorToolsHost {
   readonly resources: ResourceHost
   /** GitHub Source context whose pull-request rules govern claiming a reported PR. */
   readonly github: SourceContext
+  /** Along business tools' host binding (store reads, changeset commits, work-scope lookup); absent without the Along service, keeping the profile unchanged. */
+  readonly along?: AlongToolsHost
   sendReplies(): Promise<void>
 }
 
@@ -101,5 +104,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         })
       },
     }),
+    // The Along business tools (along_goal_read … along_changes_commit) when the Along service is installed;
+    // registration is what makes them visible, the WORK_TOOLS allow-list only keeps them unmasked (§2.3.6).
+    ...(host.along !== undefined ? alongTools(host.along, ticketId) : []),
   ]
 }

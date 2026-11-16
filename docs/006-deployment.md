@@ -12,7 +12,7 @@ Plugin configuration holds the state directory and machine limits. Use the panel
 
 ### Local Along extension
 
-This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Runtime can then start without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. Along's authenticated phone ingress and business write tools are separate work; the Source descriptor alone does not expose an ingestion API.
+This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Configure absolute `alongStateDir` and `alongBridgeTokenFile` paths alongside `stateDir`; the business data must be outside the worker directory. Runtime assembles the business store, loopback ingress, worker tools and delivery pump, and generates the bridge token file on first startup. It starts without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. The iPhone reaches this API through Along Host with `ALONG_EVENT_INGEST=on` and `ALONG_BRIDGE_TOKEN_FILE` naming the same file. See the Along repository's `docs/stage-b-tech-design.md` for the chat cutover and local validation; health, memory lifecycle wiring and batch scheduling remain separate work.
 
 ### Permissions and isolation
 

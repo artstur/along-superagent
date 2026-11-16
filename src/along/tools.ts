@@ -1,0 +1,216 @@
+/**
+ * The Along worker tools: four reads bound to the user and the dispatch scope, validated ChangeSet writes,
+ * and durable conversational answers. The host
+ * binds the scope — the model cannot specify `user_id`, the ticket, or the goal (BC-07-04): no tool schema
+ * declares a `user_id`/`goal_id` write path, and strict schemas reject anything extra. Reads paginate; health
+ * summaries with an unadapted type (`adapter='pending'`) never reach the model context (001 §4.4).
+ *
+ * Memory tools (`along_memory_search`/`along_memory_forget`) wait for Hy-Memory in Stage D (D6, SD-3).
+ */
+import { z } from 'zod'
+import { createHash } from 'node:crypto'
+import type { Tool } from '../app/tools/tool.ts'
+import type { CommitScope } from './changeset.ts'
+import { ALONG_BASE_REVISION_SCHEMA, ALONG_ID_SCHEMA, ALONG_INPUT_VERSION_SCHEMA,
+  ALONG_OPS_SCHEMA, ALONG_REASON_SCHEMA, ALONG_METRIC_SCHEMA } from './changeset.ts'
+import type { AlongService } from './service.ts'
+import type { GoalRevisionRow, HealthSummaryRow, TaskRow } from './store.ts'
+
+/**
+ * Same contract as the shared `tool()` helper, defined locally: this module must not load app runtime code
+ * (`app/tools/tool.ts` sits on the pre-existing tool.ts → resources.ts → executor/dsh.ts → assessment.ts
+ * cycle, and entering it from the Along side would leave `assessment.ts` reading a half-initialized module).
+ */
+function jsonOutput(value: unknown): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (Array.isArray(value)) return value.map(jsonOutput)
+  if (value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).map(([name, item]) => [name, jsonOutput(item)]))
+  }
+  throw new Error('Along tool returned a non-JSON value')
+}
+// Harness 0.2.2 checks lossless JSON before rendering. Optional object fields are absent on the wire;
+// invalid array items, non-finite numbers and non-JSON objects still fail rather than becoming null.
+const alongTool = <S extends z.ZodType>(definition: { name: string; description: string; schema: S
+  execute: (args: z.infer<S>, signal: AbortSignal) => Promise<unknown> }): Tool => ({ ...definition,
+    execute: async (args: z.infer<S>, signal: AbortSignal) => jsonOutput(await definition.execute(args, signal)),
+  }) as unknown as Tool
+
+// Custom goals have no configurable metric. Make that invariant explicit in the model's parameter schema
+// instead of an object/null union. The complete business schema still validates the derived operations.
+const [createGoalOperation, ...otherOperations] = ALONG_OPS_SCHEMA.element.options
+const TOOL_OPS_SCHEMA = z.array(z.union([
+  createGoalOperation.extend({ domain: z.literal('custom'), metric: z.null().optional().describe('Omit for custom goals; the host supplies null.') }),
+  createGoalOperation.extend({ domain: z.enum(['health', 'finance']), metric: ALONG_METRIC_SCHEMA }),
+  ...otherOperations,
+])).min(1)
+
+/** Host dependencies of the Along tools; the Runtime assembles them when the Along service is installed. */
+export interface AlongToolsHost {
+  /** The assembled business service: reads through the store, commits through the changeset module. */
+  readonly service: Pick<AlongService, 'alongStore' | 'commitChangeSet'>
+  /** Reverse lookup of the host-bound scope for a ticket — worklink's `workScopeForTicket` in production (§2.5). */
+  readonly scopeFor: (ticketId: string) => CommitScope | undefined
+}
+
+/** The D5 seven health summary types; unknown types are stored with `adapter='pending'` by the receiver. */
+const HEALTH_TYPES = ['steps', 'workout', 'active_energy', 'weight', 'resting_heart_rate', 'wrist_temperature', 'sleep'] as const
+
+const taskView = (task: TaskRow) => ({ task_id: task.id, status: task.status, revision: task.currentRevision,
+  content: task.content, scheduled_at: task.scheduledAt, goal_id: task.goalId })
+
+const revisionView = (revision: GoalRevisionRow) => ({ revision: revision.revision, title: revision.title,
+  metric: revision.metric, context: revision.context, status: revision.status, basis_changeset: revision.basisChangeset,
+  origin_event_id: revision.originEventId, created_at: revision.createdAt })
+
+const summaryView = (summary: HealthSummaryRow) => ({
+  type: summary.type, value: summary.value, metric_version: summary.metricVersion, timezone: summary.timezone,
+  availability: summary.availability,
+  ...(summary.windowStart !== undefined ? { window: { start: summary.windowStart, end: summary.windowEnd } } : {}),
+})
+
+/** The Along tools of one worker ticket; registered by `executorTools` alongside the DSH work tools (D8). */
+export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
+  const store = host.service.alongStore
+  const scope = (): CommitScope => {
+    const bound = host.scopeFor(ticketId)
+    if (bound === undefined) throw new Error(`ticket ${ticketId} has no Along work scope; Along tools are unavailable`)
+    return bound
+  }
+  // Reads are bound to the dispatch scope: a bound ticket reads its own goal (a foreign goal_id is refused);
+  // an unbound ticket must name a goal_id, which the store still ownership-checks (BC-07-05).
+  const readableGoalId = (bound: CommitScope, provided?: string): string => {
+    if (provided !== undefined) {
+      if (bound.allowedGoalId !== undefined && provided !== bound.allowedGoalId) {
+        throw new Error(`along tools are bound to goal ${bound.allowedGoalId}; goal ${provided} is outside this work's dispatch scope`)
+      }
+      return provided
+    }
+    if (bound.allowedGoalId !== undefined) return bound.allowedGoalId
+    throw new Error('no goal is bound to this ticket; pass goal_id to name the goal to read')
+  }
+  return [
+    alongTool({
+      name: 'along_goal_read',
+      description: 'Read the current state of one Along goal: domain, status, current revision, input version, title, metric and context, with its tasks and optionally its full revision history. Reads are bound to the dispatched goal; commit base_revision/input_version come from current_revision/input_version here.',
+      schema: z.object({
+        goal_id: ALONG_ID_SCHEMA.optional().describe('Defaults to the goal bound to this ticket.'),
+        include_revisions: z.boolean().optional().describe('Include the goal\'s full revision history.'),
+      }).strict(),
+      execute: async args => {
+        const bound = scope()
+        const goalId = readableGoalId(bound, args.goal_id)
+        const detail = store.goalDetail(bound.userId, goalId)
+        return {
+          goal: { goal_id: detail.goal.id, domain: detail.goal.domain, status: detail.goal.status,
+            current_revision: detail.goal.currentRevision, input_version: store.inputVersion(goalId),
+            title: detail.revision?.title, metric: detail.revision?.metric, context: detail.revision?.context },
+          tasks: detail.tasks.map(taskView),
+          ...(args.include_revisions === true ? { revisions: store.goalRevisions(goalId).map(revisionView) } : {}),
+        }
+      },
+    }),
+    alongTool({
+      name: 'along_conversation_read',
+      description: 'Read one page of the bound goal\'s conversation, newest page first, chronologically inside a page by seq; pass next_before_seq to page further back. Includes the user\'s messages and the system-side execution notes.',
+      schema: z.object({
+        before_seq: z.number().int().min(0).optional().describe('Copy next_before_seq from the previous page.'),
+        limit: z.number().int().min(1).max(50).optional().describe('Messages per page, 20 by default and 50 at most.'),
+      }).strict(),
+      execute: async args => {
+        const bound = scope()
+        const limit = args.limit ?? 20
+        if (bound.allowedGoalId === undefined && bound.triggerEventId === undefined) throw new Error('no conversation is bound to this ticket')
+        const history = bound.allowedGoalId === undefined
+          ? store.conversationMessages(bound.userId, bound.triggerEventId!).filter(message => args.before_seq === undefined || message.seq < args.before_seq)
+          : undefined
+        const page = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
+          { beforeSeq: args.before_seq, limit }) : { items: history.slice(-limit),
+            nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
+        return { messages: page.items.map(message =>
+            ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
+          ...(page.nextCursor !== undefined ? { next_before_seq: Number(page.nextCursor) } : {}) }
+      },
+    }),
+    alongTool({
+      name: 'along_task_list',
+      description: 'List the user\'s tasks with their stable ids, statuses and revisions — scoped to the bound goal when one is bound; use their task_id and revision for task.update and task.cancel in along_changes_commit.',
+      schema: z.object({
+        status: z.enum(['open', 'done', 'cancelled']).optional(),
+      }).strict(),
+      execute: async args => {
+        const bound = scope()
+        const page = store.listTasks(bound.userId, { goalId: bound.allowedGoalId, status: args.status }, { limit: 100 })
+        return { tasks: page.items.map(taskView) }
+      },
+    }),
+    alongTool({
+      name: 'along_health_read',
+      description: 'Read the current health summaries the phone has synced: value, window, timezone, availability and metric version per type. Types the server has not adapted yet are withheld; a missing permission, unavailable data or a not-yet-synced type is reported as availability instead of an empty value.',
+      schema: z.object({
+        type: z.enum(HEALTH_TYPES).optional().describe('One summary type; omit for all adapted types.'),
+      }).strict(),
+      execute: async args => {
+        const bound = scope()
+        const summaries = store.latestHealthSummaries(bound.userId)
+          .filter(summary => summary.adapter === 'known') // 待适配类型不进模型上下文（001 §4.4）
+          .filter(summary => args.type === undefined || summary.type === args.type)
+        return { summaries: summaries.map(summaryView) }
+      },
+    }),
+    alongTool({
+      name: 'along_chat_reply',
+      description: 'Persist the user-facing answer to this work\'s original chat. Read along_conversation_read first. Respond to observations or ask one essential question without creating a goal. After applied changes describe the result. One answer per original event; retries with identical text reuse it. Identity and conversation are host-bound. Superseded inputs return conflicted_input: let the newer work answer.',
+      schema: z.object({ text: z.string().trim().min(1).max(1200) }).strict(),
+      execute: async args => store.atomic(() => {
+        const bound = scope()
+        if (bound.triggerEventId === undefined) throw new Error('no chat is bound to this ticket')
+        const source = store.getMessage(bound.userId, `msg:${bound.userId}:${bound.triggerEventId}`)
+        if (!source || source.role !== 'user' || source.direction !== 'inbound') throw new Error('no user chat is bound to this ticket')
+        const root = store.conversationRoot(bound.userId, source.eventId)
+        const goalId = bound.allowedGoalId ?? store.conversationGoal(bound.userId, root)
+        const eventId = `reply_${createHash('sha256').update(source.id).digest('hex').slice(0, 40)}`
+        const existing = store.getMessage(bound.userId, `msg:${bound.userId}:${eventId}`)
+        if (existing) {
+          if (existing.text !== args.text) throw new Error('reply already exists with different text')
+          return { status: 'replied', message_id: existing.id, reused: true }
+        }
+        if (!store.isCurrentChatInput(bound.userId, source.eventId, goalId)) return { status: 'conflicted', reason: 'conflicted_input' }
+        const message = store.appendMessage({ userId: bound.userId, eventId, role: 'assistant', direction: 'outbound',
+          text: args.text, causationId: root, replyToMessageId: source.id })
+        if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
+        store.appendSync({ userId: bound.userId, kind: 'message', goalId, messageId: message.id,
+          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root } })
+        return { status: 'replied', message_id: message.id, reused: false }
+      }),
+    }),
+    alongTool({
+      name: 'along_changes_commit',
+      description: 'Commit one ChangeSet that applies goal/task operations atomically after validation: schema, object relations, input version and business revision. The user, ticket and goal are bound by the host — never pass user_id or goal_id. Take base_revision from along_goal_read\'s current_revision and input_version from its input_version; a goal.create ChangeSet (no bound goal yet) takes base_revision 0. On reason conflicted_input/conflicted_revision the state moved: re-read and resubmit with a fresh idempotency_key; on invalid fix the operations; applied means it is already in effect (no approval step).',
+      schema: z.object({
+        idempotency_key: z.string().min(1).max(128)
+          .describe('Stable key of this very submission; a retry under the same key returns the original result.'),
+        base_revision: ALONG_BASE_REVISION_SCHEMA,
+        input_version: ALONG_INPUT_VERSION_SCHEMA,
+        reason: ALONG_REASON_SCHEMA.describe('One-sentence change note the user will see.'),
+        derived_from_changeset: ALONG_ID_SCHEMA.optional()
+          .describe('For「改回去」: the applied ChangeSet whose goal snapshot is restored; fields must match or be omitted.'),
+        ops: TOOL_OPS_SCHEMA.describe('For qualitative goals choose custom and omit metric. Numeric health/finance goals require type, target, unit and period. All operations go through full business validation.'),
+      }).strict(),
+      execute: async args => {
+        const bound = scope()
+        const createFirst = args.ops[0] !== undefined && args.ops[0].op === 'goal.create'
+        if (createFirst && (bound.triggerEventId === undefined || store.findInboxEvent(bound.userId, bound.triggerEventId)?.eventType !== 'along.user_message')) {
+          throw new Error('goal creation requires a host-bound user chat')
+        }
+        if (bound.allowedGoalId === undefined && !createFirst) {
+          throw new Error('no goal is bound to this ticket; only a ChangeSet whose first op is goal.create can be committed')
+        }
+        const ops = ALONG_OPS_SCHEMA.parse(args.ops.map(op => op.op === 'goal.create' && op.domain === 'custom' ? { ...op, metric: null } : op))
+        return host.service.commitChangeSet(
+          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, bound)
+      },
+    }),
+  ]
+}

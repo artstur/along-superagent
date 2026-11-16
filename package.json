@@ -17,6 +17,7 @@
     "./github-watch": "./lib/github-watch.js",
     "./feishu-watch": "./lib/feishu-watch.js",
     "./along-source": "./lib/along-source.js",
+    "./along-memory": { "types": "./lib/along-memory.d.ts", "default": "./lib/along-memory.js" },
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
@@ -26,7 +27,8 @@
     "locale/*.json",
     "README.md",
     "prompts",
-    "skills"
+    "skills",
+    "scripts/along-memory-service.py"
   ],
   "dsh": {
     "bundle": {

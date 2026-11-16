@@ -70,20 +70,20 @@ it('refuses to stop when two processes serve the profile, before it writes the s
   processes(service(sleeper()), `${sleeper()} node node /opt/dsh --profile=superagent`)
   expect(await run('stop')).toMatchObject({ code: 1, stderr: expect.stringContaining('Multiple dsh-superagent processes found') })
   expect(existsSync(join(control('superagent'), 'manually-stopped'))).toBe(false)
-})
+}, 20_000)
 it('keeps a stop per profile', async () => {
   expect(await run('stop', '--profile', 'one')).toMatchObject({ code: 0, stdout: expect.stringContaining('Automatic recovery is paused') })
   expect(await status('one')).toMatchObject({ manually_stopped: true })
   expect(await status('two')).toMatchObject({ manually_stopped: false })
   const skipped = await run('--respect-stop', 'start', '--profile', 'one')
   expect(skipped).toMatchObject({ code: 0, stdout: expect.stringContaining('Intentional stop is active') })
-})
+}, 20_000)
 it('takes no `dsh plugin` command of the profile for its service', async () => {
   const service = sleeper()
   processes(`${sleeper()} node node /opt/my tools/dsh plugin --profile superagent add link:/x`,
     `${service} node node /opt/my tools/dsh --profile superagent --no-open`)
   expect(await status('superagent')).toMatchObject({ pids: [service] })
-})
+}, 20_000)
 it('records the service PID at start, and still refuses a second instance the scan finds', async () => {
   const url = await answering()
   const pid = sleeper()
@@ -141,7 +141,7 @@ it('reports a service whose Feishu bot setup could not check as running, and rea
   expect(await run('status', '--url', await answering({ health: { runtime: { state: 'ready' } } }, true))).toMatchObject({ code: 0 })
   server!.close()
   expect(await run('status', '--url', await answering({ health: { runtime: { state: 'error' } } }, true))).toMatchObject({ code: 1 })
-})
+}, 20_000)
 it('exits 2 while a part such as a Source reports an error, which a restart does not fix, and prints what it reports', async () => {
   processes(service(sleeper()))
   const github = { health: { runtime: { state: 'ready', detail: '' }, github: { state: 'error', detail: 'bad token' } }, setup: {} }

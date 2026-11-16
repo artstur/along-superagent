@@ -56,10 +56,13 @@ declare module '@deepseek-ai/cordis' {
  * The DSH tools an Executor Session works with: files, search, the shell and its jobs, the web, skills, its todo list and
  * subagents. It gets no other tool the profile has, whenever it was registered: none that asks or shows a person something,
  * changes the profile, schedules work or starts goals outside the worker slots, the pause and a person's hold, starts or
- * messages other Sessions, or edits documents.
+ * messages other Sessions, or edits documents. The Along business tools are appended here (003 §1) so they stay
+ * unmasked by the `restrict` allow-list once `executorTools` registers them; the list only filters names the
+ * Session actually has, so without the Along service installed nothing changes.
  */
-const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
-  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
+export const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
+  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
+  'along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_changes_commit', 'along_chat_reply']
 /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
 const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
   + 'end the turn instead of waiting for them.'
@@ -245,7 +248,12 @@ export class Sessions {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
+      const along = current?.mandate.actor?.source === 'along'
+      const settings = host.store.settings()
+      const alongRouter = master && settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+        + (along ? `\n\n## Along personal goal work\nThis ticket maintains the user's personal goal workspace, not this repository. The following Along contract governs the business task.\n${bundledSkills.alongGoal.content}\n\n${bundledSkills.alongTask.content}` : '')
+        + (alongRouter ? '\n\n## Along local conversation routing\nThis installation serves personal goal conversations, not repository change requests. Every admitted Along user_message needs conversational work, including observations and questions. Accept it as a Ticket or attach it when the existing routing rules permit; a Worker reads the original conversation and responds with along_chat_reply. The Worker decides whether goal/task changes are justified. An observation needs a response without creating a goal; it is never ignored merely because it asks for no repository change. Preserve user stops, pause and authorization.' : '')
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
@@ -322,6 +330,10 @@ export class Sessions {
       const description = bundled?.description ?? (body.replace(/\s+/g, ' ').slice(0, 120) || 'Custom dsh-superagent operational skill.')
       disposers.push(scope.skills.register({ name: `${SKILL_PREFIX}${name}`, description, content, source: 'runtime',
         ...(bundled ? { resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } } : {}) }))
+    }
+    for (const bundled of [bundledSkills.alongGoal, bundledSkills.alongTask]) {
+      disposers.push(scope.skills.register({ name: bundled.name, description: bundled.description, content: bundled.content, source: 'runtime',
+        resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } }))
     }
     binding.skills = { revision: version.revision, dispose: () => { disposers.forEach(dispose => dispose()) } }
   }
