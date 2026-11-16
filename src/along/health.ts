@@ -11,6 +11,7 @@ import type { Store } from '../app/store.ts'
 import type { AlongStore, HealthSummaryRow } from './store.ts'
 import type { HealthDispatch } from './health-store.ts'
 import { HEALTH_SUMMARY_TYPES } from './envelope.ts'
+import { supportsRecurrence } from './reminder-plan.ts'
 import { hasDailyMandate, nextDailyTime } from './task-schedule.ts'
 import { alongTool } from './tool.ts'
 
@@ -353,7 +354,8 @@ export class HealthFollowup {
     const eligible = d?.due ? this.dueSummaries(d.userId, d.goalId, d.due.dueAt).filter(s => summaries.some(row => row.id === s.id)) : summaries
     if (d && !d.result) this.host.store.health.read(d.eventId, eligible)
     return { summaries: eligible, ...(d?.due ? { review: { ...d.due,
-      daily_evidence_event_id: this.host.store.health.daily(d.due.taskId)?.evidence } } : {}) }
+      daily_evidence_event_id: this.host.store.health.daily(d.due.taskId)?.weekday ? undefined : this.host.store.health.daily(d.due.taskId)?.evidence,
+      reminder_plan: this.host.store.getTask(d.userId,d.due.taskId)?.reminderPlan } } : {}) }
   }
   assertReport(ticketId: string, state: string): void {
     const d = this.forTicket(ticketId)
@@ -373,15 +375,18 @@ export class HealthFollowup {
     if (!prior && !store.health.soleTaskFromMandate(task.id, d.goalId, evidence)) throw new Error('no bound daily user mandate for this task')
     if (prior && prior.evidence !== evidence) throw new Error('daily mandate belongs to another instruction')
     const message = store.getMessage(d.userId, `msg:${d.userId}:${evidence}`)
+    const supported = message && (prior?.quote && prior.action
+      ? supportsRecurrence(message.text,prior.quote,prior.action,task.content,prior.weekday ? 'weekly' : 'daily',prior.weekday ?? 1)
+      : hasDailyMandate(message.text))
     if (task.status !== 'open' || !task.scheduledAt || !message || message.role !== 'user'
-      || message.direction !== 'inbound' || !message.timezone || !hasDailyMandate(message.text)
+      || message.direction !== 'inbound' || !message.timezone || !supported
       || !store.messageLinkedToGoal(message.id, d.goalId)) {
       if (inherited) { store.health.setDaily(task.id); return }
       throw new Error('no bound daily user mandate')
     }
     const wallTime = task.scheduledAt !== due.dueAt ? task.scheduledAt : prior?.wallTime ?? due.dueAt
-    const next = nextDailyTime(due.dueAt, message.timezone, Date.now(), wallTime)
-    store.health.setDaily(task.id, { eventId: evidence, zone: message.timezone, wallTime })
+    const next = nextDailyTime(due.dueAt, message.timezone, Date.now(), wallTime,prior?.weekday)
+    store.health.setDaily(task.id, { ...prior,eventId: evidence, zone: message.timezone, wallTime })
     // Respect a different future time explicitly selected by this review.
     if (Date.parse(task.scheduledAt) > Date.now()) return
     const revision = store.appendTaskRevision({ taskId: task.id, userId: d.userId, scheduledAt: next, originEventId: d.eventId })

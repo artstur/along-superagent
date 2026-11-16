@@ -29,6 +29,13 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
   2: db => { db.exec(MEMORY_DDL) }, 3: db => { db.exec(MAINTENANCE_DDL) }, 4: db => { db.exec(HEALTH_DDL) },
   5: db => { db.exec(TASK_SCHEDULE_DDL) },
+  6: db => {
+    db.exec('CREATE TABLE IF NOT EXISTS task_reminder_plan (task_id TEXT PRIMARY KEY REFERENCES user_task(id), plan TEXT NOT NULL)')
+    const existing = new Set(db.prepare('PRAGMA table_info(task_daily)').all().map(row => row.name))
+    for (const [column,type] of [['weekday','INTEGER'],['evidence_quote','TEXT'],['task_action','TEXT']] as const) {
+      if (!existing.has(column)) db.exec(`ALTER TABLE task_daily ADD COLUMN ${column} ${type}`)
+    }
+  },
 }
 
 /**
