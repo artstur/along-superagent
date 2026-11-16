@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import type { HealthFollowup } from '../../along/health.ts'
 import { alongTools, type AlongToolsHost } from '../../along/tools.ts'
+import { assertAlongReport } from '../../along/completion.ts'
 import type { AlongMaintenance } from '../../along/maintenance.ts'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
@@ -100,6 +101,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         return host.store.atomic(() => {
           const refused = pull && claimPull(host.github, ticketId, pull)
           if (refused) throw new Error(refused)
+          if(host.along)assertAlongReport(host.along,ticketId,args.state)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }

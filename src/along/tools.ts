@@ -7,6 +7,7 @@
  *
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
+import { weeklyCompletionNotice } from './completion.ts'
 import { isDeepStrictEqual } from 'node:util'
 import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { researchTools, type ResearchWeb } from './web-research.ts'
@@ -210,12 +211,14 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const task = taskId && store.getTask(bound.userId, taskId)
         if (args.notify && (!goal || goal.status !== 'active')) throw new Error('notifications require an active bound goal')
         if (taskId && ((!args.notify&&!args.recommendation) || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
-        const structured = args.recommendation ? recommendation(store.research,researchScope(),args.recommendation) : undefined
+        let structured = args.recommendation ? recommendation(store.research,researchScope(),args.recommendation) : undefined
+        const completionNotice=structured?weeklyCompletionNotice(host,ticketId):undefined
+        if(structured&&completionNotice)structured={...structured,summary:(completionNotice+' '+structured.summary).slice(0,1200),nextStep:(completionNotice+' '+structured.nextStep).slice(0,600)}
         const notify = structured ? recommendationNotice(structured,task||undefined) : args.notify
         const notification = notify && goal ? { event_id: eventId, kind: notify,
           revision: task ? task.currentRevision : goal.currentRevision } : undefined
         const message = store.appendMessage({ userId: bound.userId, eventId, role: 'assistant', direction: 'outbound',
-          text: recommendationText(structured,args.text), causationId: root, replyToMessageId: source.id })
+          text: structured&&completionNotice?[structured.summary,structured.nextStep].join('\n').slice(0,1200):recommendationText(structured,args.text), causationId: root, replyToMessageId: source.id })
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
         store.research.saveReply(message.id,args,structured,notification)
         store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId, messageId: message.id,
