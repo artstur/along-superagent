@@ -201,7 +201,9 @@ async function route(host: AlongApiHost, identity: AlongIdentity, method: string
     requireQueryUser(query, identity)
     const afterSeq = intParam(query, 'after_seq', 0)
     if (afterSeq < 0) throw new AlongApiError(400, 'invalid_param')
-    return ok(store.workspaceSync(identity.userId, afterSeq, pageLimit(query, MAX_PAGE_LIMIT)))
+    const conversationVersion = query.get('conversation_version')
+    if (conversationVersion !== null && conversationVersion !== '1') throw new AlongApiError(400, 'invalid_param')
+    return ok(store.workspaceSync(identity.userId, afterSeq, pageLimit(query, MAX_PAGE_LIMIT), conversationVersion === '1' ? 1 : 0))
   }
   if (method === 'POST' && path === 'sync/ack') {
     const input = SyncAckSchema.parse(await body())

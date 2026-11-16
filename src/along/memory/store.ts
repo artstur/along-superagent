@@ -37,9 +37,9 @@ export class MemoryStore {
     if (this.rows('SELECT id FROM goal WHERE user_id=? AND id=?', userId, goalId).length !== 1) throw new Error('memory resource not found')
   }
   blocked(userId: string, messageId: string): boolean {
-    return this.rows('SELECT 1 FROM memory_blocked_source WHERE user_id=? AND message_id=?', userId, messageId).length > 0
+    return this.rows("SELECT 1 FROM memory_blocked_source WHERE user_id=? AND message_id=? UNION ALL SELECT 1 FROM message_audience_audit WHERE user_id=? AND message_id=? LIMIT 1", userId, messageId, userId, messageId).length > 0
   }
-  /** Only directly withdrawn evidence is withheld; unrelated older conversation remains available to planning. */
+  /** Withdrawn or evidence-audited development input is withheld; real older conversation remains available. */
   contextAllowed(userId: string, messageId: string, text: string): boolean {
     const row = this.rows('SELECT seq,text FROM message WHERE user_id=? AND id=?', userId, messageId)[0]
     if (!row || row.text !== text || this.blocked(userId, messageId)) return false
@@ -50,6 +50,7 @@ export class MemoryStore {
     if (ids?.length === 0) return []
     const rows = this.rows(`SELECT m.* FROM message m LEFT JOIN event_inbox e ON e.user_id=m.user_id AND e.event_id=m.event_id
       WHERE m.user_id=? AND m.seq<=? AND m.role='user' AND m.direction='inbound'
+      AND NOT EXISTS(SELECT 1 FROM message_audience_audit a WHERE a.user_id=m.user_id AND a.message_id=m.id)
       AND (e.event_id IS NULL OR (e.event_type='along.user_message' AND e.status='accepted'))
       AND NOT EXISTS(SELECT 1 FROM memory_blocked_source b WHERE b.user_id=m.user_id AND b.message_id=m.id)
       AND (m.seq > COALESCE((SELECT MAX(s.through_seq) FROM memory_suppression s WHERE s.user_id=m.user_id),0)

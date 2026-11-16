@@ -179,7 +179,7 @@ it('preserves a task feedback association through real inbox, WorkLink and recom
   await h.runtime.idle();await vi.waitFor(()=>expect(h.tools.has('worker-'+ticketId)).toBe(true),{timeout:10000})
   expect(store.getWorkLink(ticketId)?.taskId).toBe(task.id)
   expect(await h.runTool('worker-'+ticketId,'along_goal_read',{})).toMatchObject({bound_task_id:task.id})
-  expect(await h.runTool('worker-'+ticketId,'along_conversation_read',{})).toMatchObject({messages:expect.arrayContaining([expect.objectContaining({event_id:oldFeedback,text:'之前走过这条路线，想换一个。'})])})
+  expect(await h.runTool('worker-'+ticketId,'along_conversation_read',{})).toMatchObject({task_feedback:expect.arrayContaining([expect.objectContaining({event_id:oldFeedback,source:'task_event',text:'之前走过这条路线，想换一个。'})])})
   const rec={kind:'general',title:'备选信息暂不可用',summary:'稍后重试',constraints:[],options:[],nextStep:'稍后继续'}
   await h.runTool('worker-'+ticketId,'along_chat_reply',{text:'检索暂不可用，可以稍后继续。',recommendation:rec})
   const reply=store.syncPage(userId,0,200).items.find(i=>(i.payload as any).recommendation)

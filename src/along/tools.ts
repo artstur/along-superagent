@@ -130,7 +130,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     }),
     alongTool({
       name: 'along_conversation_read',
-      description: 'Read one page of the bound goal\'s conversation, newest page first, chronologically inside a page by seq; pass next_before_seq to page further back. Includes original messages, timestamps, effective memories and status-labelled memory_history. Current explicit intent takes priority; use source order and meaning to understand updates.',
+      description: 'Read one page of the bound goal\'s conversation, newest page first, chronologically inside a page by seq; pass next_before_seq to page further back. Includes only direct conversation in messages; task-event facts are separately labelled task_feedback, never user chat. Includes timestamps, effective memories and status-labelled memory_history. Current explicit intent takes priority; use source order and meaning to understand updates.',
       schema: z.object({
         before_seq: z.number().int().min(0).optional().describe('Copy next_before_seq from the previous page.'),
         limit: z.number().int().min(1).max(50).optional().describe('Messages per page, 20 by default and 50 at most.'),
@@ -140,19 +140,19 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const limit = args.limit ?? 20
         if (bound.allowedGoalId === undefined && bound.triggerEventId === undefined) throw new Error('no conversation is bound to this ticket')
         const history = bound.allowedGoalId === undefined
-          ? store.conversationMessages(bound.userId, bound.triggerEventId!).filter(message => args.before_seq === undefined || message.seq < args.before_seq)
+          ? store.conversationMessages(bound.userId, bound.triggerEventId!).filter(message => message.audience === 'conversation' && (args.before_seq === undefined || message.seq < args.before_seq))
           : undefined
-        let page: {items:MessageRow[];nextCursor?:string} = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
-          { beforeSeq: args.before_seq, limit }) : { items: history.slice(-limit),
-            nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
-        if(bound.allowedGoalId){
-          const feedback=store.taskFeedbackByGoal(bound.userId,bound.allowedGoalId,args.before_seq,limit+1)
-          const combined=[...new Map([...page.items,...feedback].map(message=>[message.id,message])).values()].sort((a,b)=>a.seq-b.seq)
-          const items=combined.slice(-limit)
-          page={items,nextCursor:combined.length>limit||page.nextCursor||feedback.length>limit?String(items[0]!.seq):undefined}
-        }
-        const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, page.items)
-        return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), messages: (context?.messages ?? page.items).map(message =>
+        const page: {items:MessageRow[];nextCursor?:string} = history === undefined
+          ? store.conversationContextPage(bound.userId, bound.allowedGoalId!, args.before_seq, limit)
+          : { items: history.slice(-limit), nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
+        const conversation=page.items.filter(message=>message.audience==='conversation')
+        const feedback=page.items.filter(message=>message.audience==='background').map(message=>{
+          const source=store.findInboxEvent(bound.userId,message.eventId)!
+          return {event_id:message.eventId,source:'task_event',kind:source.kind,task_id:source.taskId,
+            text:message.text,at:message.occurredAt??message.receivedAt}
+        })
+        const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, conversation)
+        return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), task_feedback:feedback, messages: (context?.messages ?? conversation).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
           ...(page.nextCursor !== undefined ? { next_before_seq: Number(page.nextCursor) } : {}) }
       },
@@ -196,7 +196,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const bound = scope()
         if (bound.triggerEventId === undefined) throw new Error('no chat is bound to this ticket')
         const source = store.getMessage(bound.userId, `msg:${bound.userId}:${bound.triggerEventId}`)
-        if (!source || source.role !== 'user' || source.direction !== 'inbound') throw new Error('no user chat is bound to this ticket')
+        if (!source || source.audience !== 'conversation' || source.role !== 'user' || source.direction !== 'inbound') throw new Error('no user chat is bound to this ticket')
         const root = store.conversationRoot(bound.userId, source.eventId)
         const goalId = bound.allowedGoalId ?? store.conversationGoal(bound.userId, root)
         const eventId = `reply_${createHash('sha256').update(source.id).digest('hex').slice(0, 40)}`

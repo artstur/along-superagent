@@ -32,7 +32,7 @@
  * state/summary as one `direction='outbound'`/`role='assistant'` message row with a deterministic id
  * (`msg:<user>:out:<ticket>:<assignment>` — re-registration never duplicates it), links it to the work's
  * goal (`message_goal_link`, derived), and appends one `message` sync item — with the inbound user
- * message this is BC-08-11's complete conversation in Stage A; the model chat reply's own row lands with
+ * message this retains Stage A's complete audit. These execution notes are background records, never chat; the model chat reply's own row lands with
  * the Stage B wiring. Message, link and sync land in one `atomic()` transaction of the shared store (记录
  * 写入走「存储」同一服务层与事务): a failure rolls the note back whole, the error is contained (§2.6 错误
  * 路径), and the next event for the same assignment rewrites it.
@@ -144,7 +144,7 @@ export function createRunRecord(deps: RunRecordDeps) {
       const id = `msg:${userId}:${eventId}`
       if (store.getMessage(userId, id) !== undefined) return
       const text = noteText(input.reportState, input.reportSummary, reason)
-      const message = store.appendMessage({ userId, eventId, role: 'assistant', direction: 'outbound', text })
+      const message = store.appendMessage({ userId, eventId, role: 'assistant', direction: 'outbound', audience:'background', text })
       if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
       store.appendSync({ userId, kind: 'message', goalId, messageId: message.id,
         payload: { message_id: message.id, goal_id: goalId, direction: 'outbound', text, presentation: 'execution' } })

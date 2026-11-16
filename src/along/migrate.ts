@@ -28,6 +28,20 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  8: db => {
+    const columns = new Set(db.prepare('PRAGMA table_info(message)').all().map(row => row.name))
+    if (!columns.has('audience')) db.exec("ALTER TABLE message ADD COLUMN audience TEXT NOT NULL DEFAULT 'conversation' CHECK(audience IN ('conversation','background'))")
+    db.exec(`CREATE TABLE IF NOT EXISTS message_audience_audit (
+      message_id TEXT PRIMARY KEY REFERENCES message(id), user_id TEXT NOT NULL,
+      source_event_id TEXT NOT NULL, evidence_ref TEXT NOT NULL, previous_audience TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    UPDATE message SET audience='background' WHERE id IN (
+      SELECT message_id FROM sync_outbox WHERE kind='message' AND json_valid(payload) AND json_extract(payload,'$.presentation')='execution'
+    ) OR EXISTS (SELECT 1 FROM health_dispatch d WHERE d.user_id=message.user_id
+      AND message.event_id='followup_'||d.event_id)
+      OR EXISTS (SELECT 1 FROM event_inbox e WHERE e.user_id=message.user_id AND e.event_id=message.event_id
+        AND e.status='accepted' AND e.event_type='along.message');`)
+  },
   7: db => { db.exec(RESEARCH_DDL) },
   2: db => { db.exec(MEMORY_DDL) }, 3: db => { db.exec(MAINTENANCE_DDL) }, 4: db => { db.exec(HEALTH_DDL) },
   5: db => { db.exec(TASK_SCHEDULE_DDL) },
