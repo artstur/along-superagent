@@ -1,5 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
-import { recommendation, RECOMMENDATION_INPUT } from './recommendation.ts'
+import { recommendation, RECOMMENDATION_INPUT, isResearchTaskContent } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -352,9 +352,11 @@ export class HealthFollowup {
   }
   read(ticketId: string, summaries: HealthSummaryRow[]) {
     const d = this.forTicket(ticketId)
+    const mandate=d?.due?this.host.store.health.daily(d.due.taskId):undefined
     const eligible = d?.due ? this.dueSummaries(d.userId, d.goalId, d.due.dueAt).filter(s => summaries.some(row => row.id === s.id)) : summaries
     if (d && !d.result) this.host.store.health.read(d.eventId, eligible)
-    return { summaries: eligible, ...(d?.due ? { review: { ...d.due,
+    return { summaries: eligible, ...(d?.due ? { review: { ...d.due, repeat:mandate?(mandate.weekday?'weekly':'daily'):'once',
+      ...(mandate?{timezone:mandate.zone,weekday:mandate.weekday,next_occurrence_if_kept:nextDailyTime(d.due.dueAt,mandate.zone,Date.now(),mandate.wallTime,mandate.weekday)}:{}),
       daily_evidence_event_id: this.host.store.health.daily(d.due.taskId)?.weekday ? undefined : this.host.store.health.daily(d.due.taskId)?.evidence,
       reminder_plan: this.host.store.getTask(d.userId,d.due.taskId)?.reminderPlan } } : {}) }
   }
@@ -433,6 +435,12 @@ export class HealthFollowup {
             const dailyEvidence = args.renew_daily_from_event ?? (d.due && store.health.daily(d.due.taskId)?.evidence)
             if (dailyEvidence) this.renewDaily(d, dailyEvidence, !args.renew_daily_from_event)
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId},args.recommendation):undefined
+            const currentTask=d.due?store.getTask(d.userId,d.due.taskId):undefined
+            const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
+            // A completed research result may notify; a completed physical activity must not be revived by a recommendation.
+            const completedResearch=currentTask?.status==='done'&&!!originalContent&&isResearchTaskContent(originalContent)
+            const recommendationKind=currentTask?.status==='open'?'recommendation_ready':completedResearch?'task_result':undefined
+            const notice=!structured?'task_result':structured.status!=='unavailable'?recommendationKind:undefined
             store.health.finish(d, args)
             if ((args.outcome !== 'keep'||structured) && args.text) {
               const eventId = `followup_${d.eventId}`,
@@ -451,8 +459,8 @@ export class HealthFollowup {
                 taskId: d.due?.taskId,
                 messageId: message.id,
                 payload: { message_id: message.id, text: args.text, ...(structured?{recommendation:structured}:{}),
-                  ...(!structured||structured.status!=='unavailable'?{notification: {
-                  event_id: eventId, kind: structured?'recommendation_ready':'task_result', revision: d.due?.revision ?? d.inputVersion
+                  ...(notice?{notification: {
+                  event_id: eventId, kind:notice, revision: currentTask?.currentRevision ?? d.inputVersion
                 }}:{}) }
               })
             }

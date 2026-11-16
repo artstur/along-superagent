@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import { Store } from '../src/app/store.ts'
 import { AlongStore } from '../src/along/store.ts'
 import { AlongService } from '../src/along/service.ts'
 import { createInbox } from '../src/along/inbox.ts'
@@ -20,13 +21,13 @@ function fixture(){
  store.assertUser(userId,deviceId);const goal=store.insertGoal({userId,domain:'custom'})
  store.appendGoalRevision({goalId:goal.id,userId,title:'合成周末活动',status:'active'});store.ensureInputVersion(userId,goal.id)
  const scope={userId,goalId:goal.id,ticketId:'research_ticket'}
- const save=(purpose:ResearchPurpose,content:string,at=Date.now(),fetched=true)=>store.research.save(scope,{title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content,fetched},at)
+ const save=(purpose:ResearchPurpose,content:string,at=Date.now(),fetched=true)=>store.research.save(scope,{title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched},at)
  return {store,scope,save,deviceId}
 }
 const plan=(route:string,access:string,weather:string):RecommendationInput=>({kind:'hiking',title:'周末徒步选择',summary:'比较当前可核实信息',timeWindow:'周末',constraints:['轻松路线'],options:[{
  id:'route_one',title:'合成官方步道',reason:'与轻松运动偏好匹配',conditions:['出发前再次核查'],unknowns:[],facts:[{label:'路线距离',value:'6公里',evidence:[{sourceId:route,quote:'全程6公里'}]}],
  checks:[{kind:'access',status:'ok',summary:'步道开放',evidence:[{sourceId:access,quote:'步道正常开放'}]},
- {kind:'weather',status:'ok',summary:'周末天气可行',evidence:[{sourceId:weather,quote:'周末晴天'}]}]}],nextStep:'确认具体出发时段'})
+ {kind:'weather',status:'ok',summary:'周末天气可行',evidence:[{sourceId:weather,quote:'周末晴天'}],alertStatus:'clear',alertEvidence:[{sourceId:weather,quote:'当前无气象灾害预警信号'}]}]}],nextStep:'确认具体出发时段'})
 it('keeps actual fetched source identities, host times, useful comparison and no model URLs in a structured recommendation',()=>{
  const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
  const result=recommendation(store.research,scope,plan(route.id,access.id,weather.id))
@@ -139,7 +140,7 @@ it('delivers a due research result through the existing bound followup and leave
   await vi.waitFor(()=>expect(h.tools.has('worker-'+ticket.id)).toBe(true),{timeout:10000})
   const scope={userId,goalId:goal.id,ticketId:ticket.id}
   await h.runTool('worker-'+ticket.id,'along_health_read',{})
-  const source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content,fetched:true})
+  const source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
   const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
   const input={outcome:'keep',types:[],reason:'按原委托完成路线研究',text:'周末路线已整理，出发前复核天气。',recommendation:plan(route.id,access.id,weather.id)}
   expect(await h.runTool('worker-'+ticket.id,'along_health_followup',input)).toMatchObject({status:'recorded',reused:false})
@@ -187,5 +188,103 @@ it('preserves a task feedback association through real inbox, WorkLink and recom
   const guard=((h.agents.get('worker-'+ticketId) as any).ctx.tools.guard as any).mock.calls[0][0]
   expect(guard({name:'web_fetch'})).toContain('along_web_fetch')
   expect(guard({name:'along_web_fetch'})).toBeUndefined()
+ }finally{await h.stop()}
+},30_000)
+it('downgrades secondary access and unsupported no-alert conclusions, replacing contradictory check text',()=>{
+ const {store,scope,save}=fixture(),route=save('route','全程6公里'),weather=save('weather','周末晴天')
+ const secondary=store.research.save(scope,{url:'https://trip.com/public-route',title:'第三方路线记录',content:'步道正常开放',purpose:'access',fetched:true})
+ const input=plan(route.id,secondary.id,weather.id)
+ const access=recommendation(store.research,scope,input).options[0]!.checks[0]!
+ expect(access).toMatchObject({status:'unknown'});expect(access.summary).toContain('官方');expect(access.summary).not.toBe('步道开放')
+ const official=save('access','步道正常开放'),forecastOnly=store.research.save(scope,{url:'https://www.nmc.cn/public-forecast',title:'预报',content:'周末晴天',purpose:'weather',fetched:true})
+ const unsupported=plan(route.id,official.id,forecastOnly.id)
+ unsupported.options[0]!.checks[1]!.summary='天气适合，无大风预警信号'
+ unsupported.options[0]!.checks[1]!.alertEvidence=[{sourceId:forecastOnly.id,quote:'周末晴天'}]
+ const result=recommendation(store.research,scope,unsupported)
+ expect(result).toMatchObject({status:'partial',options:[{status:'conditional',checks:[{status:'ok'},{status:'unknown'}]}]})
+ expect(result.options[0]!.checks[1]!.summary).not.toContain('无大风预警')
+})
+it('pinpoints a rejected precise fact and lets the complete original envelope recover after removing only that fact',async()=>{
+ const {store,scope,save,deviceId}=fixture(),event='recover_research'
+ createInbox(store).acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:scope.goalId,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'帮我比较路线'}},{userId:scope.userId,deviceId})
+ const t=alongTools({service:new AlongService(store),scopeFor:()=>({userId:scope.userId,allowedGoalId:scope.goalId,triggerEventId:event})},scope.ticketId).find(t=>t.name==='along_chat_reply')!
+ const route=save('route','开放:6:00-19:00'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
+ const rec=plan(route.id,access.id,weather.id)
+ rec.options[0]!.facts=[{label:'开放时间',value:'6:00-19:00，18:30关闭设施',evidence:[{sourceId:route.id,quote:'开放:6:00-19:00'}]}]
+ const args={text:'已整理路线。',recommendation:rec},signal=new AbortController().signal
+ await expect(t.execute(t.schema.parse(args),signal)).rejects.toThrow(/options\[0\].*facts\[0\].*开放时间.*unsupported numbers: 18, 30/)
+ expect(store.syncPage(scope.userId,0,200).items.some(i=>(i.payload as any).recommendation)).toBe(false)
+ rec.options[0]!.facts=[];rec.options[0]!.unknowns.push('设施关闭时刻尚未核实')
+ expect(await t.execute(t.schema.parse(args),signal)).toMatchObject({status:'replied',reused:false})
+ expect(store.syncPage(scope.userId,0,200).items.filter(i=>(i.payload as any).recommendation)).toHaveLength(1)
+})
+it.each(['research','outing','recommended_outing'] as const)('uses the current revision for a finished %s result without reviving a completed physical activity',async(kind)=>{
+ vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2027-01-08T11:00:00Z'))
+ const h=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}))
+ try{
+  h.runtime.sources.register(alongKind);const settings=h.runtime.store.settings(),userId='u_finished',deviceId='d_finished'
+  h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...settings.policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}})
+  const store=h.runtime.along!.service.alongStore;store.assertUser(userId,deviceId)
+  const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({goalId:goal.id,userId,title:'合成活动',status:'active'});store.ensureInputVersion(userId,goal.id)
+  const task=store.insertTask({userId,goalId:goal.id,content:kind==='research'?'根据天气安排周末徒步':kind==='outing'?'完成周末徒步':'完成推荐路线的徒步',scheduledAt:'2027-01-08T10:59:00Z'})
+  store.appendTaskRevision({userId,taskId:task.id})
+  h.runtime.along!.healthFollowup.tick();await h.runtime.idle()
+  const ticket=h.runtime.store.tickets.list()[0]!,worker='worker-'+ticket.id
+  await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true));await h.runTool(worker,'along_health_read',{})
+  const read=await h.runTool(worker,'along_goal_read',{}) as any
+  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'complete',base_revision:read.goal.current_revision,input_version:read.goal.input_version,reason:'合成单次任务结果',ops:[{op:'task.update',task_id:task.id,base_revision:1,fields:{status:'done'}}]})).toMatchObject({status:'applied'})
+  const scope={userId,goalId:goal.id,ticketId:ticket.id}
+  const source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方资料',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
+  const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
+  await h.runTool(worker,'along_health_followup',{outcome:'update',types:[],reason:'本次资料已整理',text:'已整理有出处的候选信息。',recommendation:plan(route.id,access.id,weather.id)})
+  const item=store.syncPage(userId,0,200).items.find(i=>(i.payload as any).recommendation)!
+  expect(item.taskId).toBe(task.id)
+  if(kind==='research')expect(item.payload).toMatchObject({notification:{kind:'task_result',revision:2}})
+  else expect((item.payload as any).notification).toBeUndefined()
+ }finally{await h.stop()}
+},30_000)
+it('renews the same weekly research task across repeated ticks and restart, emitting one recommendation for each occurrence',async()=>{
+ vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2027-01-08T10:59:00Z'))
+ const dir=mkdtempSync(join(tmpdir(),'along-weekly-research-'));dirs.push(dir)
+ const userId='u_weekly_research',deviceId='d_weekly_research',seed=new Store(join(dir,'orchestrator.sqlite'))
+ seed.saveSettings({...seed.settings(),eval:{...seed.settings().eval,mode:'auto'},sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...seed.settings().policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}});seed.close()
+ let h=await startRuntime(undefined,{dir})
+ try{
+  let store=h.runtime.along!.service.alongStore;store.assertUser(userId,deviceId)
+  const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({goalId:goal.id,userId,title:'持续周末运动',status:'active'});store.ensureInputVersion(userId,goal.id)
+  const event='weekly_research_mandate',text='每周五19:00根据天气安排周末徒步'
+  expect(h.runtime.along!.service.acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text}},{userId,deviceId})).toMatchObject({status:'accepted'})
+  const setup=alongTools({service:h.runtime.along!.service,scopeFor:()=>({userId,allowedGoalId:goal.id,triggerEventId:event})},'setup_weekly').find(t=>t.name==='along_changes_commit')!
+  const create={idempotency_key:'weekly_setup',base_revision:1,input_version:store.inputVersion(goal.id),reason:'按真实合成委托安排周期',ops:[{op:'task.create',content:'周五根据天气安排周末徒步',scheduled_at:'2027-01-08T11:00:00Z',repeat:'weekly',reminder_plan:{state:'scheduled',source:'agent',explanation:'每周五为周末核查资料',evidence:text,action:'安排周末徒步'}}]}
+  const created=await setup.execute(setup.schema.parse(create),new AbortController().signal);expect(created).toEqual({status:'applied',changeset_id:expect.any(String),goal_revision:expect.any(Number),reused:false})
+  const task=store.goalDetail(userId,goal.id).tasks[0]!
+  const count=()=>store.syncPage(userId,0,200).items.filter(i=>(i.payload as any).recommendation)
+  const review=async(when:string,next:string,index:number)=>{
+   vi.setSystemTime(new Date(when));h.runtime.along!.healthFollowup.tick();await h.runtime.pump();await h.runtime.idle()
+   await vi.waitFor(()=>expect(h.runtime.store.tickets.list().some(t=>t.mandate.basis.via==='task_due'&&!t.ended)).toBe(true),{timeout:5000})
+   const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due'&&!t.ended)!,worker='worker-'+ticket.id
+   await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true))
+   expect(await h.runTool(worker,'along_health_read',{})).toMatchObject({review:{taskId:task.id,repeat:'weekly',weekday:5,next_occurrence_if_kept:next}})
+   const read=await h.runTool(worker,'along_goal_read',{}) as any
+   expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'do_not_finish_'+index,base_revision:read.goal.current_revision,input_version:read.goal.input_version,reason:'不应永久结束周期研究',ops:[{op:'task.update',task_id:task.id,base_revision:store.getTask(userId,task.id)!.currentRevision,fields:{status:'done'}}]})).toMatchObject({status:'invalid',reason:'recurring_research_remains_open'})
+   const scope={userId,goalId:goal.id,ticketId:ticket.id},source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方资料',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
+   const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
+   const input={outcome:'keep',types:[],reason:'本周期资料核查完成，保留持续任务',text:'本周末资料已整理。',recommendation:plan(route.id,access.id,weather.id)}
+   expect(await h.runTool(worker,'along_health_followup',input)).toMatchObject({reused:false})
+   expect(await h.runTool(worker,'along_health_followup',input)).toMatchObject({reused:true})
+   const current=store.getTask(userId,task.id)!
+   expect(current).toMatchObject({id:task.id,status:'open',scheduledAt:next})
+   expect(count()).toHaveLength(index)
+   expect(count().at(-1)!.payload).toMatchObject({notification:{kind:'recommendation_ready',revision:current.currentRevision}})
+   await h.runTool(worker,'orchestrator_report',{state:'ready',summary:'完成本周期研究并续排'})
+   for(let n=0;n<3;n++)h.runtime.along!.healthFollowup.tick()
+   await h.runtime.idle();expect(count()).toHaveLength(index)
+  }
+  await review('2027-01-08T11:00:00Z','2027-01-15T11:00:00.000Z',1)
+  await h.stop();h=await startRuntime(undefined,{dir});store=h.runtime.along!.service.alongStore
+  for(let n=0;n<3;n++)h.runtime.along!.healthFollowup.tick()
+  await h.runtime.idle();expect(count()).toHaveLength(1)
+  expect(h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='task_due')).toHaveLength(1)
+  await review('2027-01-15T11:00:00Z','2027-01-22T11:00:00.000Z',2)
  }finally{await h.stop()}
 },30_000)

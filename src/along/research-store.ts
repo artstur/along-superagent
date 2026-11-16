@@ -15,12 +15,12 @@ CREATE TABLE IF NOT EXISTS research_reply (
  message_id TEXT PRIMARY KEY REFERENCES message(id), input TEXT NOT NULL, recommendation TEXT, notification TEXT
 );`
 export interface ResearchScope { userId: string; goalId: string; ticketId: string }
-export type ResearchPurpose = 'weather' | 'access' | 'route' | 'general'
+export type ResearchPurpose = 'weather' | 'alerts' | 'access' | 'route' | 'general'
 export interface ResearchSource {
  id: string; title: string; url: string; retrievedAt: string; expiresAt: string; publishedAt?: string
 }
 export interface ResearchEvidence extends ResearchSource { content: string; purpose: ResearchPurpose; fetched: boolean }
-const ttl: Record<ResearchPurpose, number> = { weather: 3*3600_000, access: 86400_000, route: 7*86400_000, general: 86400_000 }
+const ttl: Record<ResearchPurpose, number> = { weather: 3*3600_000, alerts:3*3600_000, access: 86400_000, route: 7*86400_000, general: 86400_000 }
 /** Scoped web receipts and reply identities on AlongStore’s shared SQLite handle. */
 export class ResearchStore {
  constructor(private readonly db: DatabaseSync) {}

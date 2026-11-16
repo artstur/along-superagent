@@ -14,7 +14,7 @@ export interface ResearchWeb {
  /** Check the live public settings immediately before dispatch, after asynchronous DNS checks. */
  assertProvider(kind:'search'|'fetch'):void
 }
-const PURPOSE=z.enum(['weather','access','route','general'])
+const PURPOSE=z.enum(['weather','alerts','access','route','general'])
 const messages:Record<string,string>={
  WEB_PROVIDER_CREDENTIAL_MISSING:'联网授权不可用，请在 Mac 上恢复已授权的搜索账户后重试。',
  WEB_PROVIDER_UNAVAILABLE:'联网服务暂不可用，请恢复 Mac 上的联网服务后重试。',

@@ -348,6 +348,13 @@ export class AlongStore {
   taskRevisionOrigin(taskId: string, revision: number): string | undefined {
     return this.opt(this.one('SELECT origin_event_id FROM task_revision WHERE task_id=? AND revision=?', taskId, revision)?.origin_event_id)
   }
+  /** The original task wording at a host-bound due revision, with ownership checked. */
+  taskRevisionContent(userId:string,taskId:string,revision:number):string | undefined {
+    const task=this.getTask(userId,taskId)
+    if(!task)return undefined
+    return this.opt(this.one('SELECT content FROM task_revision WHERE task_id=? AND revision=? AND user_id=?',taskId,revision,userId)?.content)
+      ??(task.currentRevision===revision?task.content:undefined)
+  }
   getTask(userId: string, taskId: string): TaskRow | undefined {
     const row = this.one('SELECT * FROM user_task WHERE id = ?', taskId)
     return row === undefined || this.text(row.user_id) !== userId ? undefined : this.taskRow(row)
