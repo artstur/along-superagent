@@ -46,10 +46,10 @@ export class MemoryStore {
     return true
   }
   /** Only actual inbound chat is eligible, never task feedback, health events or assistant suggestions. */
-  sources(userId: string, ids?: readonly string[], unprocessed = false): MemorySource[] {
+  sources(userId: string, ids?: readonly string[], unprocessed = false, throughSeq = Number.MAX_SAFE_INTEGER): MemorySource[] {
     if (ids?.length === 0) return []
     const rows = this.rows(`SELECT m.* FROM message m LEFT JOIN event_inbox e ON e.user_id=m.user_id AND e.event_id=m.event_id
-      WHERE m.user_id=? AND m.role='user' AND m.direction='inbound'
+      WHERE m.user_id=? AND m.seq<=? AND m.role='user' AND m.direction='inbound'
       AND (e.event_id IS NULL OR (e.event_type='along.user_message' AND e.status='accepted'))
       AND NOT EXISTS(SELECT 1 FROM memory_blocked_source b WHERE b.user_id=m.user_id AND b.message_id=m.id)
       AND (m.seq > COALESCE((SELECT MAX(s.through_seq) FROM memory_suppression s WHERE s.user_id=m.user_id),0)
@@ -58,7 +58,7 @@ export class MemoryStore {
           AND (kept.expires_at IS NULL OR kept.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))))
       ${unprocessed ? 'AND NOT EXISTS(SELECT 1 FROM memory_processed p WHERE p.user_id=m.user_id AND p.message_id=m.id)' : ''}
       ${ids ? `AND m.id IN (${ids.map(() => '?').join(',')})` : ''}
-      ORDER BY m.seq ${unprocessed ? 'LIMIT 20' : ''}`, userId, ...(ids ?? []))
+      ORDER BY m.seq ${unprocessed ? 'LIMIT 20' : ''}`, userId, throughSeq, ...(ids ?? []))
     const cutoff = Number(this.rows('SELECT IFNULL(MAX(through_seq),0) AS seq FROM memory_suppression WHERE user_id=?', userId)[0]!.seq)
     const kept = cutoff > 0 ? this.memories(userId).filter(item => item.status === 'active'
       && (item.expiresAt === undefined || Date.parse(item.expiresAt) > Date.now())) : []
@@ -70,11 +70,16 @@ export class MemoryStore {
         .map(link => String(link.goal_id)),
     }))
   }
-  prepare(userId: string): MemoryOperation | undefined {
+  hasWork(userId: string, throughSeq = Number.MAX_SAFE_INTEGER): boolean {
+    return (throughSeq === Number.MAX_SAFE_INTEGER ? this.projectionPending(userId) : this.cleanupGeneration(userId) !== undefined)
+      || this.sources(userId, undefined, true, throughSeq).length > 0
+      || this.rows("SELECT 1 FROM memory_operation o WHERE user_id=? AND status='pending' AND EXISTS (SELECT 1 FROM json_each(o.source_ids) s JOIN message m ON m.id=s.value WHERE m.seq<=?) LIMIT 1", userId, throughSeq).length > 0
+  }
+  prepare(userId: string, throughSeq = Number.MAX_SAFE_INTEGER): MemoryOperation | undefined {
     return this.atomic(() => {
-      const pending = this.rows("SELECT * FROM memory_operation WHERE user_id=? AND status='pending' ORDER BY created_at,id LIMIT 1", userId)[0]
+      const pending = this.rows("SELECT * FROM memory_operation o WHERE user_id=? AND status='pending' AND NOT EXISTS (SELECT 1 FROM json_each(o.source_ids) s JOIN message m ON m.id=s.value WHERE m.seq>?) ORDER BY created_at,id LIMIT 1", userId, throughSeq)[0]
       if (pending) return this.operation(pending)
-      const sources = this.sources(userId, undefined, true).slice(0, 20)
+      const sources = this.sources(userId, undefined, true, throughSeq).slice(0, 20)
       if (sources.length === 0) return undefined
       const epoch = this.rows('SELECT value FROM meta WHERE key=?', `memory_epoch:${userId}`)[0]?.value ?? '0'
       const id = `mo_${hash(JSON.stringify([userId, epoch, sources.map(source => source.id)])).slice(0, 32)}`

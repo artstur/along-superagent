@@ -114,6 +114,8 @@ interface Received { source?: string; scope?: Record<string, unknown>; row?: str
  * `sender` names the allowed sender at acceptance time, and `rules` the rules an assessment matched.
  */
 export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
+  /** Host-verified durable scheduled work; never a synthetic human message. */
+  | { via: 'scheduled'; scheduleId: string; addressed?: never }
   | { via: 'addressed'; addressed: 'mention' | 'direct' }
   | { via: 'followup'; authority?: string }
   | { via: 'admission'; cell: AdmissionCell; addressed?: 'mention' | 'direct'; observation?: { mode: AcceptMode } }

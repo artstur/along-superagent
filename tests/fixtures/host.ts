@@ -34,6 +34,7 @@ export interface StartOptions {
   alongStateDir?: string
   /** Production memory backend configuration; tests replace only external SDK I/O. */
   alongMemory?: Machine['alongMemory']
+  alongMaintenanceTime?: Machine['alongMaintenanceTime']
 }
 
 /** Build a Feishu mention trigger from Alice in `oc_team`, using the digits in `id` as the timestamp offset in seconds. */
@@ -289,7 +290,8 @@ export async function startRuntime(seed?: (store: Store) => void, options: Start
     seeded.close()
   }
   const runtime = new Runtime(ctx, testMachine({ stateDir: directory,
-    alongStateDir, alongBridgeTokenFile: join(alongStateDir, 'bridge-token'), alongMemory: options.alongMemory }), vi.fn())
+    alongStateDir, alongBridgeTokenFile: join(alongStateDir, 'bridge-token'), alongMemory: options.alongMemory,
+    alongMaintenanceTime: options.alongMaintenanceTime }), vi.fn())
   if (reused) runtime.sources.register(alongKind)
   await runtime.ready
   if (!reused) {

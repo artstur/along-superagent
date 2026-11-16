@@ -96,8 +96,11 @@ function machineView({ stateDir, promptMaxChars, admissionContextMaxPages, admis
 }
 function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
+  const settings = runtime.store.settings()
+  const along = settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
   return {
-    machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
+    machine: { ...machineView(runtime.machine), ...(along ? { alongMaintenanceTime: runtime.machine.alongMaintenanceTime?.get() ?? '03:00' } : {}) },
+    problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
     accounts: resolved ? { repository: resolved.repository ?? null, agent: resolved.github?.login ?? null, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
 }

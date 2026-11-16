@@ -370,6 +370,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/service.ts` | `AlongService`, the facade the Runtime assembles: the loopback API's single entry, with the inbox and changeset factories injected |
 | `src/along/legacy-import.ts` | `importLegacy`, the stable-ID idempotent import of the phone's old export (`g_health`/`g_finance`/`g_custom`, messages renumbered in export order) with a counts-and-hashes report |
 | `src/along/memory/index.ts` | Standalone Along memory factory and exports; the host owns lifecycle, bound tool scope and batch invocation |
+| `src/along/maintenance-schema.ts` | Schema-3 persistent night schedule and outstanding maintenance batches |
+| `src/along/maintenance-store.ts` | AlongStore-owned schedule, frozen input range, batch checkpoints and backoff |
+| `src/along/maintenance.ts` | Internal scheduled Trigger, host-verified policy, deterministic DSH acceptance, scoped batch tool, completion checks and quiet run records |
 | `src/along/memory/model.ts` | Strict memory proposals, governed states, evidence and backend port contracts |
 | `src/along/memory/schema.ts` | Additive schema-2 governance, suppression, cleanup, logical-operation and SDK-attempt tables |
 | `src/along/memory/store.ts` | AlongStore-owned memory persistence on the same SQLite handle and transactions; evidence, revisions, withdrawal and recovery |
@@ -484,6 +487,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-phaseA-verify.spec.ts` | Along phase-A contract and integration verification: phaseA-verify |
 | `tests/along-phaseA.spec.ts` | Along phase-A contract and integration verification: phaseA |
 | `tests/along-memory-runtime.spec.ts` | Runtime-owned memory, scoped tools, current/historical context, fallback, restart and shutdown acceptance |
+| `tests/along-maintenance.spec.ts` | Scheduled memory work through actual Runtime/Engine/tools, replay, frozen paging, backoff, restart, pause, stopping, isolation and completion |
 | `tests/along-phaseB.spec.ts` | Chat response, explicit goal creation, corrections, stale-input refusal and sync through registered worker tools |
 | `tests/along-runrecord-verify.spec.ts` | Along phase-A contract and integration verification: runrecord-verify |
 | `tests/along-runrecord.spec.ts` | Along phase-A contract and integration verification: runrecord |

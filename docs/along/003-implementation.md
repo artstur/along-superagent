@@ -13,8 +13,8 @@
 | Worker 工具 | 已有 `WORK_TOOLS`，保留并追加 Along 工具 | [Sessions](../../src/app/sessions.ts) |
 | Skill 注册 | 已有，不支持按派工固定版本 | `Sessions.bindSkills`、[Prompts](../../src/app/prompts.ts) |
 | 非编程场景启动 | 已支持显式启用 Along、关闭 GitHub 的本地部署 | [Setup](../../src/app/setup.ts)、[Runtime](../../src/app/runtime.ts) |
-| 定时调度 | 没有，需新增 | 见 [记忆与技能 §4](002-memory-and-skills.md#4-定时批量作业) |
-| 业务存储、完整对话、记忆治理 | 阶段 A 基座、记忆治理与 Runtime/Worker 工具接线已实现；定时批处理待 E | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
+| 定时调度 | 记忆维护已通过持久批次与 DSH 工单接通；完整复盘与 Skill 作业待实现 | 见 [定时维护](008-scheduled-maintenance.md) |
+| 业务存储、完整对话、记忆治理 | 阶段 A 基座、记忆治理、Runtime/Worker 工具与定时记忆维护已实现 | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
 | Hy-Memory | 固定版本安装、Runtime 生命周期装配及中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
 | 健康 7 类摘要 | Along 已有，需接入新协议 | [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) |
 | 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，fork `tests/along-phaseB.spec.ts` |

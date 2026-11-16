@@ -28,6 +28,8 @@ export const Config = s.object({
     .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
   alongStateDir: absolute('Directory of the Along business database and its bridge token; required only when the Along local deployment is configured (the Along Source enabled and GitHub explicitly disabled), and never read for a GitHub profile. Optional.'),
   alongMemory: AlongMemoryConfig,
+  alongMaintenanceTime: s.string().pattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/).default('03:00')
+    .description('Daily Along memory maintenance time in the Mac local timezone (24-hour HH:mm). Saved changes apply on the next pass; overdue and running batches are preserved.').volatile(),
   alongBridgeTokenFile: absolute('File of the Host↔fork bridge token (32-byte hex, mode 0600, generated on first start); required only for the Along local deployment. Optional.'),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
@@ -42,6 +44,8 @@ export interface Machine {
   alongBridgeTokenFile?: string
   /** Host-only Python backend paths; absent means explicit SQLite-only degradation. */
   alongMemory?: { python: string; dataDir: string; envFile: string }
+  /** Local HH:mm; read at each pass so the DSH plugin configuration can update it live. */
+  alongMaintenanceTime?: Volatile<string>
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
@@ -53,8 +57,8 @@ const MOVED: Record<string, string> = {
 export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, alongStateDir, alongBridgeTokenFile, alongMemory } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs,
+  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, alongStateDir, alongBridgeTokenFile, alongMemory, alongMaintenanceTime } = config
+  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, alongMaintenanceTime,
     // Optional Along keys (design §4.7): read only when the local deployment assembles; `undefined` for a GitHub profile.
     ...(alongStateDir !== undefined ? { alongStateDir } : {}),
     ...(alongBridgeTokenFile !== undefined ? { alongBridgeTokenFile } : {}),

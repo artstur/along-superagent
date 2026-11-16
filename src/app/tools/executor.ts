@@ -1,6 +1,7 @@
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, reporting status, and — when the Along service is installed — reading and committing the Along business state. */
 import { z } from 'zod'
 import { alongTools, type AlongToolsHost } from '../../along/tools.ts'
+import type { AlongMaintenance } from '../../along/maintenance.ts'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
 import { claimPull, readPull } from '../../sources/github-pull.ts'
@@ -20,12 +21,14 @@ export interface ExecutorToolsHost {
   readonly github: SourceContext
   /** Along business tools' host binding (store reads, changeset commits, work-scope lookup); absent without the Along service, keeping the profile unchanged. */
   readonly along?: AlongToolsHost
+  readonly maintenance?: AlongMaintenance
   sendReplies(): Promise<void>
 }
 
 export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
-  return [
+  const maintenance = host.maintenance?.forTicket(ticketId) !== undefined
+  const tools: Tool[] = [
     readTool('Read one page of a resource of this ticket that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
       true, (resource, offset, limit, signal) => readResource(host.resources, resource, offset, limit, ticketId, signal)),
     tool({
@@ -88,6 +91,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
+        host.maintenance?.assertReport(ticketId, args.state)
         const pull = args.pr_number != null ? await readPull(host.github, args.pr_number, signal) : undefined
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
         return host.store.atomic(() => {
@@ -97,7 +101,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
           const updated = host.engine.report(ticketId, report)
-          const relay = reportRelay(updated, report)
+          const relay = maintenance ? undefined : reportRelay(updated, report)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
           return { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }
@@ -106,6 +110,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
     }),
     // The Along business tools (along_goal_read … along_changes_commit) when the Along service is installed;
     // registration is what makes them visible, the WORK_TOOLS allow-list only keeps them unmasked (§2.3.6).
-    ...(host.along !== undefined ? alongTools(host.along, ticketId) : []),
+    ...(maintenance ? host.maintenance!.tools(ticketId) : host.along !== undefined ? alongTools(host.along, ticketId) : []),
   ]
+  return maintenance ? tools.filter(tool => ['along_maintenance_run', 'orchestrator_report'].includes(tool.name)) : tools
 }

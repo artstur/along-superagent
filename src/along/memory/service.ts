@@ -9,15 +9,15 @@ export class MemoryService {
   constructor(private readonly store: AlongStore, private readonly backend: MemoryBackend) {}
 
   /** One batch per call. The stage-E scheduler repeats while processed>0, without overlapping work. */
-  runBatch(userId: string): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending' }> {
+  runBatch(userId: string, throughSeq?: number): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending' }> {
     if (this.closed) return Promise.reject(new Error('memory service closed'))
     // Calls from separate schedulers share the same in-flight operation, never cross users.
     if (this.busy) return Promise.reject(new Error('memory batch already running'))
-    const work = this.process(userId)
+    const work = this.process(userId, throughSeq)
     this.busy = work
     return work.finally(() => { this.busy = undefined })
   }
-  private async process(userId: string): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending' }> {
+  private async process(userId: string, throughSeq?: number): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending' }> {
     const memory = this.store.memory
     const generation = memory.cleanupGeneration(userId)
     if (generation !== undefined) {
@@ -27,7 +27,7 @@ export class MemoryService {
       memory.finishCleanup(userId, generation)
       if (memory.cleanupGeneration(userId) !== undefined) return { processed: 0, saved: 0, status: 'pending' }
     }
-    const operation = memory.prepare(userId)
+    const operation = memory.prepare(userId, throughSeq)
     if (!operation) {
       memory.finishRebuild(userId)
       return { processed: 0, saved: 0, status: 'idle' }

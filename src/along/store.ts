@@ -15,6 +15,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import { MemoryStore } from './memory/store.ts'
+import { MaintenanceStore } from './maintenance-store.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
 export interface Page<T> { items: T[]; nextCursor?: string }
@@ -180,6 +181,7 @@ export class AlongStore {
   private readonly db: DatabaseSync
   /** Memory persistence shares this store's handle, savepoints and lifetime. */
   readonly memory: MemoryStore
+  readonly maintenance: MaintenanceStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -193,6 +195,7 @@ export class AlongStore {
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON')
       migrateAlongSchema(this.db)
       this.memory = new MemoryStore(this.db, work => this.atomic(work))
+      this.maintenance = new MaintenanceStore(this.db, work => this.atomic(work))
     } catch (error) {
       this.db.close()
       throw error

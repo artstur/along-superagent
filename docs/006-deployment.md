@@ -12,7 +12,7 @@ Plugin configuration holds the state directory and machine limits. Use the panel
 
 ### Local Along extension
 
-This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Configure absolute `alongStateDir` and `alongBridgeTokenFile` paths alongside `stateDir`; the business data must be outside the worker directory. Runtime assembles the business store, loopback ingress, worker tools and delivery pump, and generates the bridge token file on first startup. It starts without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. The iPhone reaches this API through Along Host with `ALONG_EVENT_INGEST=on` and `ALONG_BRIDGE_TOKEN_FILE` naming the same file. See the Along repository's `docs/stage-b-tech-design.md` for the chat cutover and local validation; health and batch scheduling remain separate work. Runtime now owns memory lifecycle and exposes scoped memory tools.
+This fork also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Configure absolute `alongStateDir` and `alongBridgeTokenFile` paths alongside `stateDir`; the business data must be outside the worker directory. Runtime assembles the business store, loopback ingress, worker tools and delivery pump, and generates the bridge token file on first startup. It starts without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. The iPhone reaches this API through Along Host with `ALONG_EVENT_INGEST=on` and `ALONG_BRIDGE_TOKEN_FILE` naming the same file. See the Along repository's `docs/stage-b-tech-design.md` for the chat cutover and local validation. Runtime owns memory lifecycle, scoped memory tools and scheduled memory maintenance; the new health flow and review/Skill jobs remain separate work.
 
 ### Permissions and isolation
 
@@ -25,13 +25,14 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 Along memory backend is configured only on the Mac in the `dsh-superagent` plugin configuration:
 
 ```yaml
+alongMaintenanceTime: "02:15" # Mac local time, HH:mm; default 03:00
 alongMemory:
   python: /Users/<user>/.along/venv/bin/python
   dataDir: /Users/<user>/.along/memory
   envFile: /Users/<user>/.along/memory.env
 ```
 
-Use Python 3.12 with `hy-memory==2.0.16`. The env file must be mode 0600 and contain the memory LLM/embedding configuration; put credential values only there. The packaged Python owner starts on first SDK use, outside Worker directories. Omit `alongMemory` to retain local governance and explicit SQLite fallback; this does not silently disable conversations. Current and status-labelled historical memories help the model understand updates, with current explicit intent taking priority. Batch extraction is exposed at `Runtime.along.memory.runBatch(userId)` for the stage-E scheduler; configuring the backend alone does not start a timer.
+Use Python 3.12 with `hy-memory==2.0.16`. The env file must be mode 0600 and contain the memory LLM/embedding configuration; put credential values only there. The packaged Python owner starts on first SDK use, outside Worker directories. Omit `alongMemory` to retain local governance and explicit SQLite fallback; this does not silently disable conversations. Current and status-labelled historical memories help the model understand updates, with current explicit intent taking priority. With the backend configured, paired and allowed users receive daily memory-maintenance work through DSH Tickets. `alongMaintenanceTime` is a volatile plugin configuration field: save it in DSH's `dsh-superagent` configuration and the next pass reads the new value without restarting. Future schedules move to the next occurrence of the new time; already overdue or running batches keep their work, then use the current time for the next cycle. Missed days coalesce into one catch-up batch. Maintenance stays out of phone chat. Review and Skill publishing are not part of this first scheduled job.
 
 ## Prerequisites
 
@@ -109,6 +110,7 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 | --- | --- | --- |
 | `stateDir` | yes | Absolute path: the database, the lock, the command shims in `worker-bin`, the agent's git configuration and, by default, the Ticket directories in `work`. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
+| `alongMaintenanceTime` | no | Along memory-maintenance time, local `HH:mm`, default `03:00`; updates live, preserving overdue and running work |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
 

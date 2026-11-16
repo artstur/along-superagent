@@ -45,14 +45,20 @@ describe('configuration schema', () => {
     const read = machineOf(Config({ stateDir: join(dir, 'state') }))
     // Limits are volatile references that the loader updates in place and callers read when used.
     expect({ ...read, promptMaxChars: read.promptMaxChars.get(), admissionContextMaxPages: read.admissionContextMaxPages.get(),
-      admissionContextTimeoutMs: read.admissionContextTimeoutMs.get() })
-      .toEqual({ stateDir: join(dir, 'state'), promptMaxChars: 100000, admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000 })
+      admissionContextTimeoutMs: read.admissionContextTimeoutMs.get(), alongMaintenanceTime: read.alongMaintenanceTime!.get() })
+      .toEqual({ stateDir: join(dir, 'state'), promptMaxChars: 100000, admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000, alongMaintenanceTime: '03:00' })
     expect(() => Config(minimal({ stateDir: 'relative/dir' }))).toThrow()
     expect(() => Config(minimal({ stateDir: '~/dir' }))).toThrow()
   })
   it('names keys the configuration does not define, and where the values of older keys live now', () => {
     const raw = minimal({ repository: 'acme/widgets', repositoryPath: '/srv/widgets', blockedCommands: [], author: { name: 'Alice' }, extra: 1 })
     expect(() => machineOf(Config(raw))).toThrow('keys it does not use: repository (now on the GitHub Source), repositoryPath (now in the prepare command of the Execution settings), blockedCommands (now in the Execution settings), author (now prompt text), extra;')
+  })
+  it('accepts a local HH:mm maintenance time including midnight and the last minute of a day', () => {
+    for (const time of ['00:00', '02:15', '23:59']) expect(machineOf(Config(minimal({ alongMaintenanceTime: time }))).alongMaintenanceTime!.get()).toBe(time)
+  })
+  it.each(['3:00', '24:00', '03:60', '03:00:00', ' 03:00', '03:00\n', '', 300])('rejects invalid maintenance time %j', time => {
+    expect(() => Config(minimal({ alongMaintenanceTime: time }))).toThrow()
   })
 })
 
