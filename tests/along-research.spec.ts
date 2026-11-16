@@ -21,7 +21,7 @@ function fixture(){
  store.assertUser(userId,deviceId);const goal=store.insertGoal({userId,domain:'custom'})
  store.appendGoalRevision({goalId:goal.id,userId,title:'合成周末活动',status:'active'});store.ensureInputVersion(userId,goal.id)
  const scope={userId,goalId:goal.id,ticketId:'research_ticket'}
- const save=(purpose:ResearchPurpose,content:string,at=Date.now(),fetched=true)=>store.research.save(scope,{title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched},at)
+ const save=(purpose:ResearchPurpose,content:string,at=Date.now(),fetched=true)=>store.research.save(scope,{publishedAt:new Date(at).toISOString(),title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched},at)
  return {store,scope,save,deviceId}
 }
 const plan=(route:string,access:string,weather:string):RecommendationInput=>({kind:'hiking',title:'周末徒步选择',summary:'比较当前可核实信息',timeWindow:'周末',constraints:['轻松路线'],options:[{
@@ -32,7 +32,7 @@ it('keeps actual fetched source identities, host times, useful comparison and no
  const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
  const result=recommendation(store.research,scope,plan(route.id,access.id,weather.id))
  expect(result).toMatchObject({version:1,status:'ready',options:[{status:'recommended',facts:[{sourceIds:[route.id]}]}]})
- expect(result.sources).toHaveLength(3);expect(result.sources[0]).toEqual({id:route.id,title:route.title,url:route.url,retrievedAt:route.retrievedAt,expiresAt:route.expiresAt})
+ expect(result.sources).toHaveLength(3);expect(result.sources[0]).toEqual({id:route.id,title:route.title,url:route.url,retrievedAt:route.retrievedAt,expiresAt:route.expiresAt,publishedAt:route.publishedAt})
  expect(RECOMMENDATION_INPUT.safeParse({...plan(route.id,access.id,weather.id),sources:[{url:'https://evil.invalid'}]}).success).toBe(false)
 })
 it('refuses foreign user, goal or ticket citations and invented quotes, even when an id exists',()=>{
@@ -236,9 +236,12 @@ it.each(['research','outing','recommended_outing'] as const)('uses the current r
   const scope={userId,goalId:goal.id,ticketId:ticket.id}
   const source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方资料',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
   const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
-  await h.runTool(worker,'along_health_followup',{outcome:'update',types:[],reason:'本次资料已整理',text:'已整理有出处的候选信息。',recommendation:plan(route.id,access.id,weather.id)})
+  const rec=plan(route.id,access.id,weather.id);rec.options[0]!.checks[1]!.alertStatus='unknown';rec.options[0]!.checks[1]!.alertEvidence=[]
+  rec.summary='当前有生效中的强降雨预警';rec.nextStep='改去另一处户外公园'
+  await h.runTool(worker,'along_health_followup',{outcome:'update',types:[],reason:'本次资料已整理',text:'当前有生效中的强降雨预警，改去另一处户外公园。',recommendation:rec})
   const item=store.syncPage(userId,0,200).items.find(i=>(i.payload as any).recommendation)!
   expect(item.taskId).toBe(task.id)
+  expect((item.payload as any).text).not.toContain('生效中的强降雨预警');expect((item.payload as any).text).not.toContain('改去另一处户外公园')
   if(kind==='research')expect(item.payload).toMatchObject({notification:{kind:'task_result',revision:2}})
   else expect((item.payload as any).notification).toBeUndefined()
  }finally{await h.stop()}
@@ -300,4 +303,44 @@ it('binds hiking safety to the original human intent even when the model labels 
  await t.execute(t.schema.parse({text:'候选仍需核实。',recommendation:rec}),new AbortController().signal)
  const result=(store.syncPage(scope.userId,0,200).items.find(i=>(i.payload as any).recommendation)!.payload as any).recommendation
  expect(result).toMatchObject({kind:'hiking',status:'partial',options:[{status:'conditional',checks:[{status:'unknown'},{status:'unknown'}]}]})
+})
+it('projects an old secondary warning consistently across title, reason, summary, next step and safety facts while retaining route facts',()=>{
+ const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
+ const old=store.research.save(scope,{url:'https://weibo.com/old-warning',title:'旧警报',content:'当前有生效中的暴雨预警，19:00闭园，30台车辆预约',purpose:'alerts',fetched:true,publishedAt:'2025-01-01T00:00:00Z'})
+ const excerpt=store.research.save(scope,{url:'https://trip.com/park',title:'第三方片段',content:'06:00-22:00开放',purpose:'access',fetched:false})
+ const rec=plan(route.id,access.id,weather.id)
+ rec.summary='当前有生效中的强降雨预警。';rec.nextStep='雷雨预警时改去越秀公园等户外短程。'
+ const option=rec.options[0]!;option.title='合成路线（推荐）';option.reason='虽然有暴雨仍可放心去市内公园。'
+ option.conditions=['暴雨预警时去另一个户外公园'];option.unknowns=['微博警报日期不明']
+ option.checks[1]={kind:'weather',status:'risk',summary:'当前暴雨预警生效',evidence:[{sourceId:old.id,quote:'当前有生效中的暴雨预警'}],alertStatus:'risk',alertEvidence:[{sourceId:old.id,quote:'当前有生效中的暴雨预警'}]}
+ option.facts.push({label:'公园闭园时间',value:'19:00',evidence:[{sourceId:old.id,quote:'19:00闭园'}]},
+ {label:'车辆预约名额',value:'30台',evidence:[{sourceId:old.id,quote:'30台车辆预约'}]},
+ {label:'开放时间（第三方）',value:'06:00-22:00',evidence:[{sourceId:excerpt.id,quote:'06:00-22:00开放'}]})
+ const result=recommendation(store.research,scope,rec)
+ expect(result).toMatchObject({status:'partial',options:[{status:'conditional',checks:[{status:'ok'},{status:'unknown'}]}]})
+ expect(result.summary).not.toContain('当前有生效中的强降雨预警');expect(result.nextStep).toContain('室内');expect(result.nextStep).not.toContain('越秀公园')
+ expect(result.options[0]!.title).not.toContain('推荐');expect(result.options[0]!.reason).not.toContain('放心')
+ expect(result.options[0]!.facts.map(f=>f.label)).toEqual(['路线距离'])
+ expect(result.options[0]!.unknowns.join(' ')).toContain('闭园时间');expect(result.sources.map(s=>s.id)).toContain(old.id)
+ const current=store.research.save(scope,{url:'https://www.sz.gov.cn/current-warning',title:'当前预警',content:'当前暴雨红色预警正在生效',purpose:'alerts',fetched:true,publishedAt:new Date().toISOString()})
+ option.checks[1]={kind:'weather',status:'risk',summary:'预警生效',evidence:[{sourceId:weather.id,quote:'周末晴天'}],alertStatus:'risk',alertEvidence:[{sourceId:current.id,quote:'当前暴雨红色预警正在生效'}]}
+ expect(recommendation(store.research,scope,rec).options[0]!.status).toBe('excluded')
+})
+it.each(['research','outing'] as const)('routes a fresh chat recommendation on a done %s task using current host state and idempotent calibrated text',async kind=>{
+ const {store,scope,save,deviceId}=fixture(),event='done_task_feedback'
+ const task=store.insertTask({userId:scope.userId,goalId:scope.goalId,content:kind==='research'?'研究周末徒步路线':'完成推荐路线的徒步'})
+ store.appendTaskRevision({userId:scope.userId,taskId:task.id,status:'done'})
+ createInbox(store).acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:scope.goalId,task_id:task.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'关于这个方案，再帮我比较一下'}},{userId:scope.userId,deviceId})
+ store.recordWorkLink({ticketId:scope.ticketId,taskId:task.id,goalId:scope.goalId,eventId:event,workId:'work_feedback',threadKey:'along:feedback',kind:'ticket'})
+ const t=alongTools({service:new AlongService(store),scopeFor:()=>({userId:scope.userId,allowedGoalId:scope.goalId,triggerEventId:event})},scope.ticketId).find(t=>t.name==='along_chat_reply')!
+ const route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天'),rec=plan(route.id,access.id,weather.id)
+ rec.options[0]!.checks[1]!.alertStatus='unknown';rec.options[0]!.checks[1]!.alertEvidence=[]
+ const args={text:'当前强降雨预警生效，去越秀公园更安全。',notify:'recommendation_ready',recommendation:rec},signal=new AbortController().signal
+ expect(await t.execute(t.schema.parse(args),signal)).toMatchObject({reused:false})
+ expect(await t.execute(t.schema.parse(args),signal)).toMatchObject({reused:true})
+ const item=store.syncPage(scope.userId,0,200).items.find(i=>(i.payload as any).recommendation)!,payload=item.payload as any
+ expect(item.taskId).toBe(task.id);expect(payload.text).not.toContain('强降雨预警生效');expect(payload.text).not.toContain('越秀公园')
+ expect(store.getMessage(scope.userId,item.messageId!)!.text).toBe(payload.text)
+ if(kind==='research')expect(payload.notification).toMatchObject({kind:'task_result',revision:1})
+ else expect(payload.notification).toBeUndefined()
 })

@@ -1,5 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
-import { recommendation, RECOMMENDATION_INPUT, isResearchTaskContent, hikingIntent } from './recommendation.ts'
+import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -438,10 +438,7 @@ export class HealthFollowup {
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
-            // A completed research result may notify; a completed physical activity must not be revived by a recommendation.
-            const completedResearch=currentTask?.status==='done'&&!!originalContent&&isResearchTaskContent(originalContent)
-            const recommendationKind=currentTask?.status==='open'?'recommendation_ready':completedResearch?'task_result':undefined
-            const notice=!structured?'task_result':structured.status!=='unavailable'?recommendationKind:undefined
+            const notice=structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
             store.health.finish(d, args)
             if ((args.outcome !== 'keep'||structured) && args.text) {
               const eventId = `followup_${d.eventId}`,
@@ -450,7 +447,7 @@ export class HealthFollowup {
                   eventId,
                   role: 'assistant',
                   direction: 'outbound',
-                  text: args.text
+                  text: recommendationText(structured,args.text)
                 })
               store.linkMessageToGoals(message.id, [d.goalId], 'derived')
               store.appendSync({
@@ -459,7 +456,7 @@ export class HealthFollowup {
                 goalId: d.goalId,
                 taskId: d.due?.taskId,
                 messageId: message.id,
-                payload: { message_id: message.id, text: args.text, ...(structured?{recommendation:structured}:{}),
+                payload: { message_id: message.id, text: message.text, ...(structured?{recommendation:structured}:{}),
                   ...(notice?{notification: {
                   event_id: eventId, kind:notice, revision: currentTask?.currentRevision ?? d.inputVersion
                 }}:{}) }

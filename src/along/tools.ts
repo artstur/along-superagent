@@ -8,7 +8,7 @@
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
 import { isDeepStrictEqual } from 'node:util'
-import { recommendation, RECOMMENDATION_INPUT, hikingIntent } from './recommendation.ts'
+import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
@@ -201,7 +201,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const eventId = `reply_${createHash('sha256').update(source.id).digest('hex').slice(0, 40)}`
         const existing = store.getMessage(bound.userId, `msg:${bound.userId}:${eventId}`)
         if (existing) {
-          if (existing.text !== args.text || (store.research.reply(existing.id) ? !isDeepStrictEqual(store.research.reply(existing.id)?.input,args) : args.recommendation!==undefined)) throw new Error('reply already exists with different content')
+          if (store.research.reply(existing.id) ? !isDeepStrictEqual(store.research.reply(existing.id)?.input,args) : existing.text!==args.text||args.recommendation!==undefined) throw new Error('reply already exists with different content')
           return { status: 'replied', message_id: existing.id, reused: true }
         }
         if (!store.isCurrentChatInput(bound.userId, source.eventId, goalId)) return { status: 'conflicted', reason: 'conflicted_input' }
@@ -211,11 +211,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         if (args.notify && (!goal || goal.status !== 'active')) throw new Error('notifications require an active bound goal')
         if (taskId && ((!args.notify&&!args.recommendation) || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
         const structured = args.recommendation ? recommendation(store.research,researchScope(),args.recommendation) : undefined
-        const notify = structured ? (structured.status==='unavailable'?undefined:'recommendation_ready') : args.notify
+        const notify = structured ? recommendationNotice(structured,task||undefined) : args.notify
         const notification = notify && goal ? { event_id: eventId, kind: notify,
           revision: task ? task.currentRevision : goal.currentRevision } : undefined
         const message = store.appendMessage({ userId: bound.userId, eventId, role: 'assistant', direction: 'outbound',
-          text: args.text, causationId: root, replyToMessageId: source.id })
+          text: recommendationText(structured,args.text), causationId: root, replyToMessageId: source.id })
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
         store.research.saveReply(message.id,args,structured,notification)
         store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId, messageId: message.id,

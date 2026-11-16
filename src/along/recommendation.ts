@@ -30,6 +30,22 @@ export function isResearchTaskContent(content:string):boolean {
  return /研究|查询|查天气|比较|(?:安排|规划|决定|挑选|选择|推荐).*(?:徒步|目的地|路线|去哪里)|\bresearch\b|\brecommend\b|\bcheck (?:the )?weather\b|\bplan\b.{0,40}\b(?:route|hike|weekend)\b/i.test(content)
 }
 const normalized=(text:string)=>text.normalize('NFKC').replace(/\s+/g,' ').trim()
+const activeAlert=(quote:string)=>/(?:当前|正在|现正).{0,35}(?:预警|警报)|(?:预警|警报).{0,25}(?:生效中|正在生效|已生效)|(?:已|正在)发布.{0,25}(?:预警|警报)|(?:current|active).{0,25}(?:warning|alert)/i.test(normalized(quote))
+const severeWeather=(quote:string)=>/暴雨|雷暴|台风|雷电|大风|强风|极端高温|heavy rain|thunderstorm|typhoon|strong wind/i.test(normalized(quote))
+const recentPublication=(source:ResearchEvidence,now:number)=>!!source.publishedAt&&Date.parse(source.publishedAt)>=now-36*3600_000&&Date.parse(source.publishedAt)<=now+300_000
+const plainRouteTitle=(title:string)=>title.replace(/[（(【\[][^）)】\]]*(?:推荐|首选|备选|不建议|安全|优先)[^）)】\]]*[）)】\]]/g,'').replace(/^(?:推荐|首选|优先|安全路线)[:：]?\s*/,'').trim()||'待核实路线'
+const needsProjection=(kind:Recommendation['kind'],options:Recommendation['options'])=>kind==='hiking'&&(!options.length||options.some(option=>option.status!=='recommended'))
+/** Older clients receive the same conservative conclusion as the structured card. */
+export function recommendationText(value:Recommendation|undefined,proposed:string):string {
+ if(!value||!needsProjection(value.kind,value.options))return proposed
+ return [value.summary,...value.options.map(option=>`${option.title}：${option.status==='excluded'?'暂不安排':option.status==='conditional'?'出行条件待核实':'现有条件已核对，出发前仍需复查'}`),value.nextStep].join('\n').slice(0,1200)
+}
+/** Notification routing uses task state and the original action, never the model’s notify label. */
+export function recommendationNotice(value:Recommendation|undefined,task:{status:string;content:string}|undefined,originalContent=task?.content):'recommendation_ready'|'task_result'|undefined {
+ if(!value||value.status==='unavailable')return undefined
+ if(!task||task.status==='open')return 'recommendation_ready'
+ return task.status==='done'&&!!originalContent&&isResearchTaskContent(originalContent)?'task_result':undefined
+}
 export function recommendation(store:ResearchStore,scope:ResearchScope,input:RecommendationInput,now=Date.now()):Recommendation {
  const kind=scope.requiredKind??input.kind
  const used=new Map<string,ResearchEvidence>()
@@ -44,8 +60,9 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
   if(new Set(option.checks.map(c=>c.kind)).size!==option.checks.length)throw Error('recommendation checks must be unique')
   const optionSources=new Set<string>()
   let uncertain=false
+  const factSources:ResearchEvidence[][]=[]
   const facts=option.facts.map((fact,factIndex)=>{
-   const sources=refs(fact.evidence);sources.forEach(s=>optionSources.add(s.id))
+   const sources=refs(fact.evidence);factSources.push(sources);sources.forEach(s=>optionSources.add(s.id))
    const numbers=(value:string)=>[...value.matchAll(/\d+(?:\.\d+)?/g)].map(match=>Number(match[0]))
    const quotedNumbers=numbers(fact.evidence.map(e=>e.quote).join(' '))
    const unsupported=[...new Set(numbers(fact.value).filter(value=>!quotedNumbers.includes(value)))]
@@ -63,31 +80,52 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
    let summary=check.summary
    const alertSources=refs(check.alertEvidence??[]);alertSources.forEach(s=>optionSources.add(s.id))
    if(alertSources.some(s=>Date.parse(s.expiresAt)<=now))uncertain=true
-   if(kind==='hiking'&&check.kind==='access'&&status==='ok'&&!sources.every(primary)){
-    status='unknown';summary='尚未取得可确认的官方开放与预约依据；第三方资料仅供参考。'
+   const primaryCurrent=sources.length>0&&valid&&sources.every(primary)
+   if(kind==='hiking'&&check.kind==='access'&&status!=='unknown'&&!primaryCurrent){
+    status='unknown';summary='尚未取得可确认的官方开放与预约依据；第三方或过期资料仅供参考。'
    }
    if(kind==='hiking'&&check.kind==='weather'){
-    const alertClear=check.alertStatus==='clear'&&alertSources.length>0&&alertSources.every((s,index)=>s.fetched&&primary(s)
-      &&['alerts','weather'].includes(s.purpose)&&Date.parse(s.expiresAt)>now
-      &&(!s.publishedAt||Date.parse(s.publishedAt)>=now-36*3600_000&&Date.parse(s.publishedAt)<=now+300_000)
-      &&noActiveAlert(check.alertEvidence![index]!.quote))
-    if(check.alertStatus==='risk'){status='risk';summary='当前气象警报或天气风险未排除，暂不安排该路线。'}
-    else if(status==='ok'&&(!sources.every(primary)||!alertClear)){
-     status='unknown';summary='预报资料不能单独确认当前警报状态；官方天气与有效警报仍需核实。'
+    const validAlert=(source:ResearchEvidence)=>source.fetched&&primary(source)&&['alerts','weather'].includes(source.purpose)&&Date.parse(source.expiresAt)>now
+    const alertClear=check.alertStatus==='clear'&&alertSources.length>0&&alertSources.every((source,index)=>validAlert(source)
+      &&(!source.publishedAt||recentPublication(source,now))&&noActiveAlert(normalized(check.alertEvidence![index]!.quote)))
+    const alertRisk=check.alertStatus==='risk'&&alertSources.length>0&&alertSources.every((source,index)=>validAlert(source)&&recentPublication(source,now)&&activeAlert(check.alertEvidence![index]!.quote))
+    const forecastRisk=check.alertStatus!=='risk'&&check.status==='risk'&&primaryCurrent&&sources.every(source=>recentPublication(source,now))&&check.evidence.some(item=>severeWeather(item.quote))
+    if(alertRisk||forecastRisk){status='risk';summary='已核实的气象警报或恶劣天气影响尚未排除，暂不安排该路线。'}
+    else if(check.alertStatus==='risk'||status==='risk'||status==='ok'&&(!primaryCurrent||!alertClear)){
+     status='unknown';summary='尚无可确认的当前天气与生效警报结论；第三方、日期不明的警报和普通预报不能证明当前风险或无警报。'
     }
    }
-   if(status==='unknown'&&check.status==='ok'&&summary===check.summary)summary='此项依据尚未满足当前有效性要求，仍需核实。'
+   if(status==='unknown'&&check.status!=='unknown'&&summary===check.summary)summary='此项依据尚未满足当前有效性要求，仍需核实。'
    return {kind:check.kind,status,summary,sourceIds:[...new Set([...sources,...alertSources].map(s=>s.id))]}
   })
   const risk=checks.some(c=>c.status==='risk')
   const checked=checks.every(check=>check.status==='ok')&&(kind!=='hiking'||['access','weather'].every(kind=>checks.some(c=>c.kind===kind&&c.status==='ok')))
-  const status=risk?'excluded' as const:checked&&!uncertain&&optionSources.size>0&&option.unknowns.length===0?'recommended' as const:'conditional' as const
-  return {id:option.id,title:option.title,reason:option.reason,status,conditions:option.conditions,unknowns:option.unknowns,facts,checks,sourceIds:[...optionSources]}
+  const removed:string[]=[]
+  const retainedFacts=kind!=='hiking'?facts:facts.filter((fact,index)=>{
+   const origins=factSources[index]!,label=fact.label
+   const access=origins.some(source=>source.purpose==='access')||/开放|闭园|门票|费用|价格|预约|名额|通行|入园|open|close|admission|ticket|booking/i.test(label)
+   const weather=origins.some(source=>['weather','alerts'].includes(source.purpose))||/警报|预警|天气|降雨|温度|风速|风力|alert|warning|weather|rain|temperature/i.test(label)
+   const keep=origins.every(source=>source.fetched&&Date.parse(source.expiresAt)>now)
+    &&(!access||origins.every(primary)&&checks.some(check=>check.kind==='access'&&check.status==='ok'))
+    &&(!weather||origins.every(primary)&&checks.some(check=>check.kind==='weather'&&check.status==='ok'))
+   if(!keep)removed.push(label)
+   return keep
+  })
+  const unknowns=removed.length?[`以下参数当前值尚未核实：${removed.join('、').slice(0,250)}`,...option.unknowns].slice(0,12):option.unknowns
+  const status=risk?'excluded' as const:checked&&!uncertain&&optionSources.size>0&&unknowns.length===0?'recommended' as const:'conditional' as const
+  const projected=kind==='hiking'&&status!=='recommended'
+  return {id:option.id,title:projected?plainRouteTitle(option.title):option.title,
+   reason:projected?(status==='excluded'?'有已核实的开放限制或天气风险，当前暂不安排；下方保留资料供比较。':'已保留路线资料供比较，关键出行条件仍待核实，当前不确认可出行。'):option.reason,
+   status,conditions:projected?['出发前复查官方开放、预约、当地天气和生效警报','有警报或关键条件不明时选择室内活动或延期']:option.conditions,
+   unknowns,facts:retainedFacts,checks,sourceIds:[...optionSources]}
  })
  if(used.size>30)throw Error('too many recommendation sources')
  const sources=[...used.values()].map(({id,title,url,retrievedAt,expiresAt,publishedAt})=>({id,title,url,retrievedAt,expiresAt,...(publishedAt?{publishedAt}:{})}))
  const validUntil=sources.length?new Date(Math.min(...sources.map(s=>Date.parse(s.expiresAt)))).toISOString():new Date(now).toISOString()
+ const projected=needsProjection(kind,options)
+ const summary=projected?`已整理${options.length}个路线候选供比较。${options.some(option=>option.status==='recommended')?'部分候选现有条件已核对，其余候选仍有待核实条件。':'目前尚不能确认户外出行条件。'}${options.some(option=>option.status==='excluded')?'有已核实限制或天气风险的候选暂不安排。':''}请结合下方事实、来源和未知项继续核对。`:input.summary
+ const nextStep=projected?'出发前核实官方开放、预约、当地天气和当前生效警报。有警报或关键条件未确认时，选择室内活动或延期；条件核实后再安排徒步。':input.nextStep
  return {version:1,kind,status:options.some(o=>o.status==='recommended')?'ready':sources.length&&options.some(o=>o.status==='conditional')?'partial':'unavailable',
-  title:input.title,summary:input.summary,...(input.timeWindow?{timeWindow:input.timeWindow}:{}),constraints:input.constraints,options,sources,
-  retrievedAt:new Date(now).toISOString(),validUntil,nextStep:input.nextStep}
+  title:projected?'徒步候选与出行条件':input.title,summary,...(input.timeWindow?{timeWindow:input.timeWindow}:{}),constraints:input.constraints,options,sources,
+  retrievedAt:new Date(now).toISOString(),validUntil,nextStep}
 }
