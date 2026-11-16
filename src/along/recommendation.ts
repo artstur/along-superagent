@@ -5,7 +5,7 @@ const line=(max:number)=>z.string().trim().min(1).max(max)
 const lines=z.array(line(300)).max(12)
 const evidence=z.array(z.object({sourceId:line(96),quote:line(1500)}).strict()).max(8)
 export const RECOMMENDATION_INPUT = z.object({
- kind:z.enum(['hiking','general']), title:line(120),summary:line(1200),timeWindow:line(240).optional(),constraints:lines,
+ kind:z.enum(['hiking','general']), title:line(120).describe('One string, never an array of option titles.'),summary:line(1200),timeWindow:line(240).optional(),constraints:lines,
  options:z.array(z.object({id:line(96).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),title:line(120),reason:line(600),conditions:lines,unknowns:lines,
   facts:z.array(z.object({label:line(80),value:line(300),evidence:evidence.min(1)}).strict()).max(16),
   checks:z.array(z.object({kind:z.enum(['access','weather']),status:z.enum(['ok','risk','unknown']),summary:line(600),evidence,alertStatus:z.enum(['clear','risk','unknown']).optional(),alertEvidence:evidence.optional()}).strict()).max(2),

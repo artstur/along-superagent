@@ -50,8 +50,8 @@ export const ALONG_ISO_SCHEMA = z.string().refine(value => Number.isFinite(Date.
 export const ALONG_TITLE_SCHEMA = z.string().trim().min(1).max(80) // ≤80 non-empty, validateGoalReply alignment
 export const ALONG_CONTENT_SCHEMA = z.string().trim().min(1).max(120) // ≤120, validateTaskReply alignment
 export const ALONG_REASON_SCHEMA = z.string().trim().min(1).max(300) // the change note shown to the user
-export const ALONG_BASE_REVISION_SCHEMA = z.number().int().min(0)
-export const ALONG_INPUT_VERSION_SCHEMA = z.number().int().min(1)
+export const ALONG_BASE_REVISION_SCHEMA = z.number().int().min(0).describe('JSON integer, never a quoted string. Root: goal current_revision; task op: that task revision.')
+export const ALONG_INPUT_VERSION_SCHEMA = z.number().int().min(1).describe('JSON integer from along_goal_read.input_version, never a quoted string.')
 
 /**
  * Context/constraint list; entries are plain strings or a constrained entry with an optional deadline
@@ -347,7 +347,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     }
     if (plan) {
       const content = fields.content ?? existing!.content
-      const time = fields.scheduled_at
+      const time = fields.scheduled_at === undefined && plan.state==='scheduled' ? existing?.scheduledAt : fields.scheduled_at
       const repeat = fields.repeat ?? 'once'
       if (plan.state !== 'off' && !userMessage) return refuse('invalid','reminder_requires_user_chat')
       if (plan.state !== 'off' && userMessage && (declinesReminder(userMessage.text,content) ||

@@ -1,4 +1,5 @@
 /** Lifecycle, prompt/tool/skill decoration, message delivery, and budget retry tracking for orchestrator and worker DSH sessions. */
+import { executeToolArguments } from './tool-arguments.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
@@ -207,14 +208,14 @@ export class Sessions {
   }
   /** Returns a tool registrar for `agent` that renders tool output as JSON text and attaches `output.image` as an image when present. */
   private registerTool(agent: Agent, binding: SessionBinding): RegisterTool {
-    return (name, description, schema, execute) => {
+    return (name, description, schema, execute, invalidArguments) => {
       binding.disposers.push(agent.ctx.tools.register({ name, description, parameters: z.toJSONSchema(schema),
         output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => {
           const text = { type: 'text' as const, text: JSON.stringify(value) }
           const image = value && typeof value === 'object' && 'image' in value ? (value as { image: never }).image : undefined
           return image ? [text, { type: 'image' as const, attachment: image }] : [text]
         } },
-        execute: (args, execution) => execute(schema.parse(args), execution.signal) }))
+        execute: (args, execution) => executeToolArguments(schema,args,execution.signal,execute,invalidArguments) }))
     }
   }
   /** Returns `sessionId`'s active model-budget retry state (`{ model_retry }`) for status listings, or `{}` when not waiting on one. */
@@ -270,7 +271,7 @@ export class Sessions {
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
     const register = this.registerTool(agent, binding)
-    for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
+    for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute, tool.invalidArguments)
     if (master) {
       binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
         agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))

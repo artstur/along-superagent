@@ -255,3 +255,42 @@ it('does not mix activity weekdays in another language into an explicit cadence'
   expect(supportsRecurrence(converse,converse,'陶艺课','arrange 周二陶艺课 booking','weekly',1)).toBe(true)
   expect(supportsRecurrence(converse,converse,'陶艺课','arrange 周二陶艺课 booking','weekly',2)).toBe(false)
 })
+
+it('adds an explicitly requested weekly cadence to the same future task without resending its clock',async()=>{
+ now()
+ const {store,say,commit,goal}=fixture()
+ const content='查天气后决定甲乙散步地点',at='2027-01-06T10:00:00.000Z'
+ const task=store.insertTask({goalId:goal.id,userId:user,content,scheduledAt:at})
+ store.appendTaskRevision({taskId:task.id,userId:user,content,scheduledAt:at})
+ const unrelated=store.insertTask({goalId:goal.id,userId:user,content:'归还图书',scheduledAt:first})
+ store.appendTaskRevision({taskId:unrelated.id,userId:user,content:unrelated.content,scheduledAt:first})
+ const before=store.getTask(user,unrelated.id)
+ const quote='补上每周三北京时间18:00查天气后决定甲乙散步地点'
+ say('请只在原目标中继续原任务：'+quote)
+ const fields={repeat:'weekly',reminder_plan:{...agent,evidence:quote,action:content}}
+ expect(await commit([{op:'task.update',task_id:task.id,base_revision:1,fields}])).toMatchObject({status:'applied'})
+ expect(store.getTask(user,task.id)).toMatchObject({id:task.id,content,scheduledAt:at,currentRevision:2,reminderPlan:{repeat:'weekly',weekday:3,wallTime:at,timezone}})
+ expect(store.getTask(user,unrelated.id)).toEqual(before)
+ expect(store.goalDetail(user,goal.id).revision?.title).toBe('合成课表')
+})
+it.each([
+ ['explicit null',null,'请只在原目标中继续原任务：补上每周三北京时间18:00查天气后决定甲乙散步地点'],
+ ['past inherited clock','2026-12-30T10:00:00.000Z','补上每周三北京时间18:00查天气后决定甲乙散步地点'],
+ ['wrong weekday','2027-01-07T10:00:00.000Z','补上每周三北京时间18:00查天气后决定甲乙散步地点'],
+] as const)('does not bypass timing validation for a preserved clock: %s',async(_label,time,text)=>{
+ now();const {store,say,commit,goal}=fixture(),content='查天气后决定甲乙散步地点'
+ const task=store.insertTask({goalId:goal.id,userId:user,content,scheduledAt:time??first})
+ store.appendTaskRevision({taskId:task.id,userId:user,content,scheduledAt:time??first})
+ say(text);const before=store.getTask(user,task.id)
+ expect(await commit([{op:'task.update',task_id:task.id,base_revision:1,fields:{repeat:'weekly',...(time===null?{scheduled_at:null}:{}),reminder_plan:{...agent,evidence:'补上每周三北京时间18:00查天气后决定甲乙散步地点',action:content}}}])).toMatchObject({status:'invalid'})
+ expect(store.getTask(user,task.id)).toEqual(before)
+})
+it('recognizes only an explicit add-weekly instruction for its quoted action, not narratives or revoked requests',()=>{
+ const action='查天气后决定甲乙散步地点',quote='补上每周三北京时间18:00'+action
+ expect(supportsRecurrence('请只在原目标中继续原任务：'+quote,quote,action,action,'weekly',3)).toBe(true)
+ for(const text of ['我想知道是否'+quote,'如果'+quote,'不要'+quote,'比如：'+quote,'他说：'+quote,'我会'+quote,quote+'，只提醒一次'])
+  expect(supportsRecurrence(text,quote,action,action,'weekly',3),text).toBe(false)
+ expect(supportsRecurrence(quote,quote,action,'归还图书','weekly',3)).toBe(false)
+ expect(supportsRecurrence(quote,quote,action,action,'weekly',4)).toBe(false)
+ expect(supportsRecurrence('每周三18:00'+action,'每周三18:00'+action,action,action,'weekly',3)).toBe(false)
+})

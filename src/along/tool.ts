@@ -1,4 +1,5 @@
 /** Strict lossless JSON output shared by all Along worker tools. */
+import { alongArgumentRecovery } from './argument-recovery.ts'
 import type { z } from 'zod'
 import type { Tool } from '../app/tools/tool.ts'
 
@@ -21,4 +22,6 @@ function jsonOutput(value: unknown): unknown {
 export const alongTool = <S extends z.ZodType>(definition: { name: string; description: string; schema: S
   execute: (args: z.infer<S>, signal: AbortSignal) => Promise<unknown> }): Tool => ({ ...definition,
     execute: async (args: z.infer<S>, signal: AbortSignal) => jsonOutput(await definition.execute(args, signal)),
+    ...(['along_changes_commit','along_chat_reply','along_health_followup'].includes(definition.name)
+      ? {invalidArguments:(error:z.ZodError)=>alongArgumentRecovery(definition.name,error)} : {}),
   }) as unknown as Tool
