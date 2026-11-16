@@ -167,7 +167,16 @@ export function createWorkLink(deps: WorkLinkDeps) {
   const goalOf = (triggerId: string): string | undefined => {
     const trigger = repo.triggers.get(triggerId)
     const goalId = trigger?.meta.goal_id
-    return trigger !== undefined && typeof goalId === 'string' && goalId !== '' ? goalId : undefined
+    if(trigger!==undefined&&typeof goalId==='string'&&goalId!=='')return goalId
+    const userId=trigger?.actor?.source===ALONG_SOURCE?trigger.actor.id:undefined
+    return userId&&typeof trigger?.meta.task_id==='string'?store.getTask(userId,trigger.meta.task_id)?.goalId:undefined
+  }
+  /** Preserve a validated task association without granting access to another goal’s task. */
+  const taskOf = (trigger: Trigger | undefined, goalId?: string): string | undefined => {
+    const userId=trigger?.actor?.source===ALONG_SOURCE?trigger.actor.id:undefined
+    const taskId=trigger?.meta.task_id
+    if(!userId||!goalId||typeof taskId!=='string')return undefined
+    return store.getTask(userId,taskId)?.goalId===goalId?taskId:undefined
   }
   /** The origin trigger's own work-form thread (`goal/<goal>/work/<segment>`) when it matches the work's
    * goal and its segment is a safe id — the thread the work's conversation already lives on (probe form).
@@ -181,9 +190,9 @@ export function createWorkLink(deps: WorkLinkDeps) {
   /** Writes the one row per ticket. `work_id` is always freshly minted (`w_` + 12 hex, design §3); the
    * thread key adopts the work's live thread when the origin carries one, otherwise a minted work thread —
    * and falls back to minted when the adopted key is already mapped to an earlier ticket's row (UNIQUE 兜底). */
-  const mapWork = (input: { ticketId: string; goalId?: string; eventId?: string; triggerId?: string
+  const mapWork = (input: { ticketId: string; goalId?: string; taskId?: string; eventId?: string; triggerId?: string
     segment?: string; kind: 'ticket' | 'resume' }): void => {
-    const base = { ticketId: input.ticketId, goalId: input.goalId, eventId: input.eventId, triggerId: input.triggerId }
+    const base = { ticketId: input.ticketId, goalId: input.goalId, taskId:input.taskId, eventId: input.eventId, triggerId: input.triggerId }
     if (input.segment !== undefined && input.goalId !== undefined) {
       try {
         store.recordWorkLink({ ...base, workId: randomWorkId(),
@@ -213,7 +222,7 @@ export function createWorkLink(deps: WorkLinkDeps) {
             // Only Along-originated work maps to business objects; other Sources have no goal/thread vocabulary here.
             if (ticket === undefined || trigger === undefined || trigger.source !== ALONG_SOURCE) return
             const goalId = goalOf(trigger.id)
-            mapWork({ ticketId: ticket.id, goalId, eventId: eventIdFromTriggerId(trigger.id), triggerId: trigger.id,
+            mapWork({ ticketId: ticket.id, goalId, taskId:taskOf(trigger,goalId), eventId: eventIdFromTriggerId(trigger.id), triggerId: trigger.id,
               segment: adoptedThread(trigger, goalId), kind: 'ticket' })
             return
           }
@@ -226,7 +235,7 @@ export function createWorkLink(deps: WorkLinkDeps) {
             if (row === undefined && !along) return
             const goalId = row?.goalId ?? (along && trigger !== undefined ? goalOf(trigger.id) : undefined)
             const resumeEventId = trigger === undefined ? undefined : eventIdFromTriggerId(trigger.id)
-            mapWork({ ticketId: event.data.ticketId, goalId, eventId: resumeEventId,
+            mapWork({ ticketId: event.data.ticketId, goalId, taskId:taskOf(trigger,goalId), eventId: resumeEventId,
               triggerId: resumeEventId !== undefined && trigger !== undefined ? trigger.id : undefined,
               segment: trigger === undefined ? undefined : adoptedThread(trigger, goalId),
               kind: row === undefined ? 'ticket' : 'resume' })

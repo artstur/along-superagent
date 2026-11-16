@@ -1,4 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
+import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -351,9 +352,11 @@ export class HealthFollowup {
   }
   read(ticketId: string, summaries: HealthSummaryRow[]) {
     const d = this.forTicket(ticketId)
+    const mandate=d?.due?this.host.store.health.daily(d.due.taskId):undefined
     const eligible = d?.due ? this.dueSummaries(d.userId, d.goalId, d.due.dueAt).filter(s => summaries.some(row => row.id === s.id)) : summaries
     if (d && !d.result) this.host.store.health.read(d.eventId, eligible)
-    return { summaries: eligible, ...(d?.due ? { review: { ...d.due,
+    return { summaries: eligible, ...(d?.due ? { review: { ...d.due, repeat:mandate?(mandate.weekday?'weekly':'daily'):'once',
+      ...(mandate?{timezone:mandate.zone,weekday:mandate.weekday,next_occurrence_if_kept:nextDailyTime(d.due.dueAt,mandate.zone,Date.now(),mandate.wallTime,mandate.weekday)}:{}),
       daily_evidence_event_id: this.host.store.health.daily(d.due.taskId)?.weekday ? undefined : this.host.store.health.daily(d.due.taskId)?.evidence,
       reminder_plan: this.host.store.getTask(d.userId,d.due.taskId)?.reminderPlan } } : {}) }
   }
@@ -406,7 +409,8 @@ export class HealthFollowup {
             renew_daily_from_event: z.string().min(1).max(96).optional().describe('Due task only: original user event explicitly delegating this daily schedule. Already bound daily mandates continue automatically. Omit for one-off tasks.'),
             types: z.array(z.enum(HEALTH_SUMMARY_TYPES)).max(7),
             reason: z.string().trim().min(1).max(800),
-            text: z.string().trim().min(1).max(1200).optional()
+            text: z.string().trim().min(1).max(1200).optional(),
+            recommendation: RECOMMENDATION_INPUT.optional().describe('Due research task only: structured result grounded in this ticket’s actual web source ids and exact quotes. Read the research skill.')
           })
           .strict(),
         execute: async (args) =>
@@ -421,6 +425,7 @@ export class HealthFollowup {
               return { status: 'recorded', reused: true }
             }
             if (!d.readSnapshot) throw new Error('read along_health_read before finishing')
+            if(args.recommendation&&(!d.due||!args.text))throw new Error('recommendation requires a bound due task and user-facing text')
             if (!this.current(d))
               return { status: 'conflicted', reason: 'conflicted_input' }
             const link = store.getWorkLink(ticketId),
@@ -429,15 +434,20 @@ export class HealthFollowup {
             if (args.outcome === 'ask' && !args.text) throw new Error('ask requires a concrete question')
             const dailyEvidence = args.renew_daily_from_event ?? (d.due && store.health.daily(d.due.taskId)?.evidence)
             if (dailyEvidence) this.renewDaily(d, dailyEvidence, !args.renew_daily_from_event)
+            const currentTask=d.due?store.getTask(d.userId,d.due.taskId):undefined
+            const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
+            const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
+              ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
+            const notice=structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
             store.health.finish(d, args)
-            if (args.outcome !== 'keep' && args.text) {
+            if ((args.outcome !== 'keep'||structured) && args.text) {
               const eventId = `followup_${d.eventId}`,
                 message = store.appendMessage({
                   userId: d.userId,
                   eventId,
                   role: 'assistant',
                   direction: 'outbound',
-                  text: args.text
+                  text: recommendationText(structured,args.text)
                 })
               store.linkMessageToGoals(message.id, [d.goalId], 'derived')
               store.appendSync({
@@ -446,9 +456,10 @@ export class HealthFollowup {
                 goalId: d.goalId,
                 taskId: d.due?.taskId,
                 messageId: message.id,
-                payload: { message_id: message.id, text: args.text, notification: {
-                  event_id: eventId, kind: 'task_result', revision: d.due?.revision ?? d.inputVersion
-                } }
+                payload: { message_id: message.id, text: message.text, ...(structured?{recommendation:structured}:{}),
+                  ...(notice?{notification: {
+                  event_id: eventId, kind:notice, revision: currentTask?.currentRevision ?? d.inputVersion
+                }}:{}) }
               })
             }
             return { status: 'recorded', reused: false }

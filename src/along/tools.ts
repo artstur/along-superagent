@@ -7,6 +7,9 @@
  *
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
+import { isDeepStrictEqual } from 'node:util'
+import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
+import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
 import { alongTool } from './tool.ts'
@@ -18,7 +21,7 @@ import type { CommitScope } from './changeset.ts'
 import { ALONG_BASE_REVISION_SCHEMA, ALONG_ID_SCHEMA, ALONG_INPUT_VERSION_SCHEMA,
   ALONG_OPS_SCHEMA, ALONG_REASON_SCHEMA, ALONG_METRIC_SCHEMA } from './changeset.ts'
 import type { AlongService } from './service.ts'
-import type { GoalRevisionRow, HealthSummaryRow, TaskRow } from './store.ts'
+import type { GoalRevisionRow, HealthSummaryRow, TaskRow, MessageRow } from './store.ts'
 
 // Custom goals have no configurable metric. Make that invariant explicit in the model's parameter schema
 // instead of an object/null union. The complete business schema still validates the derived operations.
@@ -36,6 +39,7 @@ export interface AlongToolsHost {
   /** Runtime-owned memory, optional for standalone business-tool callers. */
   readonly memory?: MemoryService
   readonly healthFollowup?: HealthFollowup
+  readonly web?: () => ResearchWeb | undefined
   /** Reverse lookup of the host-bound scope for a ticket — worklink's `workScopeForTicket` in production (§2.5). */
   readonly scopeFor: (ticketId: string) => CommitScope | undefined
 }
@@ -79,7 +83,18 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if (bound.allowedGoalId !== undefined) return bound.allowedGoalId
     throw new Error('no goal is bound to this ticket; pass goal_id to name the goal to read')
   }
+  const researchScope = () => {
+    const bound=scope()
+    if(!bound.allowedGoalId)throw new Error('research requires a bound existing goal')
+    if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
+    const due=host.healthFollowup?.forTicket(ticketId)?.due
+    const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
+    const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
+    const original=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)?.text:undefined
+    return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(bound.triggerEventId?{budgetEventId:bound.triggerEventId}:{}),...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
+  }
   return [
+    ...researchTools(store.research,researchScope,host.web??(()=>undefined)),
     alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
       schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{
         const bound=scope(),page=store.listGoals(bound.userId,{limit:20,cursor:args.cursor})
@@ -107,6 +122,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             current_revision: detail.goal.currentRevision, input_version: store.inputVersion(goalId),
             title: detail.revision?.title, metric: detail.revision?.metric, context: detail.revision?.context },
           tasks: detail.tasks.map(taskView),
+          bound_task_id:store.getWorkLink(ticketId)?.taskId,
           ...(args.include_revisions === true ? { revisions: store.goalRevisions(goalId).map(revisionView) } : {}),
         }
       },
@@ -125,9 +141,15 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const history = bound.allowedGoalId === undefined
           ? store.conversationMessages(bound.userId, bound.triggerEventId!).filter(message => args.before_seq === undefined || message.seq < args.before_seq)
           : undefined
-        const page = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
+        let page: {items:MessageRow[];nextCursor?:string} = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
           { beforeSeq: args.before_seq, limit }) : { items: history.slice(-limit),
             nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
+        if(bound.allowedGoalId){
+          const feedback=store.taskFeedbackByGoal(bound.userId,bound.allowedGoalId,args.before_seq,limit+1)
+          const combined=[...new Map([...page.items,...feedback].map(message=>[message.id,message])).values()].sort((a,b)=>a.seq-b.seq)
+          const items=combined.slice(-limit)
+          page={items,nextCursor:combined.length>limit||page.nextCursor||feedback.length>limit?String(items[0]!.seq):undefined}
+        }
         const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, page.items)
         return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), messages: (context?.messages ?? page.items).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
@@ -165,6 +187,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
       name: 'along_chat_reply',
       description: 'Persist the user-facing answer to this work\'s original chat. Read along_conversation_read first. Respond to observations or ask one essential question without creating a goal. After applied changes describe the result. One answer per original event; retries with identical text reuse it. Identity and conversation are host-bound. Superseded inputs return conflicted_input: let the newer work answer.',
       schema: z.object({ text: z.string().trim().min(1).max(1200),
+        recommendation: RECOMMENDATION_INPUT.optional().describe('Structured live recommendation. Read the research skill; use only source ids and exact quotes from this ticket’s Along web tools. URLs and times are supplied by the host.'),
         notify: z.enum(['recommendation_ready', 'task_result']).optional().describe('Only when delivering the requested recommendation or an actionable execution result in a goal. Omit for an ordinary chat answer, acknowledgement or plan edit.'),
         task_id: ALONG_ID_SCHEMA.optional().describe('For a result on a specific task, use its verified ID within this goal.')
       }).strict(),
@@ -178,21 +201,25 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const eventId = `reply_${createHash('sha256').update(source.id).digest('hex').slice(0, 40)}`
         const existing = store.getMessage(bound.userId, `msg:${bound.userId}:${eventId}`)
         if (existing) {
-          if (existing.text !== args.text) throw new Error('reply already exists with different text')
+          if (store.research.reply(existing.id) ? !isDeepStrictEqual(store.research.reply(existing.id)?.input,args) : existing.text!==args.text||args.recommendation!==undefined) throw new Error('reply already exists with different content')
           return { status: 'replied', message_id: existing.id, reused: true }
         }
         if (!store.isCurrentChatInput(bound.userId, source.eventId, goalId)) return { status: 'conflicted', reason: 'conflicted_input' }
         const goal = goalId && store.getGoal(bound.userId, goalId)
-        const task = args.task_id && store.getTask(bound.userId, args.task_id)
+        const taskId=args.task_id??(args.recommendation?store.getWorkLink(ticketId)?.taskId:undefined)
+        const task = taskId && store.getTask(bound.userId, taskId)
         if (args.notify && (!goal || goal.status !== 'active')) throw new Error('notifications require an active bound goal')
-        if (args.task_id && (!args.notify || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
-        const notification = args.notify && goal ? { event_id: eventId, kind: args.notify,
+        if (taskId && ((!args.notify&&!args.recommendation) || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
+        const structured = args.recommendation ? recommendation(store.research,researchScope(),args.recommendation) : undefined
+        const notify = structured ? recommendationNotice(structured,task||undefined) : args.notify
+        const notification = notify && goal ? { event_id: eventId, kind: notify,
           revision: task ? task.currentRevision : goal.currentRevision } : undefined
         const message = store.appendMessage({ userId: bound.userId, eventId, role: 'assistant', direction: 'outbound',
-          text: args.text, causationId: root, replyToMessageId: source.id })
+          text: recommendationText(structured,args.text), causationId: root, replyToMessageId: source.id })
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
-        store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId: args.task_id, messageId: message.id,
-          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}) } })
+        store.research.saveReply(message.id,args,structured,notification)
+        store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId, messageId: message.id,
+          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}), ...(structured ? {recommendation:structured} : {}) } })
         return { status: 'replied', message_id: message.id, reused: false }
       }),
     }),
@@ -223,6 +250,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true })
         if (result.status === 'invalid') {
           const guidance:Record<string,string> = {
+            recurring_research_remains_open:'This host-bound review cannot edit or stop the ongoing research task, its wording, time or recurrence. Make no task ChangeSet; deliver this occurrence with along_health_followup outcome:keep and its recommendation. The host renews the existing cadence. A new explicit user chat handles task changes.',
             reminder_plan_required:'Every new task needs reminder_plan in that op. If the action has a time or deadline, choose the next useful future instant as source:agent, repeat:once with explanation. For a genuine missing window use needs_time with one specific question; explicitly declined or untimed work uses off.',
             task_scoped_repeat_evidence_required:'Use the original cadence clause, a specific action shared with the task, and the actual reminder weekday. If uncertain, arrange the next useful occurrence NOW with repeat:"once", future scheduled_at, and reminder_plan:{state:"scheduled",source:"agent",explanation:"why this one time was chosen"}. Do not retry an unverified recurrence.',
             user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For user source, quote the single original clock + reminder verb + exact task action, and pass that action. If cadence was also rejected, schedule the next occurrence once.',

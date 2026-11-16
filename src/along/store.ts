@@ -16,6 +16,7 @@ import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import { MemoryStore } from './memory/store.ts'
 import type { ReminderPlan } from './reminder-plan.ts'
+import { ResearchStore } from './research-store.ts'
 import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 
@@ -184,6 +185,7 @@ export class AlongStore {
   readonly memory: MemoryStore
   readonly maintenance: MaintenanceStore
   readonly health: HealthStore
+  readonly research: ResearchStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -199,6 +201,7 @@ export class AlongStore {
       this.memory = new MemoryStore(this.db, work => this.atomic(work))
       this.maintenance = new MaintenanceStore(this.db, work => this.atomic(work))
       this.health = new HealthStore(this.db)
+      this.research = new ResearchStore(this.db)
     } catch (error) {
       this.db.close()
       throw error
@@ -344,6 +347,13 @@ export class AlongStore {
   /** The user's task row, or `undefined` when it is missing **or** owned by someone else (no existence leak). */
   taskRevisionOrigin(taskId: string, revision: number): string | undefined {
     return this.opt(this.one('SELECT origin_event_id FROM task_revision WHERE task_id=? AND revision=?', taskId, revision)?.origin_event_id)
+  }
+  /** The original task wording at a host-bound due revision, with ownership checked. */
+  taskRevisionContent(userId:string,taskId:string,revision:number):string | undefined {
+    const task=this.getTask(userId,taskId)
+    if(!task)return undefined
+    return this.opt(this.one('SELECT content FROM task_revision WHERE task_id=? AND revision=? AND user_id=?',taskId,revision,userId)?.content)
+      ??(task.currentRevision===revision?task.content:undefined)
   }
   getTask(userId: string, taskId: string): TaskRow | undefined {
     const row = this.one('SELECT * FROM user_task WHERE id = ?', taskId)
@@ -622,6 +632,15 @@ export class AlongStore {
       const oldest = items[0]
       return { items, nextCursor: items.length === limit && oldest ? String(oldest.seq) : undefined }
     })
+  }
+  /** Original task feedback from older snapshots may have no message_goal_link; resolve its owned task at read time. */
+  taskFeedbackByGoal(userId:string,goalId:string,beforeSeq?:number,limit=50):MessageRow[] {
+    this.assertGoalOwner(userId,goalId)
+    return this.all(`SELECT m.* FROM message m JOIN event_inbox e ON e.user_id=m.user_id AND e.event_id=m.event_id
+      JOIN user_task t ON t.id=COALESCE(e.task_id,json_extract(e.payload,'$.task_id')) AND t.user_id=m.user_id
+      WHERE m.user_id=? AND t.goal_id=? AND e.status='accepted' AND e.event_type='along.message'
+      AND COALESCE(e.kind,json_extract(e.payload,'$.kind')) IN ('task.feedback','task.completed')
+      AND (? IS NULL OR m.seq<?) ORDER BY m.seq DESC LIMIT ?`,userId,goalId,beforeSeq,beforeSeq,pageLimit(limit)).map(row=>this.messageRow(row)).reverse()
   }
   /** ChangeSets of one goal, newest first, keyset-paged by `(created_at, id)` — the「改回去」history. */
   changeSetsByGoal(userId: string, goalId: string, cursor: PageCursor = { limit: 50 }): Page<ChangeSetRow> {

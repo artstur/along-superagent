@@ -5,6 +5,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 import { ALONG_DDL, ALONG_OLDEST_SCHEMA, ALONG_SCHEMA_VERSION } from './schema.ts'
+import { RESEARCH_DDL } from './research-store.ts'
 import { MEMORY_DDL } from './memory/schema.ts'
 import { HEALTH_DDL, TASK_SCHEDULE_DDL } from './health-schema.ts'
 import { MAINTENANCE_DDL } from './maintenance-schema.ts'
@@ -27,6 +28,7 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  7: db => { db.exec(RESEARCH_DDL) },
   2: db => { db.exec(MEMORY_DDL) }, 3: db => { db.exec(MAINTENANCE_DDL) }, 4: db => { db.exec(HEALTH_DDL) },
   5: db => { db.exec(TASK_SCHEDULE_DDL) },
   6: db => {

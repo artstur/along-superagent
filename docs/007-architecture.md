@@ -366,6 +366,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/along.ts` | Optional local Along Source descriptor and plugin, exported as `./along-source`; scopes supported events and configures allowed users, with phone ingress implemented separately |
 | `src/along/schema.ts` | The DDL of `along.sqlite` with its schema version, one baseline of idempotent statements |
 | `src/along/migrate.ts` | The schema version check and the single-transaction migration of `along.sqlite`, which refuses databases newer than this build and older ones it cannot migrate |
+| `src/along/research-store.ts`, `recommendation.ts`, `web-research.ts` | Host-scoped durable public web evidence, validated recommendation protocol and bounded Harness web service adapters |
 | `src/along/store.ts` | `AlongStore`, the only writer of `along.sqlite`: ownership checks, object and input versions, messages ordered by the server's `seq`, paged goal, task, message and change-set reads, health summaries, Inbox rows, the delivery queue with its lease and failure paths, work links, run records and the sync outbox, all inside `atomic` savepoints; `assertAlongDataIsolation` keeps the business directory outside the worker execution root |
 | `src/along/service.ts` | `AlongService`, the facade the Runtime assembles: the loopback API's single entry, with the inbox and changeset factories injected |
 | `src/along/legacy-import.ts` | `importLegacy`, the stable-ID idempotent import of the phone's old export (`g_health`/`g_finance`/`g_custom`, messages renumbered in export order) with a counts-and-hashes report |
@@ -434,6 +435,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 
 | Test | Covers |
 | --- | --- |
+| `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |

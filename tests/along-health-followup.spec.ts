@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Store } from '../src/app/store.ts'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { startRuntime, type Host } from './fixtures/host.ts'
 import { alongKind } from '../src/sources/along.ts'
 import { EventEnvelopeSchema } from '../src/along/envelope.ts'
@@ -40,9 +40,12 @@ const summaries = (
     summarizer_version: 'along-health-v1'
   }
 ]
+// The synthetic current-day summaries below belong to this fixed clock, not the developer’s wall clock.
+beforeEach(() => { vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-16T04:00:00Z')) })
 afterEach(async () => {
   await host?.stop()
   host = undefined
+  vi.useRealTimers()
   for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 async function setup() {

@@ -17,6 +17,7 @@
  * from `numberLikeTarget` — all ported from `along/web/goal-agent-core.mjs:76,124,153` and pinned by static
  * test vectors in `tests/along-changeset.spec.ts`. Layout is not part of the ChangeSet protocol (SD-7).
  */
+import { isResearchTaskContent } from './recommendation.ts'
 import { z } from 'zod'
 import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, type PlanInput, type Repeat } from './reminder-plan.ts'
 import { hasDailyMandate } from './task-schedule.ts'
@@ -278,6 +279,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       || task.scheduledAt !== health.due.dueAt) return refuse('conflicted', 'conflicted_revision')
     if (input.ops.some(op => (op.op !== 'task.update' && op.op !== 'task.cancel') || op.task_id !== task.id))
       return refuse('invalid', 'outside_due_task')
+    if(store.health.daily(task.id)&&isResearchTaskContent(task.content))
+      return refuse('invalid','recurring_research_remains_open')
   }
   if (health && input.ops.some(op => op.op.startsWith('goal.'))) return refuse('invalid', 'health_goal_mutation')
 
