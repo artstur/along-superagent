@@ -125,7 +125,7 @@ describe('Along stage A: the assembled runtime carries an event end to end and s
         ops: [
           { op: 'goal.create', domain: 'health', title: GOAL_TITLE_1,
             metric: { type: 'workout', target: 120, unit: '分钟', period: 'week' }, context: null },
-          { op: 'task.create', content: '本周完成一次 40 分钟晨跑' },
+          { op: 'task.create', content: '本周完成一次 40 分钟晨跑', reminder_plan:{state:'off',reason:'untimed'} },
         ],
       }) as { status: string; changeset_id: string; goal_revision: number; reused: boolean }
       expect(commit).toMatchObject({ status: 'applied', goal_revision: 1, reused: false })

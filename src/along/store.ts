@@ -15,6 +15,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import { MemoryStore } from './memory/store.ts'
+import type { ReminderPlan } from './reminder-plan.ts'
 import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 
@@ -34,7 +35,7 @@ export interface GoalRevisionRow {
 }
 export interface TaskRow {
   id: string; goalId: string; userId: string; status: 'open' | 'done' | 'cancelled'; content: string
-  scheduledAt?: string; previousDailyOccurrence?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
+  scheduledAt?: string; reminderPlan?: ReminderPlan; previousDailyOccurrence?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
 }
 export interface TaskRevisionRow {
   taskId: string; revision: number; userId: string; goalId: string; content: string; status: 'open' | 'done' | 'cancelled'
@@ -254,6 +255,7 @@ export class AlongStore {
   private taskRow(row: Record<string, SQLInputValue>): TaskRow {
     return { id: this.text(row.id), goalId: this.text(row.goal_id), userId: this.text(row.user_id),
       status: this.text(row.status) as TaskRow['status'], content: this.text(row.content), scheduledAt: this.opt(row.scheduled_at),
+      reminderPlan: this.health.reminderPlan(this.text(row.id)),
       previousDailyOccurrence: this.health.previousDailyOccurrence(this.text(row.id), this.int(row.current_revision)),
       completedFeedbackEventId: this.opt(row.completed_feedback_event_id), currentRevision: this.int(row.current_revision),
       createdAt: this.text(row.created_at), updatedAt: this.text(row.updated_at) }

@@ -1,3 +1,4 @@
+import type { ReminderPlan } from './reminder-plan.ts'
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 import type { HealthSummaryRow } from './store.ts'
@@ -102,25 +103,35 @@ export class HealthStore {
       .run(eventId, due.taskId, due.revision, due.dueAt)
     return this.get(eventId)!
   }
-  daily(taskId: string): { evidence: string; zone: string; wallTime: string } | undefined {
+  reminderPlan(taskId:string): ReminderPlan | undefined {
+    const row=this.db.prepare('SELECT plan FROM task_reminder_plan WHERE task_id=?').get(taskId)
+    return row && JSON.parse(String(row.plan)) as ReminderPlan
+  }
+  savePlan(taskId:string,plan:ReminderPlan | undefined):void {
+    if (!plan) { this.db.prepare('DELETE FROM task_reminder_plan WHERE task_id=?').run(taskId); return }
+    this.db.prepare('INSERT INTO task_reminder_plan(task_id,plan) VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET plan=excluded.plan').run(taskId,JSON.stringify(plan))
+  }
+  daily(taskId: string): { evidence: string; zone: string; wallTime: string; weekday?:number; quote?:string; action?:string } | undefined {
     const row = this.db.prepare('SELECT * FROM task_daily WHERE task_id=?').get(taskId)
-    return row && { evidence: String(row.evidence_event_id), zone: String(row.timezone), wallTime: String(row.wall_time) }
+    return row && { evidence: String(row.evidence_event_id), zone: String(row.timezone), wallTime: String(row.wall_time),
+      ...(row.weekday == null ? {} : { weekday:Number(row.weekday) }),
+      ...(row.evidence_quote == null ? {} : { quote:String(row.evidence_quote),action:String(row.task_action) }) }
   }
   soleTaskFromMandate(taskId: string, goalId: string, eventId: string): boolean {
     const tasks = this.db.prepare(`SELECT DISTINCT t.id FROM user_task t JOIN task_revision r ON r.task_id=t.id
       WHERE t.goal_id=? AND r.origin_event_id=? AND r.scheduled_at IS NOT NULL`).all(goalId, eventId)
     return tasks.length === 1 && tasks[0]!.id === taskId && !this.db.prepare('SELECT 1 FROM task_once WHERE task_id=?').get(taskId)
   }
-  setDaily(taskId: string, evidence?: { eventId: string; zone: string; wallTime: string }): void {
+  setDaily(taskId: string, evidence?: { eventId: string; zone: string; wallTime: string; weekday?:number; quote?:string; action?:string }): void {
     if (!evidence) {
       this.db.prepare('DELETE FROM task_daily WHERE task_id=?').run(taskId)
       this.db.prepare('INSERT INTO task_once(task_id) VALUES(?) ON CONFLICT DO NOTHING').run(taskId)
       return
     }
     this.db.prepare('DELETE FROM task_once WHERE task_id=?').run(taskId)
-    this.db.prepare(`INSERT INTO task_daily(task_id,evidence_event_id,timezone,wall_time) VALUES(?,?,?,?)
-      ON CONFLICT(task_id) DO UPDATE SET evidence_event_id=excluded.evidence_event_id,timezone=excluded.timezone,wall_time=excluded.wall_time`)
-      .run(taskId, evidence.eventId, evidence.zone, evidence.wallTime)
+    this.db.prepare(`INSERT INTO task_daily(task_id,evidence_event_id,timezone,wall_time,weekday,evidence_quote,task_action) VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(task_id) DO UPDATE SET evidence_event_id=excluded.evidence_event_id,timezone=excluded.timezone,wall_time=excluded.wall_time,weekday=excluded.weekday,evidence_quote=excluded.evidence_quote,task_action=excluded.task_action`)
+      .run(taskId, evidence.eventId, evidence.zone, evidence.wallTime,evidence.weekday??null,evidence.quote??null,evidence.action??null)
   }
   recordRenewal(eventId: string, revision: number): void {
     this.db.prepare('UPDATE task_review SET renewed_revision=? WHERE event_id=?').run(revision,eventId)

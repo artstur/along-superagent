@@ -1,6 +1,6 @@
 /** One civil-time occurrence each local day. During a DST gap move forward by the gap;
  * in an overlap use the earlier instant. Skip missed days after a host outage. */
-export function nextDailyTime(original: string, zone: string, now: number, wallTime = original): string {
+export function nextDailyTime(original: string, zone: string, now: number, wallTime = original, weekday?: number): string {
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: zone, hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const civil = (instant: number) => {
@@ -11,6 +11,7 @@ export function nextDailyTime(original: string, zone: string, now: number, wallT
   const local = civil(Date.parse(original)), time = civil(Date.parse(wallTime)) % day
   let date = Math.max(Math.floor(local / day) + 1, Math.floor(civil(now) / day))
   for (;;) {
+    if (weekday !== undefined && ((new Date(date * day).getUTCDay() || 7) !== weekday)) { date++; continue }
     const target = date * day + time
     const offsets = [-day, day].map(delta => civil(target + delta) - (target + delta))
     const candidates = [...new Set(offsets)].map(offset => target - offset)

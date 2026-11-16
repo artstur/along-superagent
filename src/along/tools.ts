@@ -44,7 +44,7 @@ export interface AlongToolsHost {
 const HEALTH_TYPES = ['steps', 'workout', 'active_energy', 'weight', 'resting_heart_rate', 'wrist_temperature', 'sleep'] as const
 
 const taskView = (task: TaskRow) => ({ task_id: task.id, status: task.status, revision: task.currentRevision,
-  content: task.content, scheduled_at: task.scheduledAt, goal_id: task.goalId })
+  content: task.content, scheduled_at: task.scheduledAt, reminder_plan:task.reminderPlan, goal_id: task.goalId })
 
 const revisionView = (revision: GoalRevisionRow) => ({ revision: revision.revision, title: revision.title,
   metric: revision.metric, context: revision.context, status: revision.status, basis_changeset: revision.basisChangeset,
@@ -129,7 +129,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           { beforeSeq: args.before_seq, limit }) : { items: history.slice(-limit),
             nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
         const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, page.items)
-        return { ...(context ? { memories: context.memories, memory_history: context.history } : {}), messages: (context?.messages ?? page.items).map(message =>
+        return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), messages: (context?.messages ?? page.items).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
           ...(page.nextCursor !== undefined ? { next_before_seq: Number(page.nextCursor) } : {}) }
       },
@@ -207,7 +207,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         reason: ALONG_REASON_SCHEMA.describe('One-sentence change note the user will see.'),
         derived_from_changeset: ALONG_ID_SCHEMA.optional()
           .describe('For「改回去」: the applied ChangeSet whose goal snapshot is restored; fields must match or be omitted.'),
-        ops: TOOL_OPS_SCHEMA.describe('For qualitative goals choose custom and omit metric. Numeric health/finance goals require type, target, unit and period. All operations go through full business validation.'),
+        ops: TOOL_OPS_SCHEMA.describe('For qualitative goals choose custom and omit metric. Numeric health/finance goals require type, target, unit and period. Every new task needs reminder_plan: scheduled (supply future scheduled_at, source agent or user, and explanation), needs_time (one question), or off (untimed or opt_out). For edits keep is explicit. Daily/weekly require a matching quoted user mandate and action.'),
       }).strict(),
       execute: async args => {
         const bound = scope()
@@ -220,7 +220,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         }
         const ops = ALONG_OPS_SCHEMA.parse(args.ops.map(op => op.op === 'goal.create' && op.domain === 'custom' ? { ...op, metric: null } : op))
         return host.service.commitChangeSet(
-          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, bound)
+          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true })
       },
     }),
   ]

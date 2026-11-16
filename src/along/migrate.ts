@@ -29,6 +29,10 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
   2: db => { db.exec(MEMORY_DDL) }, 3: db => { db.exec(MAINTENANCE_DDL) }, 4: db => { db.exec(HEALTH_DDL) },
   5: db => { db.exec(TASK_SCHEDULE_DDL) },
+  6: db => { db.exec(`CREATE TABLE task_reminder_plan (task_id TEXT PRIMARY KEY REFERENCES user_task(id), plan TEXT NOT NULL);
+    ALTER TABLE task_daily ADD COLUMN weekday INTEGER;
+    ALTER TABLE task_daily ADD COLUMN evidence_quote TEXT;
+    ALTER TABLE task_daily ADD COLUMN task_action TEXT;`) },
 }
 
 /**
