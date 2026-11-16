@@ -23,8 +23,15 @@ export function nextDailyTime(original: string, zone: string, now: number, wallT
 /** The Worker identifies the mandate semantically. Require explicit daily language in the cited
  * original user instruction too: a daily goal metric alone never establishes a daily notification. */
 export function hasDailyMandate(text: string): boolean {
-  const clauses = text.split(/[。！？!?;；\n]/)
-  return clauses.some(clause => /每日|每天|每晚|每早|每晨|daily|every (?:day|morning|night|evening)/i.test(clause)
-    && /提醒|安排|续排|推荐|通知|叫我|到点|督促|推送|remind|schedul|recommend|notif|alert/i.test(clause)
-    && !/别|不要|不用|仅一次|只提醒一次|只[要在限]?[今这]天|one.off|just once|取消|停止|不必|无需|不想|假如|如果|假设|例如|举例|是否|要不要|don't|do not|stop|cancel|what if|for example|if I/i.test(clause))
+  const daily = /每日|每天|每晚|每早|每晨|\bdaily\b|\bevery (?:day|morning|night|evening)\b/i
+  const action = /提醒|安排|续排|推荐|通知|叫我|到点叫|督促|推送|\b(?:remind|schedul|recommend|notif|alert)/i
+  const declined = /禁止|严禁|勿|别|不要|不用|取消|停止|不必|无需|不想|不再|不需要|不允许|不能|假如|如果|假设|例如|举例|是否|要不要|don't|do not|never|forbid|stop|cancel|what if|for example|if i/i
+  return text.split(/[，,。！？!?;；\n]/).some(clause => {
+    const verb = action.exec(clause)
+    if (!verb || !daily.test(clause)) return false
+    // A constraint after the requested action ("不要太晚") qualifies an affirmative mandate.
+    // A daily habit in a different clause supplies no cadence for a one-off reminder.
+    return !declined.test(clause.slice(0, verb.index))
+      && !/仅一次|只提醒一次|一次性|只[要在限]?[今这]天|one.off|just once|only once/i.test(clause)
+  })
 }
