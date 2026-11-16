@@ -25,3 +25,7 @@ message sync payload 可选 `recommendation`：`{version:1,kind:'hiking'|'genera
 测试涵盖工具成功、失败/空结果、超时/限流、URL/DNS、证据范围/摘录/过期、关闭/恶劣天气、证据不足、重复消息、旧协议与到期入口。运行 pnpm check（类型、全部测试和构建）。至少隔离真实 Worker 网络验证后才交付正式用户；共享服务与原手机由集成负责人统一发布，逐端记录实际观察与待验项。
 
 已核实的回归基线：原 HEAD 的健康样本把当前窗口固定在 2026-11-16；跨日运行原 health.ts 时同样有 11 项因过期无工单失败。本次仅把该合成测试的 Date 固定在样本日，未改变真实健康新鲜度判断。项目 Node 要求 >=22.19；使用 22.23.4 完成检查和打包。
+
+独立审查后的收紧：所有领域已提供的检查都必须通过，任何过期引用均降为条件方案；非徒步不会跳过未知天气。普通 task_id 消息的 WorkLink 保留原任务，推荐答复默认沿用该归属。Along Worker 与其子 Agent 的原生 web_search/web_fetch 被拒绝，必须使用会保存 scope 证据的沿途工具；其他 Source 的既有工具不变。
+
+历史 task.feedback/task.completed 仅按已验证用户和实际任务归属合并进分页对话；旧反馈没有 message_goal_link 时也可只读恢复，不回灌旧目标或修改任务状态。

@@ -21,7 +21,7 @@ import type { CommitScope } from './changeset.ts'
 import { ALONG_BASE_REVISION_SCHEMA, ALONG_ID_SCHEMA, ALONG_INPUT_VERSION_SCHEMA,
   ALONG_OPS_SCHEMA, ALONG_REASON_SCHEMA, ALONG_METRIC_SCHEMA } from './changeset.ts'
 import type { AlongService } from './service.ts'
-import type { GoalRevisionRow, HealthSummaryRow, TaskRow } from './store.ts'
+import type { GoalRevisionRow, HealthSummaryRow, TaskRow, MessageRow } from './store.ts'
 
 // Custom goals have no configurable metric. Make that invariant explicit in the model's parameter schema
 // instead of an object/null union. The complete business schema still validates the derived operations.
@@ -118,6 +118,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             current_revision: detail.goal.currentRevision, input_version: store.inputVersion(goalId),
             title: detail.revision?.title, metric: detail.revision?.metric, context: detail.revision?.context },
           tasks: detail.tasks.map(taskView),
+          bound_task_id:store.getWorkLink(ticketId)?.taskId,
           ...(args.include_revisions === true ? { revisions: store.goalRevisions(goalId).map(revisionView) } : {}),
         }
       },
@@ -136,9 +137,15 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const history = bound.allowedGoalId === undefined
           ? store.conversationMessages(bound.userId, bound.triggerEventId!).filter(message => args.before_seq === undefined || message.seq < args.before_seq)
           : undefined
-        const page = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
+        let page: {items:MessageRow[];nextCursor?:string} = history === undefined ? store.messagesByGoal(bound.userId, bound.allowedGoalId!,
           { beforeSeq: args.before_seq, limit }) : { items: history.slice(-limit),
             nextCursor: history.length > limit ? String(history.at(-limit)!.seq) : undefined }
+        if(bound.allowedGoalId){
+          const feedback=store.taskFeedbackByGoal(bound.userId,bound.allowedGoalId,args.before_seq,limit+1)
+          const combined=[...new Map([...page.items,...feedback].map(message=>[message.id,message])).values()].sort((a,b)=>a.seq-b.seq)
+          const items=combined.slice(-limit)
+          page={items,nextCursor:combined.length>limit||page.nextCursor||feedback.length>limit?String(items[0]!.seq):undefined}
+        }
         const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, page.items)
         return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), messages: (context?.messages ?? page.items).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
@@ -195,9 +202,10 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         }
         if (!store.isCurrentChatInput(bound.userId, source.eventId, goalId)) return { status: 'conflicted', reason: 'conflicted_input' }
         const goal = goalId && store.getGoal(bound.userId, goalId)
-        const task = args.task_id && store.getTask(bound.userId, args.task_id)
+        const taskId=args.task_id??(args.recommendation?store.getWorkLink(ticketId)?.taskId:undefined)
+        const task = taskId && store.getTask(bound.userId, taskId)
         if (args.notify && (!goal || goal.status !== 'active')) throw new Error('notifications require an active bound goal')
-        if (args.task_id && ((!args.notify&&!args.recommendation) || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
+        if (taskId && ((!args.notify&&!args.recommendation) || !task || task.goalId !== goalId)) throw new Error('notification task outside this goal')
         const structured = args.recommendation ? recommendation(store.research,researchScope(),args.recommendation) : undefined
         const notify = structured ? (structured.status==='unavailable'?undefined:'recommendation_ready') : args.notify
         const notification = notify && goal ? { event_id: eventId, kind: notify,
@@ -206,7 +214,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           text: args.text, causationId: root, replyToMessageId: source.id })
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
         store.research.saveReply(message.id,args,structured,notification)
-        store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId: args.task_id, messageId: message.id,
+        store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId, messageId: message.id,
           payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}), ...(structured ? {recommendation:structured} : {}) } })
         return { status: 'replied', message_id: message.id, reused: false }
       }),

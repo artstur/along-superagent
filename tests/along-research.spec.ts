@@ -149,3 +149,43 @@ it('delivers a due research result through the existing bound followup and leave
   expect(store.getTask(userId,outing.id)?.status).toBe('open')
  }finally{await h.stop()}
 },30_000)
+it('keeps general recommendations conditional for unknown or expired checks, including expiry outside a fact',()=>{
+ const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天',Date.now()-4*3600_000)
+ const input=plan(route.id,access.id,weather.id);input.kind='general'
+ expect(recommendation(store.research,scope,input)).toMatchObject({status:'partial',options:[{status:'conditional',checks:[{status:'ok'},{status:'unknown'}]}]})
+ const unknown=structuredClone(input);unknown.options[0]!.checks=[{kind:'weather',status:'unknown',summary:'日期待确认',evidence:[]}]
+ expect(recommendation(store.research,scope,unknown).options[0]?.status).toBe('conditional')
+})
+it('preserves a task feedback association through real inbox, WorkLink and recommendation reply by default',async()=>{
+ const h=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}))
+ try{
+  h.runtime.sources.register(alongKind);const settings=h.runtime.store.settings()
+  h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...settings.policy,sources:{along:{allowed:[{id:'u_feedback_research'}],admission:{}}}}})
+  const store=h.runtime.along!.service.alongStore,userId='u_feedback_research',deviceId='d_feedback_research'
+  store.assertUser(userId,deviceId);const goal=store.insertGoal({userId,domain:'custom'})
+  store.appendGoalRevision({goalId:goal.id,userId,title:'合成周末活动',status:'active'});store.ensureInputVersion(userId,goal.id)
+  const task=store.insertTask({goalId:goal.id,userId,content:'安排周末活动'})
+  const oldFeedback='research_old_feedback'
+  expect(h.runtime.along!.service.acceptEvent({event_id:oldFeedback,schema_version:'1',event_type:'along.message',kind:'task.feedback',task_id:task.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.message',kind:'task.feedback',task_id:task.id,note:'之前走过这条路线，想换一个。'}},{userId,deviceId})).toMatchObject({status:'accepted'})
+  const eventId='research_feedback'
+  h.runtime.along!.service.acceptEvent({event_id:eventId,schema_version:'1',event_type:'along.user_message',goal_id:goal.id,task_id:task.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'关于这个路线，帮我比较备选方案'}},{userId,deviceId})
+  await h.runtime.pump();await h.runtime.idle()
+  const candidate='along:'+userId+':'+eventId
+  await vi.waitFor(()=>expect(store.getDelivery(candidate)?.status).toBe('delivered'),{timeout:10000})
+  await h.runtime.idle()
+  const routed=await h.route({kind:'accept',trigger_id:candidate,title:'比较备选路线',worktree_name:'research-feedback',acknowledgement:'开始比较。'})
+  const ticketId=(routed.ticket as {ticket_id:string}).ticket_id
+  await h.runtime.idle();await vi.waitFor(()=>expect(h.tools.has('worker-'+ticketId)).toBe(true),{timeout:10000})
+  expect(store.getWorkLink(ticketId)?.taskId).toBe(task.id)
+  expect(await h.runTool('worker-'+ticketId,'along_goal_read',{})).toMatchObject({bound_task_id:task.id})
+  expect(await h.runTool('worker-'+ticketId,'along_conversation_read',{})).toMatchObject({messages:expect.arrayContaining([expect.objectContaining({event_id:oldFeedback,text:'之前走过这条路线，想换一个。'})])})
+  const rec={kind:'general',title:'备选信息暂不可用',summary:'稍后重试',constraints:[],options:[],nextStep:'稍后继续'}
+  await h.runTool('worker-'+ticketId,'along_chat_reply',{text:'检索暂不可用，可以稍后继续。',recommendation:rec})
+  const reply=store.syncPage(userId,0,200).items.find(i=>(i.payload as any).recommendation)
+  expect(reply).toMatchObject({goalId:goal.id,taskId:task.id})
+  expect(store.getTask(userId,task.id)?.status).toBe('open')
+  const guard=((h.agents.get('worker-'+ticketId) as any).ctx.tools.guard as any).mock.calls[0][0]
+  expect(guard({name:'web_fetch'})).toContain('along_web_fetch')
+  expect(guard({name:'along_web_fetch'})).toBeUndefined()
+ }finally{await h.stop()}
+},30_000)

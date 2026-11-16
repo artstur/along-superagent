@@ -42,6 +42,7 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
   })
   const checks=option.checks.map(check=>{
    const sources=refs(check.evidence);sources.forEach(s=>optionSources.add(s.id))
+   if(sources.some(s=>Date.parse(s.expiresAt)<=now))uncertain=true
    // A search excerpt is discovery evidence. Safety decisions require a fetched page for that purpose.
    const valid=sources.length>0&&sources.every(s=>s.fetched&&s.purpose===check.kind&&Date.parse(s.expiresAt)>now
     &&(check.kind!=='weather'||!s.publishedAt||Date.parse(s.publishedAt)>=now-36*3600_000&&Date.parse(s.publishedAt)<=now+300_000))
@@ -49,7 +50,7 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
     summary:check.summary,sourceIds:[...new Set(sources.map(s=>s.id))]}
   })
   const risk=checks.some(c=>c.status==='risk')
-  const checked=input.kind!=='hiking'||['access','weather'].every(kind=>checks.some(c=>c.kind===kind&&c.status==='ok'))
+  const checked=checks.every(check=>check.status==='ok')&&(input.kind!=='hiking'||['access','weather'].every(kind=>checks.some(c=>c.kind===kind&&c.status==='ok')))
   const status=risk?'excluded' as const:checked&&!uncertain&&optionSources.size>0&&option.unknowns.length===0?'recommended' as const:'conditional' as const
   return {id:option.id,title:option.title,reason:option.reason,status,conditions:option.conditions,unknowns:option.unknowns,facts,checks,sourceIds:[...optionSources]}
  })
