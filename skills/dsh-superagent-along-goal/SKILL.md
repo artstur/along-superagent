@@ -12,3 +12,7 @@ description: Handle Along personal-goal chats: respond to observations, create g
 Finish when the valid changes are applied (or the correct decision is to make none), the appropriate reply is stored, and the work is reported. Long-term memory and health-trigger automation are separate capabilities; use them only when their tools are actually available.
 
 For example, a qualitative sleep goal can be committed with `base_revision:0`, `input_version:1`, a stable `idempotency_key`, a one-sentence `reason`, and `ops:[{"op":"goal.create","domain":"custom","title":"改善睡眠","context":["先减少睡前刷手机"]},{"op":"task.create","content":"今晚睡前把手机放到床外"}]`. A health/finance metric includes all of `type`, `target`, `unit` and `period`.
+
+When the user requests a recommendation and the response actually delivers it in an active goal, set `notify: "recommendation_ready"` in `along_chat_reply`. Use `notify: "task_result"` for a user-relevant execution result. For a specific task include its verified `task_id`. Ordinary responses and routine progress stay silent.
+
+For the concrete task explicitly delegated in the current user chat, set `repeat: "daily"` on its task.create or task.update.fields together with the agreed schedule. Omit for one-off tasks. To withdraw daily renewal use `repeat: "once"` on the affected task. An already-bound daily mandate continues after ordinary keep.

@@ -6,7 +6,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { ALONG_DDL, ALONG_OLDEST_SCHEMA, ALONG_SCHEMA_VERSION } from './schema.ts'
 import { MEMORY_DDL } from './memory/schema.ts'
-import { HEALTH_DDL } from './health-schema.ts'
+import { HEALTH_DDL, TASK_SCHEDULE_DDL } from './health-schema.ts'
 import { MAINTENANCE_DDL } from './maintenance-schema.ts'
 
 /** Raised when `along.sqlite` cannot be opened or migrated; the caller must abort startup. */
@@ -28,6 +28,7 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
   2: db => { db.exec(MEMORY_DDL) }, 3: db => { db.exec(MAINTENANCE_DDL) }, 4: db => { db.exec(HEALTH_DDL) },
+  5: db => { db.exec(TASK_SCHEDULE_DDL) },
 }
 
 /**

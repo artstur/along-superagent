@@ -10,7 +10,7 @@ Along 的 Mac 本地 Agent 工程，基于 DSH Super Agent 构建，负责接收
 | --- | --- |
 | 业务存储、配对、事件 Inbox、版本与执行记录 | 已实现；[阶段 A 集成](docs/along/005-phase-a-integration.md) |
 | 聊天、自动建目标与聊天纠正 | 最小闭环已实现；[阶段 B 集成](docs/along/007-phase-b-integration.md) |
-| 健康变化自动跟进 | 新协议、可靠补传、逐目标筛选与自动派工已实现；[Along 阶段 C](../Along/docs/stage-c-tech-design.md) |
+| 健康变化自动跟进 | 新协议、可靠补传、逐目标筛选与自动派工已实现；[Along 阶段 C](https://github.com/artstur/Along/blob/main/docs/stage-c-tech-design.md) |
 | 长期记忆与明确忘记 | 已接入 Runtime、Worker 工具及 SQLite 降级；[记忆实施](docs/along/006-memory-implementation.md) |
 | 定时记忆维护 | 已接入持久批次和 DSH 工单，默认 Mac 本地时间 03:00，可配置；[维护设计与验证](docs/along/008-scheduled-maintenance.md) |
 | 完整复盘、Skill 自动发布及回退 | 待实现；[实施与验收](docs/along/003-implementation.md) |
@@ -27,7 +27,7 @@ personal/
 └── along-superagent/     # Along Agent：DSH Runtime、业务服务与记忆
 ```
 
-在 Along 工程安装依赖后运行 `npm run activate`。启动器构建两个工程并初始化专用的 `along-phone` profile；打印手机地址、指纹和配对码。详细配置与重跑规则见 [Along 本地验证与手机连接](../Along/docs/stage-b-tech-design.md#本地验证与手机连接)。Along 本地部署不要求 GitHub 账号；Hy-Memory 需要另行配置，未配置时降级读取 SQLite 中的有效记忆。
+在 Along 工程安装依赖后运行 `npm run activate`。启动器构建两个工程并初始化专用的 `along-phone` profile；打印手机地址、指纹和配对码。详细配置与重跑规则见 [Along 本地验证与手机连接](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#本地验证与手机连接)。Along 本地部署不要求 GitHub 账号；Hy-Memory 需要另行配置，未配置时降级读取 SQLite 中的有效记忆。
 
 单独开发本工程：
 

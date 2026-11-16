@@ -1,4 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
+import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import type { Candidate, Policy } from '../core/index.ts'
@@ -10,6 +11,7 @@ import type { Store } from '../app/store.ts'
 import type { AlongStore, HealthSummaryRow } from './store.ts'
 import type { HealthDispatch } from './health-store.ts'
 import { HEALTH_SUMMARY_TYPES } from './envelope.ts'
+import { hasDailyMandate, nextDailyTime } from './task-schedule.ts'
 import { alongTool } from './tool.ts'
 
 const thresholds: Record<string, number> = {
@@ -104,6 +106,12 @@ export class HealthFollowup {
     )
   }
   private trigger(d: HealthDispatch): Trigger {
+    if (d.due) return {
+      id: `along:${d.userId}:${d.eventId}`, source: 'along', actor: { source: 'along', id: d.userId },
+      human: false, at: d.createdAt, threads: [{ source: 'along', id: `goal/${d.goalId}/review/${d.eventId}` }],
+      text: 'Review the scheduled task now. Read its goal, conversation and due context. No new phone observations means no new health facts. Retain, adjust or ask only under the current mandate.',
+      meta: { event_type: 'along.task_due', goal_id: d.goalId, task_id: d.due.taskId, health_dispatch: d.eventId }
+    }
     return {
       id: `along:${d.userId}:${d.eventId}`,
       source: 'along',
@@ -120,28 +128,38 @@ export class HealthFollowup {
       typeof t.meta.health_dispatch === 'string' ? this.host.store.health.get(t.meta.health_dispatch) : undefined
     return d && isDeepStrictEqual(t, this.trigger(d)) ? d : undefined
   }
+  private current(d: HealthDispatch): boolean {
+    const store = this.host.store
+    if (d.inputVersion !== store.inputVersion(d.goalId)) return false
+    if (!d.due) return true
+    const task = store.getTask(d.userId, d.due.taskId)
+    if (!task || store.getGoal(d.userId, d.goalId)?.status !== 'active') return false
+    if (task.status === 'open' && task.currentRevision === d.due.revision && task.scheduledAt === d.due.dueAt) return true
+    // A worker may have committed its own revision before finalizing the same ticket.
+    return store.taskRevisionOrigin(task.id, task.currentRevision) === d.eventId
+  }
   policy(base: Policy, settings: Settings): Policy {
     return {
       ...base,
       gate: (t, thread, tickets) => {
-        if (t.meta.event_type !== 'along.health_summary_updated' || t.meta.health_dispatch === undefined)
+        if (t.meta.event_type !== 'along.task_due' && (t.meta.event_type !== 'along.health_summary_updated' || t.meta.health_dispatch === undefined))
           return base.gate(t, thread, tickets)
         const d = this.bound(t),
           g = d && this.host.store.getGoal(d.userId, d.goalId)
-        return d && !d.result && g?.status === 'active' && this.allowed(d.userId, settings)
+        return d && !d.result && this.current(d) && g?.status === 'active' && this.allowed(d.userId, settings)
           ? {
               admissible: true,
               strength: 'explicit',
-              basis: { via: 'health', source: 'along', scope: t.meta, eventId: d.eventId, goalId: d.goalId }
+              basis: { via: d.due ? 'task_due' : 'health', source: 'along', scope: t.meta, eventId: d.eventId, goalId: d.goalId }
             }
           : { admissible: false, reason: 'untrusted_health_followup' }
       },
       revalidate: (m) => {
-        if (m.basis.via !== 'health') return base.revalidate(m)
+        if (m.basis.via !== 'health' && m.basis.via !== 'task_due') return base.revalidate(m)
         const d = this.host.store.health.get(m.basis.eventId)
         return (
           !!d &&
-          d.goalId === m.basis.goalId &&
+          d.goalId === m.basis.goalId && (m.basis.via === 'task_due') === !!d.due &&
           m.actor.source === 'along' &&
           m.actor.id === d.userId &&
           this.allowed(d.userId, settings) &&
@@ -158,11 +176,11 @@ export class HealthFollowup {
     this.host.engine().decide(t.id, {
       evalId: candidate.evalId,
       kind: 'accept',
-      title: '健康变化跟进',
-      name: 'health-followup',
-      scope:
+      title: d.due ? '到期任务复查' : '健康变化跟进',
+      name: d.due ? 'scheduled-task-review' : 'health-followup',
+      scope: d.due ? 'Review the single bound due task under the current user mandate. Never change the goal.' :
         'Evaluate the bound existing goal against current aggregate health data; update user tasks through validated Along tools or keep. Never create, rewrite or archive the goal.',
-      reason: 'Host-verified health change for an allowed paired user',
+      reason: d.due ? 'Host-verified scheduled task for an allowed paired user' : 'Host-verified health change for an allowed paired user',
       note: t.text
     })
     return true
@@ -170,11 +188,23 @@ export class HealthFollowup {
   forTicket(ticketId: string): HealthDispatch | undefined {
     const ticket = this.host.repo.tickets.get(ticketId),
       t = ticket && this.host.repo.triggers.get(ticket.origin.triggerId)
-    return ticket?.mandate.basis.via === 'health' && t ? this.bound(t) : undefined
+    return (ticket?.mandate.basis.via === 'health' || ticket?.mandate.basis.via === 'task_due') && t ? this.bound(t) : undefined
   }
   tick(): void {
     if (this.host.closing() || this.host.paused()) return
     const { store, repo } = this.host
+    const now = new Date().toISOString()
+    for (const { userId, goalId, due } of store.health.recentUnnotifiedTasks(now)) {
+      if (!this.allowed(userId)) continue
+      store.atomic(() => {
+        if (!store.health.claimDueNotice(due.taskId, due.dueAt)) return
+        const eventId = 'reminder_' + createHash('sha256')
+          .update(JSON.stringify([userId, goalId, due.taskId, Date.parse(due.dueAt)])).digest('hex').slice(0,40)
+        store.appendSync({ userId, goalId, taskId:due.taskId, kind:'task_updated',
+          payload:{ task_id:due.taskId, goal_id:goalId, revision:due.revision, status:'open',
+            notification:{event_id:eventId,kind:'reminder_due',revision:due.revision,scheduled_at:due.dueAt} } })
+      })
+    }
     // A crash after business completion but before the Worker's final report must not hold this goal forever.
     for (const ticket of repo.tickets.list()) {
       if (ticket.ended) continue
@@ -195,6 +225,11 @@ export class HealthFollowup {
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
+      if (d.due && !this.current(d)) {
+        if (ticket && !ticket.ended && latestAssignment(ticket) && latestAssignment(ticket)!.state !== 'ended') this.host.engine().report(ticket.id, { state: 'dropped', summary: 'Superseded scheduled task.' })
+        store.health.retireDue(d.eventId)
+        continue
+      }
       if (ticket) {
         const last = latestAssignment(ticket)
         const retryFrom = ticket.delivery?.at ?? last?.report?.at ?? last?.endedAt
@@ -223,6 +258,27 @@ export class HealthFollowup {
         if (!thread?.evaluating && !thread?.pending.includes(t.id)) this.host.engine().reevaluate(t.id)
       }
     }
+    const busy = (goalId: string, version: number): boolean => {
+      const active = store.workLinksForGoal(goalId).some(link => {
+        const ticket = repo.tickets.get(link.ticketId)
+        if (!ticket || ticket.ended) return false
+        const review = this.forTicket(ticket.id)
+        if (review) return !review.result && this.current(review)
+        const assignment = latestAssignment(ticket), report = assignment?.report
+        // A settled question can wait while a new fact or clock tick gets its own work.
+        return !report || !['waiting', 'blocked', 'failed'].includes(report.state)
+          || !!(assignment?.deliveredAt && assignment.deliveredAt > report.at)
+      })
+      return active || store.health.pending().some(d => d.goalId === goalId && d.inputVersion === version && this.current(d)
+        && !repo.tickets.list().some(t => t.origin.triggerId === this.trigger(d).id && t.ended))
+    }
+    for (const { userId, goalId, due } of store.health.dueTasks(now)) {
+      const version = store.inputVersion(goalId)
+      if (!this.allowed(userId) || busy(goalId, version)) continue
+      const snapshot = this.dueSummaries(userId, goalId, due.dueAt)
+      const d = store.atomic(() => store.health.dispatchDue(userId, goalId, version, due, snapshot))
+      this.host.engine().receive(this.trigger(d))
+    }
     for (const userId of store.health.users()) {
       if (!this.allowed(userId)) continue
       const summaries = store
@@ -237,32 +293,7 @@ export class HealthFollowup {
         for (const goal of page.items) {
           if (goal.domain === 'finance' || goal.status !== 'active') continue
           const version = store.inputVersion(goal.id)
-          if (
-            store.workLinksForGoal(goal.id).some((w) => {
-              const ticket = repo.tickets.get(w.ticketId)
-              if (!ticket || ticket.ended) return false
-              const health = this.forTicket(ticket.id)
-              if (health) return health.inputVersion === version
-              const assignment = latestAssignment(ticket),
-                report = assignment?.report
-              // A settled question or failed work must not require a chat before fresh health data can be evaluated.
-              return (
-                !report ||
-                !['waiting', 'blocked', 'failed'].includes(report.state) ||
-                !!(assignment?.deliveredAt && assignment.deliveredAt > report.at)
-              )
-            })
-          )
-            continue
-          const unresolved = store.health
-            .pending()
-            .find(
-              (d) =>
-                d.goalId === goal.id &&
-                d.inputVersion === version &&
-                !repo.tickets.list().some((t) => t.origin.triggerId === this.trigger(d).id && t.ended)
-            )
-          if (unresolved) continue
+          if (busy(goal.id, version)) continue
           const state = store.health.state(goal.id)
           const metric = store.currentGoalRevision(goal.id)?.metric
           const watched: readonly string[] = state?.inputVersion === version ? state.types : HEALTH_SUMMARY_TYPES
@@ -292,6 +323,17 @@ export class HealthFollowup {
       } while (cursor)
     }
   }
+  private dueSummaries(userId: string, goalId: string, dueAt: string): HealthSummaryRow[] {
+    const store = this.host.store, goal = store.getGoal(userId, goalId)
+    if (!goal || goal.domain === 'finance') return []
+    const state = store.health.state(goalId)
+    const metric = store.currentGoalRevision(goalId)?.metric as {type?: string} | undefined
+    const watched = state?.inputVersion === store.inputVersion(goalId) ? state.types :
+      goal.domain === 'health' && metric?.type ? [metric.type] : []
+    if (!watched.length) return []
+    return store.latestHealthSummaries(userId).filter(s => watched.includes(s.type) && s.adapter === 'known'
+      && s.summarizerVersion === 'along-health-v1' && healthSummaryIsCurrent(s) && Date.parse(s.metricVersion) >= Date.parse(dueAt))
+  }
   assertActive(ticketId: string): void {
     const d = this.forTicket(ticketId)
     if (!d) return
@@ -306,9 +348,12 @@ export class HealthFollowup {
     )
       throw new Error('health capability unavailable')
   }
-  read(ticketId: string, summaries: HealthSummaryRow[]): void {
+  read(ticketId: string, summaries: HealthSummaryRow[]) {
     const d = this.forTicket(ticketId)
-    if (d && !d.result) this.host.store.health.read(d.eventId, summaries)
+    const eligible = d?.due ? this.dueSummaries(d.userId, d.goalId, d.due.dueAt).filter(s => summaries.some(row => row.id === s.id)) : summaries
+    if (d && !d.result) this.host.store.health.read(d.eventId, eligible)
+    return { summaries: eligible, ...(d?.due ? { review: { ...d.due,
+      daily_evidence_event_id: this.host.store.health.daily(d.due.taskId)?.evidence } } : {}) }
   }
   assertReport(ticketId: string, state: string): void {
     const d = this.forTicket(ticketId)
@@ -316,9 +361,33 @@ export class HealthFollowup {
       d &&
       ['ready', 'dropped'].includes(state) &&
       !d.result &&
-      !(state === 'dropped' && d.inputVersion !== this.host.store.inputVersion(d.goalId))
+      !(state === 'dropped' && !this.current(d))
     )
       throw new Error('health follow-up not complete; read health and call along_health_followup first')
+  }
+  private renewDaily(d: HealthDispatch, evidence: string, inherited: boolean): void {
+    if (!d.due) throw new Error('daily renewal requires a bound due task')
+    const store = this.host.store, due = d.due
+    const task = store.assertTaskOwner(d.userId, due.taskId)
+    const prior = store.health.daily(task.id)
+    if (!prior && !store.health.soleTaskFromMandate(task.id, d.goalId, evidence)) throw new Error('no bound daily user mandate for this task')
+    if (prior && prior.evidence !== evidence) throw new Error('daily mandate belongs to another instruction')
+    const message = store.getMessage(d.userId, `msg:${d.userId}:${evidence}`)
+    if (task.status !== 'open' || !task.scheduledAt || !message || message.role !== 'user'
+      || message.direction !== 'inbound' || !message.timezone || !hasDailyMandate(message.text)
+      || !store.messageLinkedToGoal(message.id, d.goalId)) {
+      if (inherited) { store.health.setDaily(task.id); return }
+      throw new Error('no bound daily user mandate')
+    }
+    const wallTime = task.scheduledAt !== due.dueAt ? task.scheduledAt : prior?.wallTime ?? due.dueAt
+    const next = nextDailyTime(due.dueAt, message.timezone, Date.now(), wallTime)
+    store.health.setDaily(task.id, { eventId: evidence, zone: message.timezone, wallTime })
+    // Respect a different future time explicitly selected by this review.
+    if (Date.parse(task.scheduledAt) > Date.now()) return
+    const revision = store.appendTaskRevision({ taskId: task.id, userId: d.userId, scheduledAt: next, originEventId: d.eventId })
+    store.health.recordRenewal(d.eventId, revision)
+    store.appendSync({ userId: d.userId, kind: 'task_updated', goalId: d.goalId, taskId: task.id,
+      payload: { task_id: task.id, goal_id: d.goalId, status: task.status, revision } })
   }
   tools(ticketId: string) {
     return [
@@ -329,6 +398,7 @@ export class HealthFollowup {
         schema: z
           .object({
             outcome: z.enum(['keep', 'update', 'ask']),
+            renew_daily_from_event: z.string().min(1).max(96).optional().describe('Due task only: original user event explicitly delegating this daily schedule. Already bound daily mandates continue automatically. Omit for one-off tasks.'),
             types: z.array(z.enum(HEALTH_SUMMARY_TYPES)).max(7),
             reason: z.string().trim().min(1).max(800),
             text: z.string().trim().min(1).max(1200).optional()
@@ -346,12 +416,14 @@ export class HealthFollowup {
               return { status: 'recorded', reused: true }
             }
             if (!d.readSnapshot) throw new Error('read along_health_read before finishing')
-            if (store.inputVersion(d.goalId) !== d.inputVersion)
+            if (!this.current(d))
               return { status: 'conflicted', reason: 'conflicted_input' }
             const link = store.getWorkLink(ticketId),
               applied = link && store.changeSetsByWork(link.workId).some((c) => c.status === 'applied')
             if ((args.outcome === 'update') !== !!applied) throw new Error('outcome must match applied changes')
             if (args.outcome === 'ask' && !args.text) throw new Error('ask requires a concrete question')
+            const dailyEvidence = args.renew_daily_from_event ?? (d.due && store.health.daily(d.due.taskId)?.evidence)
+            if (dailyEvidence) this.renewDaily(d, dailyEvidence, !args.renew_daily_from_event)
             store.health.finish(d, args)
             if (args.outcome !== 'keep' && args.text) {
               const eventId = `followup_${d.eventId}`,
@@ -367,8 +439,11 @@ export class HealthFollowup {
                 userId: d.userId,
                 kind: 'message',
                 goalId: d.goalId,
+                taskId: d.due?.taskId,
                 messageId: message.id,
-                payload: { message_id: message.id, text: args.text }
+                payload: { message_id: message.id, text: args.text, notification: {
+                  event_id: eventId, kind: 'task_result', revision: d.due?.revision ?? d.inputVersion
+                } }
               })
             }
             return { status: 'recorded', reused: false }
