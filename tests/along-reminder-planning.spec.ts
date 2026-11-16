@@ -201,3 +201,26 @@ it.each([
     }
   } finally {await h.stop()}
 },25000)
+
+
+it('keeps the booking weekday separate from the activity weekday when the Worker cites only the activity name',async()=>{
+  now();const {say,commit}=fixture()
+  const text='每周一提醒我预约周二陶艺课'
+  say(text)
+  const op=(at:string,action='陶艺课')=>({op:'task.create',content:'预约周二陶艺课',scheduled_at:at,repeat:'weekly',
+    reminder_plan:{...agent,evidence:text,action}})
+  expect(await commit([op('2027-01-05T02:00:00Z')])).toMatchObject({status:'invalid',reason:'task_scoped_repeat_evidence_required'})
+  expect(await commit([op(first)])).toMatchObject({status:'applied'})
+  expect(await commit([op(first,'预约周二陶艺课')])).toMatchObject({status:'applied'})
+  for(const [message,content,action] of [
+    ['每周一提醒我预订周二陶艺课','预订周二陶艺课','陶艺课'],
+    ['Every Monday remind me to book Tuesday pottery class','book Tuesday pottery class','pottery class'],
+    ['Every Monday remind me to reserve Tuesday pottery class','reserve Tuesday pottery class','pottery class'],
+  ]) {
+    expect(supportsRecurrence(message!,message!,action!,content!,'weekly',2)).toBe(false)
+    expect(supportsRecurrence(message!,message!,action!,content!,'weekly',1)).toBe(true)
+  }
+  const followsReminder='每周提醒我周二预约周三课程'
+  expect(supportsRecurrence(followsReminder,followsReminder,'课程','预约周三课程','weekly',2)).toBe(true)
+  expect(supportsRecurrence(followsReminder,followsReminder,'课程','预约周三课程','weekly',3)).toBe(false)
+})

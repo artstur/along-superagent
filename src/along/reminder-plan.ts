@@ -68,7 +68,11 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   if (!clause || denial.test(clause.split(/提醒|安排|通知|想要|需要/)[0]!)) return false
   if (repeat==='daily') return hasDailyMandate(clause) ||
     delegated && /每日|每天|每晚|每早|每晨|\bevery day\b|\bdaily\b/i.test(quote) && !denial.test(clause)
-  const prefix=clause.slice(0,clause.indexOf(action))
+  const actionStart=clause.indexOf(action)
+  // A short activity name can occur after the activity's own weekday. Bound the mandate
+  // at the booking verb so that date never becomes a reminder-day authorization.
+  const booking=/(?:预约|预订|预定|\b(?:book|reserve)(?:ing)?\b)/i.exec(clause)
+  const prefix=clause.slice(0,booking && booking.index<actionStart ? booking.index : actionStart)
   if (!/每(?:个)?(?:星期|礼拜|周)|每逢(?:周|星期)|\b(?:weekly|every)\b/i.test(prefix)) return false
   // The day after “book” is the activity day. An explicit weekly appointment or delegated
   // reminder on the weekday before that action can establish the continuing schedule.
