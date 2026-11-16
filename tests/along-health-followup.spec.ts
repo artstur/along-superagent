@@ -531,3 +531,133 @@ it('reconsiders relevance when a newly connected health type arrives without req
   const second = await dispatch()
   expect(second.ticket.id).not.toBe(first.ticket.id)
 }, 25000)
+
+it('dispatches one clock event per occurrence without a phone read, serializes work and renews only the cited daily mandate', async () => {
+  const { h, store, goal, task } = await setup()
+  const dueAt = new Date(Date.now() - 3 * 86400_000).toISOString()
+  store.appendTaskRevision({ userId: USER, taskId: task.id, scheduledAt: dueAt, originEventId:'daily_mandate' })
+  const once = store.insertTask({ userId: USER, goalId: goal.id, content: '只提醒一次', scheduledAt: new Date(Date.parse(dueAt)+1000).toISOString() })
+  const msg = store.appendMessage({ userId: USER, eventId: 'daily_mandate', role: 'user', direction: 'inbound',
+    text: '请每天这个时间提醒我散步。', timezone: 'Asia/Shanghai' })
+  store.linkMessageToGoals(msg.id, [goal.id], 'direct')
+  const active = async () => {
+    await h.runtime.pump(); await h.runtime.idle()
+    const due = h.runtime.store.tickets.list().filter(t => t.mandate.basis.via === 'task_due' && !t.ended)
+    expect(due).toHaveLength(1)
+    const ticket = due[0]!, worker = 'worker-' + ticket.id
+    await vi.waitFor(() => expect(h.tools.has(worker)).toBe(true))
+    return { ticket, worker }
+  }
+  const first = await active()
+  expect(h.runtime.store.triggers.get(first.ticket.origin.triggerId)).toMatchObject({ human:false, meta:{event_type:'along.task_due',task_id:task.id} })
+  expect(await h.runTool(first.worker,'along_health_read',{})).toMatchObject({ summaries:[],review:{taskId:task.id,dueAt} })
+  const finish = { outcome:'keep', types:[], reason:'保留已委托的每日安排', renew_daily_from_event:'daily_mandate' }
+  await expect(h.runTool(first.worker,'along_health_followup',{...finish,renew_daily_from_event:'unrelated'})).rejects.toThrow('no bound daily')
+  expect(await h.runTool(first.worker,'along_health_followup',finish)).toMatchObject({reused:false})
+  expect(await h.runTool(first.worker,'along_health_followup',finish)).toMatchObject({reused:true})
+  expect(store.health.state(goal.id)).toBeUndefined()
+  const next = Date.parse(store.getTask(USER,task.id)!.scheduledAt!)
+  expect(next).toBeGreaterThan(Date.now())
+  expect(next).toBeLessThanOrEqual(Date.now()+86400_000)
+  expect(store.workspaceSync(USER,0,200).items.filter(i=>i.kind==='task_updated' && i.taskId===task.id)).toHaveLength(1)
+  await h.runTool(first.worker,'orchestrator_report',{state:'ready',summary:'续排完成'})
+  const second = await active()
+  expect(await h.runTool(second.worker,'along_health_read',{})).toMatchObject({review:{taskId:once.id}})
+  await expect(h.runTool(second.worker,'along_health_followup',finish)).rejects.toThrow('for this task')
+  await h.runTool(second.worker,'along_health_followup',{outcome:'ask',types:[],reason:'需要反馈',text:'这次安排完成了吗？'})
+  await h.runTool(second.worker,'orchestrator_report',{state:'ready',summary:'已补问'})
+  await h.runtime.pump(); await h.runtime.idle()
+  expect(h.runtime.store.tickets.list()).toHaveLength(2)
+  const notices=store.workspaceSync(USER,0,200).items.filter(i=>(i.payload as {notification?:unknown}).notification)
+  expect(notices).toHaveLength(1)
+  expect(notices[0]).toMatchObject({kind:'message',goalId:goal.id,taskId:once.id,payload:{notification:{kind:'task_result',event_id:expect.any(String)}}})
+},30000)
+
+it('rejects an outdated task review after rescheduling, cancellation, or replacing the mandate while a worker is running', async () => {
+  const { h, store, goal, task } = await setup()
+  const dueAt=new Date(Date.now()-60000).toISOString()
+  store.appendTaskRevision({userId:USER,taskId:task.id,scheduledAt:dueAt})
+  await h.runtime.pump();await h.runtime.idle()
+  const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due')!, worker='worker-'+ticket.id
+  await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true))
+  await h.runTool(worker,'along_health_read',{})
+  store.appendTaskRevision({userId:USER,taskId:task.id,status:'cancelled'})
+  expect(await h.runTool(worker,'along_health_followup',{outcome:'keep',types:[],reason:'滞后'})).toMatchObject({status:'conflicted'})
+  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'stale',base_revision:1,input_version:store.inputVersion(goal.id),
+    reason:'改回去',ops:[{op:'task.update',task_id:task.id,base_revision:2,fields:{status:'open'}}]})).toMatchObject({status:'conflicted'})
+  await h.runtime.pump();await h.runtime.idle()
+  expect(h.runtime.store.tickets.get(ticket.id)?.ended?.outcome).toBe('dropped')
+  expect(store.getTask(USER,task.id)?.status).toBe('cancelled')
+},25000)
+
+it('persists distinct due notices even when a goal is busy, and catches up one review after restart without resending', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'along-due-restart-'))
+  directories.push(dir)
+  const initialDb = new Store(join(dir,'orchestrator.sqlite')), settings = initialDb.settings()
+  initialDb.saveSettings({...settings,eval:{...settings.eval,mode:'auto'},
+    sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},
+    policy:{...settings.policy,sources:{along:{allowed:[{id:USER}],admission:{}}}}})
+  initialDb.close()
+  let h=host=await startRuntime(undefined,{dir})
+  let store=h.runtime.along!.service.alongStore
+  store.assertUser(USER,DEVICE)
+  const goal=store.insertGoal({userId:USER,domain:'finance'})
+  store.appendGoalRevision({userId:USER,goalId:goal.id,status:'active',title:'整理演示预算'})
+  store.ensureInputVersion(USER,goal.id)
+  const dueAt=new Date(Date.now()-60000).toISOString()
+  for(const label of ['第一项','第二项']) store.insertTask({goalId:goal.id,userId:USER,content:label,scheduledAt:dueAt})
+  // Already recorded phone observations must remain out of a financial due worker.
+  const [fresh]=summaries(123,'steps',new Date().toISOString(),{start:dueAt,end:new Date(Date.now()+6*3600000).toISOString()})
+  h.runtime.along!.service.acceptEvent({event_id:'private_steps',schema_version:'1',event_type:'along.health_summary_updated',
+    occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.health_summary_updated',summaries:[fresh]}},{userId:USER,deviceId:DEVICE})
+  expect(store.latestHealthSummaries(USER)).toHaveLength(1)
+  h.runtime.along!.healthFollowup.tick()
+  const noticeIds=()=>store.workspaceSync(USER,0,200).items.flatMap(i=>{
+    const p=i.payload as {notification?:{kind:string,event_id:string,scheduled_at:string}}
+    return p.notification?.kind==='reminder_due' ? [p.notification.event_id] : []
+  })
+  const initial=noticeIds()
+  expect(new Set(initial).size).toBe(2)
+  expect(store.health.pending()).toHaveLength(1)
+  const eventId=store.health.pending()[0]!.eventId
+  expect(store.health.pending()[0]!.snapshot).toEqual([])
+  await h.stop();host=undefined
+  h=host=await startRuntime(undefined,{dir})
+  store=h.runtime.along!.service.alongStore
+  await h.runtime.pump();await h.runtime.idle()
+  const only=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due'&&!t.ended)!
+  expect(h.runtime.along!.healthFollowup.forTicket(only.id)?.eventId).toBe(eventId)
+  const worker='worker-'+only.id
+  await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true))
+  expect(await h.runTool(worker,'along_health_read',{})).toMatchObject({summaries:[]})
+  await h.runTool(worker,'orchestrator_report',{state:'failed',summary:'Temporary model connectivity loss.'})
+  const ticket=h.runtime.store.tickets.get(only.id)!
+  ticket.assignments.at(-1)!.report!.at='2020-01-01T00:00:00.000Z'
+  h.runtime.store.tickets.save(ticket)
+  await h.runtime.pump();await h.runtime.idle()
+  expect(h.runtime.store.tickets.get(only.id)?.assignments).toHaveLength(2)
+  expect(noticeIds()).toEqual(initial)
+},30000)
+
+it('retains the prior task-bound daily mandate on keep despite a cancellation of another task, then honors explicit once', async()=>{
+  const {h,store,task,goal}=await setup()
+  const msg=store.appendMessage({userId:USER,eventId:'daily_walk',role:'user',direction:'inbound',text:'请每天提醒我散步。',timezone:'Asia/Shanghai'})
+  store.linkMessageToGoals(msg.id,[goal.id],'direct')
+  const dueAt=new Date(Date.now()-120000).toISOString()
+  store.appendTaskRevision({userId:USER,taskId:task.id,scheduledAt:dueAt,originEventId:msg.eventId})
+  store.health.setDaily(task.id,{eventId:msg.eventId,zone:'Asia/Shanghai',wallTime:dueAt})
+  const correction=store.appendMessage({userId:USER,eventId:'cancel_other',role:'user',direction:'inbound',text:'取消快递提醒',timezone:'Asia/Shanghai'})
+  store.linkMessageToGoals(correction.id,[goal.id],'direct')
+  await h.runtime.pump();await h.runtime.idle()
+  const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due')!,worker='worker-'+ticket.id
+  await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true))
+  await h.runTool(worker,'along_health_read',{})
+  await h.runTool(worker,'along_health_followup',{outcome:'keep',types:[],reason:'保留既有散步安排'})
+  expect(Date.parse(store.getTask(USER,task.id)!.scheduledAt!)).toBeGreaterThan(Date.now())
+  expect(store.health.daily(task.id)?.evidence).toBe('daily_walk')
+  expect(store.goalDetail(USER,goal.id).tasks.find(t=>t.id===task.id)?.previousDailyOccurrence).toBe(dueAt)
+  store.appendTaskRevision({userId:USER,taskId:task.id,scheduledAt:new Date(Date.now()+3600000).toISOString(),originEventId:'user_moved'})
+  expect(store.goalDetail(USER,goal.id).tasks.find(t=>t.id===task.id)?.previousDailyOccurrence).toBeUndefined()
+  store.health.setDaily(task.id)
+  expect(store.health.soleTaskFromMandate(task.id,goal.id,'daily_walk')).toBe(false)
+},25000)

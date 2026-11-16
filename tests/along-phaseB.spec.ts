@@ -102,8 +102,15 @@ it('persists an observation and answer without a goal, then applies explicit int
   expect(await h.runTool(latest,'along_changes_commit',{idempotency_key:'b_correct',base_revision:read.goal.current_revision,input_version:read.goal.input_version,
     reason:'按出差安排调整',ops:[{op:'goal.update',fields:{context:['这周出差，保留睡前不刷手机']}}]})).toMatchObject({status:'applied'})
   await h.runTool(latest,'along_chat_reply',{text:'已按出差安排调整，保留睡前不刷手机。'})
+  const recommend=await dispatch('b_recommend','推荐一个适合今晚的放松方法，准备好后通知我',{goal_id:goal.id})
+  const target=store.listTasks(USER,{goalId:goal.id}).items[0]!
+  const recommendation={text:'今晚先花三分钟做放松练习。',notify:'recommendation_ready',task_id:target.id}
+  await expect(h.runTool(recommend,'along_chat_reply',{...recommendation,task_id:'t_unknown'})).rejects.toThrow('outside this goal')
+  await h.runTool(recommend,'along_chat_reply',recommendation)
+  await h.runTool(recommend,'along_chat_reply',recommendation)
   const sync=await call('GET',`sync?user_id=${USER}&after_seq=0&limit=200`)
   const items=sync.body.items as {kind:string,goalId?:string,payload:Record<string,unknown>}[]
+  expect(items.filter(i=>i.payload.notification)).toMatchObject([{kind:'message',goalId:goal.id,taskId:target.id,payload:{notification:{kind:'recommendation_ready',event_id:expect.any(String)}}}])
   expect(items.filter(item=>item.goalId===goal.id).every(item=>(item.payload.snapshot as {revision:{title:string}}).revision.title==='改善睡眠')).toBe(true)
   expect(items.some(item=>(item.payload.message as {text?:string})?.text===answer.text)).toBe(true)
   expect(JSON.stringify(items)).not.toContain(along.bridgeToken)

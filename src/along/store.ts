@@ -34,7 +34,7 @@ export interface GoalRevisionRow {
 }
 export interface TaskRow {
   id: string; goalId: string; userId: string; status: 'open' | 'done' | 'cancelled'; content: string
-  scheduledAt?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
+  scheduledAt?: string; previousDailyOccurrence?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
 }
 export interface TaskRevisionRow {
   taskId: string; revision: number; userId: string; goalId: string; content: string; status: 'open' | 'done' | 'cancelled'
@@ -255,6 +255,7 @@ export class AlongStore {
   private taskRow(row: Record<string, SQLInputValue>): TaskRow {
     return { id: this.text(row.id), goalId: this.text(row.goal_id), userId: this.text(row.user_id),
       status: this.text(row.status) as TaskRow['status'], content: this.text(row.content), scheduledAt: this.opt(row.scheduled_at),
+      previousDailyOccurrence: this.health.previousDailyOccurrence(this.text(row.id), this.int(row.current_revision)),
       completedFeedbackEventId: this.opt(row.completed_feedback_event_id), currentRevision: this.int(row.current_revision),
       createdAt: this.text(row.created_at), updatedAt: this.text(row.updated_at) }
   }
@@ -340,6 +341,9 @@ export class AlongStore {
     return goal
   }
   /** The user's task row, or `undefined` when it is missing **or** owned by someone else (no existence leak). */
+  taskRevisionOrigin(taskId: string, revision: number): string | undefined {
+    return this.opt(this.one('SELECT origin_event_id FROM task_revision WHERE task_id=? AND revision=?', taskId, revision)?.origin_event_id)
+  }
   getTask(userId: string, taskId: string): TaskRow | undefined {
     const row = this.one('SELECT * FROM user_task WHERE id = ?', taskId)
     return row === undefined || this.text(row.user_id) !== userId ? undefined : this.taskRow(row)
@@ -491,6 +495,9 @@ export class AlongStore {
   getMessage(userId: string, messageId: string): MessageRow | undefined {
     const row = this.one('SELECT * FROM message WHERE id = ?', messageId)
     return row === undefined || this.text(row.user_id) !== userId ? undefined : this.messageRow(row)
+  }
+  messageLinkedToGoal(messageId: string, goalId: string): boolean {
+    return !!this.one('SELECT 1 FROM message_goal_link WHERE message_id=? AND goal_id=?', messageId, goalId)
   }
   /** Resolves a user-message conversation by server-owned ancestry; unknown/foreign references are identical. */
   conversationRoot(userId: string, eventId: string): string {
