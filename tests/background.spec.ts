@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { expect, it, vi } from 'vitest'
-import { stopSubagents, untilQuiet } from '../src/executor/background.ts'
+import { stopBackground, stopSubagents, untilQuiet } from '../src/executor/background.ts'
 import { jobRegistry } from './fixtures/host.ts'
 
 /** A context with DSH's job registry and subagents, and an idle worker agent with one live subagent, `child-1`. */
@@ -74,4 +74,79 @@ it('gives up a release of subagents that does not end within 10 seconds, and can
     await stopping
   } finally { vi.useRealTimers() }
   expect(agent.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
+})
+
+/** The actual 0.2.2 service names, deliberately without the removed 0.2.1 methods. */
+function treeSetup() {
+  const agent = { id: 'worker-new', status: 'idle', whenIdle: async () => {}, cancel: vi.fn() } as unknown as Agent & { cancel: ReturnType<typeof vi.fn> }
+  const children = new Map<string, { id: string; cancel: ReturnType<typeof vi.fn>; whenIdle: () => Promise<void> }>()
+  const service = {
+    listDescendants: vi.fn(async (_id: string): Promise<{kind:'child'|'diagnostic';id:string;activity:string;mode?:string}[]> =>
+      [...children.keys()].map(id => ({ kind: 'child', id, activity: 'running' }))),
+    interrupt: vi.fn((_id: string, _authority: unknown) => {}),
+    waitForTreeWork: vi.fn(async (_root: Agent) => false),
+    // This is a terminal teardown API: it must not be used on reusable worker roots.
+    drainDescendants: vi.fn(async () => { throw new Error('tree admission permanently closed') }),
+  }
+  const ctx = { get: (name: string) => name === 'subagents' ? service : undefined,
+    agents: { get: (id: string) => id === agent.id ? agent : children.get(id) } } as unknown as Context
+  return { ctx, agent, children, service }
+}
+
+it('ends a real-shaped 0.2.2 worker with no children without the removed listChildren API', async () => {
+  const h=treeSetup()
+  await expect(stopBackground(h.ctx,h.agent.id,'completed')).resolves.toBeUndefined()
+  expect(h.service.listDescendants).toHaveBeenCalledWith(h.agent.id)
+  expect(h.agent.cancel).not.toHaveBeenCalled()
+  expect(h.service.drainDescendants).not.toHaveBeenCalled()
+})
+
+it('joins background work through the 0.2.2 tree API when a worker becomes idle', async () => {
+  const h=treeSetup()
+  expect(await untilQuiet(h.ctx,h.agent,new AbortController().signal)).toBe(true)
+  expect(h.service.waitForTreeWork).toHaveBeenCalledWith(h.agent)
+})
+
+it('stops scoped 0.2.2 descendants including parked local input without closing future tree admission', async () => {
+  const h=treeSetup(),child={id:'child-new',cancel:vi.fn(),whenIdle:vi.fn(async()=>{})}
+  h.children.set(child.id,child)
+  h.service.listDescendants.mockResolvedValueOnce([
+    {kind:'child',id:child.id,activity:'running'},
+    {kind:'child',id:'cold-history',activity:'inactive'},
+    {kind:'child',id:'external-child',activity:'running'},
+  ])
+  await stopSubagents(h.ctx,h.agent,true)
+  expect(h.service.interrupt).toHaveBeenCalledWith(child.id,{kind:'ancestor',agent:h.agent})
+  expect(h.service.interrupt).toHaveBeenCalledWith('external-child',{kind:'ancestor',agent:h.agent})
+  expect(h.service.interrupt).not.toHaveBeenCalledWith('cold-history',expect.anything())
+  expect(child.cancel).toHaveBeenCalledWith({kind:'parent'},{keepInbox:false})
+  expect(child.whenIdle).toHaveBeenCalled()
+  expect(h.agent.cancel).toHaveBeenCalledWith({kind:'user'},{keepInbox:true})
+  expect(h.service.waitForTreeWork).toHaveBeenCalledWith(h.agent)
+  expect(h.service.drainDescendants).not.toHaveBeenCalled()
+  // A later assignment can still use this exact worker root.
+  await stopSubagents(h.ctx,h.agent)
+  expect(h.service.drainDescendants).not.toHaveBeenCalled()
+})
+
+it('keeps genuine 0.2.2 interruption failures visible and still stops the other descendants', async () => {
+  const h=treeSetup()
+  for(const id of ['bad','good'])h.children.set(id,{id,cancel:vi.fn(),whenIdle:async()=>{}})
+  h.service.interrupt.mockImplementationOnce(()=>{throw new Error('real cleanup failure')})
+  await expect(stopBackground(h.ctx,h.agent.id,'completed')).rejects.toBeInstanceOf(AggregateError)
+  expect(h.service.interrupt).toHaveBeenCalledWith('good',{kind:'ancestor',agent:h.agent})
+  expect(h.agent.cancel).toHaveBeenCalled()
+})
+
+it('interrupts external activations whose catalog is inactive without cancelling a parent for finished history', async () => {
+  const h=treeSetup()
+  h.service.listDescendants.mockResolvedValue([{kind:'child',id:'external',activity:'inactive',mode:'external'}])
+  h.service.waitForTreeWork.mockResolvedValueOnce(true)
+  await stopSubagents(h.ctx,h.agent)
+  expect(h.service.interrupt).toHaveBeenCalledWith('external',{kind:'ancestor',agent:h.agent})
+  expect(h.agent.cancel).toHaveBeenCalledOnce()
+  // Historical external rows remain in the catalog, but interrupt is an accepted no-op after settlement.
+  h.agent.cancel.mockClear()
+  await stopSubagents(h.ctx,h.agent)
+  expect(h.agent.cancel).not.toHaveBeenCalled()
 })
