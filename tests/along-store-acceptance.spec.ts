@@ -215,6 +215,18 @@ describe('BC-07-02 isolation guard — boundary traps', () => {
     expect(() => assertAlongDataIsolation(join(base, 'along-data') + '/', join(base, 'along-data'))).toThrow(AlongIsolationError)
   })
 
+  it('treats dot-prefixed directory names as children in either containment direction', () => {
+    const base = root()
+    const workRoot = join(base, 'work')
+    const dataRoot = join(base, 'along-data')
+    // A directory named `..private` is not the parent traversal segment `..`.
+    for (const name of ['..private', '...']) {
+      expect(() => assertAlongDataIsolation(join(workRoot, name), workRoot)).toThrow(AlongIsolationError)
+      expect(() => assertAlongDataIsolation(dataRoot, join(dataRoot, name))).toThrow(AlongIsolationError)
+    }
+    expect(() => assertAlongDataIsolation(join(base, '..private'), workRoot)).not.toThrow()
+  })
+
   it('enforces exactly the executionRoot contract against the real default root', () => {
     const base = root()
     const stateDir = join(base, 'state')

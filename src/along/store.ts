@@ -11,7 +11,7 @@
 import { DatabaseSync, type SQLInputValue, type StatementResultingChanges } from 'node:sqlite'
 import { randomBytes } from 'node:crypto'
 import { chmodSync, mkdirSync } from 'node:fs'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import { MemoryStore } from './memory/store.ts'
@@ -132,12 +132,11 @@ export class AlongIsolationError extends Error {}
 export const randomToken = (bytes = 6): string => randomBytes(bytes).toString('hex')
 
 /** The worker execution root defaults to `<stateDir>/work` (`src/app/execution-environment.ts`); see `assertAlongDataIsolation`. */
-const overlaps = (first: string, second: string): boolean => {
-  const inside = (child: string, parent: string): boolean => {
-    const rel = relative(parent, child)
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
-  }
-  return inside(first, second) || inside(second, first)
+const containsPath = (parent: string, child: string): boolean => {
+  const pathFromParent = relative(parent, child)
+  // Only a complete `..` segment escapes the parent; `..private` is an ordinary child name.
+  return pathFromParent === '' || (!isAbsolute(pathFromParent)
+    && pathFromParent !== '..' && !pathFromParent.startsWith(`..${sep}`))
 }
 /**
  * Fail-fast startup guard (BC-07-02): the business data directory and the worker execution root must not contain
@@ -147,7 +146,7 @@ const overlaps = (first: string, second: string): boolean => {
 export function assertAlongDataIsolation(alongStateDir: string, workerRoot: string): void {
   const data = resolve(alongStateDir)
   const root = resolve(workerRoot)
-  if (overlaps(data, root)) throw new AlongIsolationError(`along data directory ${data} must not overlap the worker execution root ${root} (BC-07-02)`)
+  if (containsPath(data, root) || containsPath(root, data)) throw new AlongIsolationError(`along data directory ${data} must not overlap the worker execution root ${root} (BC-07-02)`)
 }
 
 const MAX_PAGE = 200
