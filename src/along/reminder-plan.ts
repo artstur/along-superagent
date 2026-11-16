@@ -68,14 +68,22 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   if (!clause || denial.test(clause.split(/提醒|安排|通知|想要|需要/)[0]!)) return false
   if (repeat==='daily') return hasDailyMandate(clause) ||
     delegated && /每日|每天|每晚|每早|每晨|\bevery day\b|\bdaily\b/i.test(quote) && !denial.test(clause)
-  const prefix=clause.slice(0,clause.indexOf(action))
+  const actionStart=clause.indexOf(action)
+  // A short activity name can occur after the activity's own weekday. Bound the mandate
+  // at the booking verb so that date never becomes a reminder-day authorization.
+  const booking=/(?:预约|预订|预定|\b(?:book|reserve)(?:ing)?\b)/i.exec(clause)
+  const prefix=clause.slice(0,booking && booking.index<actionStart ? booking.index : actionStart)
   if (!/每(?:个)?(?:星期|礼拜|周)|每逢(?:周|星期)|\b(?:weekly|every)\b/i.test(prefix)) return false
   // The day after “book” is the activity day. An explicit weekly appointment or delegated
   // reminder on the weekday before that action can establish the continuing schedule.
   if (!delegated && !/提醒|通知|安排|预约|预订|叫我|remind|schedule|book/i.test(clause)) return false
-  const days=weekdays(prefix)
+  // A cadence directly qualified by weekdays (every Monday / 每周一和周四) takes
+  // precedence over later dates qualifying the activity, including postposed bookings.
+  const cadence=/(?:每(?:个)?(?:周|星期|礼拜)|每逢(?:周|星期))([一二三四五六日天](?:\s*(?:和|及|与|、|&|\/)\s*(?:(?:周|星期|礼拜))?[一二三四五六日天])*)/u.exec(prefix)
   const en=['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
-  for (const [i,word] of en.entries()) if (new RegExp('\\b'+word+'\\b','i').test(prefix)) days.push(i+1)
+  const enCadence=new RegExp('\\bevery\\s+((?:'+en.join('|')+')(?:\\s*(?:and|&|,)\\s*(?:'+en.join('|')+'))*)','i').exec(prefix)
+  const days=cadence ? [...cadence[1]!].filter(c=>'一二三四五六日天'.includes(c)).map(weekLabel) : enCadence ? [] : weekdays(prefix)
+  for (const [i,word] of en.entries()) if (new RegExp('\\b'+word+'\\b','i').test(enCadence?.[1]??(cadence?'':prefix))) days.push(i+1)
   return days.includes(weekday)
 }
 
