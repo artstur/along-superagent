@@ -7,6 +7,7 @@
  *
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
+import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
 import { alongTool } from './tool.ts'
 import type { MemoryService } from './memory/service.ts'
@@ -34,6 +35,7 @@ export interface AlongToolsHost {
   readonly service: Pick<AlongService, 'alongStore' | 'commitChangeSet'>
   /** Runtime-owned memory, optional for standalone business-tool callers. */
   readonly memory?: MemoryService
+  readonly healthFollowup?: HealthFollowup
   /** Reverse lookup of the host-bound scope for a ticket — worklink's `workScopeForTicket` in production (§2.5). */
   readonly scopeFor: (ticketId: string) => CommitScope | undefined
 }
@@ -49,6 +51,8 @@ const revisionView = (revision: GoalRevisionRow) => ({ revision: revision.revisi
   origin_event_id: revision.originEventId, created_at: revision.createdAt })
 
 const summaryView = (summary: HealthSummaryRow) => ({
+  current: healthSummaryIsCurrent(summary),
+  unit: summary.unit, statistic: summary.statistic, summarizer_version: summary.summarizerVersion,
   type: summary.type, value: summary.value, metric_version: summary.metricVersion, timezone: summary.timezone,
   availability: summary.availability,
   ...(summary.windowStart !== undefined ? { window: { start: summary.windowStart, end: summary.windowEnd } } : {}),
@@ -58,6 +62,7 @@ const summaryView = (summary: HealthSummaryRow) => ({
 export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
   const store = host.service.alongStore
   const scope = (): CommitScope => {
+    host.healthFollowup?.assertActive(ticketId)
     const bound = host.scopeFor(ticketId)
     if (bound === undefined) throw new Error(`ticket ${ticketId} has no Along work scope; Along tools are unavailable`)
     return bound
@@ -75,6 +80,13 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     throw new Error('no goal is bound to this ticket; pass goal_id to name the goal to read')
   }
   return [
+    alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
+      schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{
+        const bound=scope(),page=store.listGoals(bound.userId,{limit:20,cursor:args.cursor})
+        return {goals:page.items.map(goal=>{const detail=store.goalDetail(bound.userId,goal.id);return {
+          goal_id:goal.id,status:goal.status,title:detail.revision?.title,context:detail.revision?.context,tasks:detail.tasks.map(taskView)}}),next_cursor:page.nextCursor}
+      }}),
+    ...(host.healthFollowup?.forTicket(ticketId) ? host.healthFollowup.tools(ticketId) : []),
     ...(host.memory ? memoryTools(host.memory, () => {
       const bound = scope()
       return { userId: bound.userId, goalId: bound.allowedGoalId }
@@ -145,6 +157,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const summaries = store.latestHealthSummaries(bound.userId)
           .filter(summary => summary.adapter === 'known') // 待适配类型不进模型上下文（001 §4.4）
           .filter(summary => args.type === undefined || summary.type === args.type)
+        host.healthFollowup?.read(ticketId, summaries)
         return { summaries: summaries.map(summaryView) }
       },
     }),

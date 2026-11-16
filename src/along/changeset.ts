@@ -265,6 +265,12 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     return { status, reason }
   }
 
+  const health = scope.triggerEventId === undefined ? undefined : store.health.get(scope.triggerEventId)
+  if (health && (health.userId !== scope.userId || health.goalId !== scope.allowedGoalId
+    || health.inputVersion !== store.inputVersion(health.goalId))) return refuse('conflicted', 'conflicted_input')
+  if (health && (health.result || !health.readSnapshot)) return refuse('invalid', 'health_evaluation_unavailable')
+  if (health && input.ops.some(op => op.op.startsWith('goal.'))) return refuse('invalid', 'health_goal_mutation')
+
   // ---- object-relation layer (design §2.3.1; invalid_relation covers missing/foreign/ungoal'd/bound-mismatch) ----
   const first = input.ops[0]
   const createOp = first !== undefined && first.op === 'goal.create' ? first : undefined

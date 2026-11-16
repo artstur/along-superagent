@@ -116,6 +116,8 @@ interface Received { source?: string; scope?: Record<string, unknown>; row?: str
 export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   /** Host-verified durable scheduled work; never a synthetic human message. */
   | { via: 'scheduled'; scheduleId: string; addressed?: never }
+  /** Host-verified standing health follow-up authorization, not a human utterance. */
+  | { via: 'health'; eventId: string; goalId: string; addressed?: never }
   | { via: 'addressed'; addressed: 'mention' | 'direct' }
   | { via: 'followup'; authority?: string }
   | { via: 'admission'; cell: AdmissionCell; addressed?: 'mention' | 'direct'; observation?: { mode: AcceptMode } }

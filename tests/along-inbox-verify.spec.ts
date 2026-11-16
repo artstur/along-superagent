@@ -63,7 +63,7 @@ const userMessage = (overrides: Partial<EventEnvelope> = {}): EventEnvelope => (
 const healthEvent = (overrides: Partial<EventEnvelope> = {}): EventEnvelope => userMessage({
   event_type: 'along.health_summary_updated',
   payload: { event_type: 'along.health_summary_updated', summaries: [{ type: 'steps', metric_version: 'mv1',
-    timezone: 'Asia/Shanghai', value: { total: 5200 }, availability: 'ok', summarizer_version: 's1' }] },
+    timezone: 'Asia/Shanghai', value: 5200, availability: 'ok', summarizer_version: 's1' }] },
   ...overrides,
 })
 /** A store twin that delegates everything to `store` except the overridden method, which throws. The `depth`
@@ -220,7 +220,7 @@ describe('BC-08-03: a duplicate does no repeated work', () => {
     expect(inbox.acceptEvent(envelope, identity).status).toBe('accepted')
     expect(inbox.acceptEvent(JSON.parse(JSON.stringify(envelope)), identity)).toMatchObject({ status: 'duplicate' })
     expect(count(dbPath, 'health_summary')).toBe(1)
-    expect(count(dbPath, 'delivery')).toBe(1)
+    expect(count(dbPath, 'delivery')).toBe(0)
     store.close()
   })
 })
@@ -343,7 +343,7 @@ describe('delivery pump edges', () => {
       await deliverDueDeliveries(store, deps, now)
       now += 700_000
     }
-    expect(store.getDelivery(`along:${USER}:evt-hdead-001`)!.status).toBe('failed')
+    expect(store.getDelivery(`along:${USER}:evt-hdead-001`)).toBeUndefined()
     expect(count(dbPath, 'sync_outbox')).toBe(0)
     store.close()
   })

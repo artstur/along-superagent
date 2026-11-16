@@ -15,6 +15,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import { MemoryStore } from './memory/store.ts'
+import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
@@ -182,6 +183,7 @@ export class AlongStore {
   /** Memory persistence shares this store's handle, savepoints and lifetime. */
   readonly memory: MemoryStore
   readonly maintenance: MaintenanceStore
+  readonly health: HealthStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -196,6 +198,7 @@ export class AlongStore {
       migrateAlongSchema(this.db)
       this.memory = new MemoryStore(this.db, work => this.atomic(work))
       this.maintenance = new MaintenanceStore(this.db, work => this.atomic(work))
+      this.health = new HealthStore(this.db)
     } catch (error) {
       this.db.close()
       throw error
@@ -675,12 +678,24 @@ export class AlongStore {
         if (!AVAILABILITIES.has(summary.availability)) throw new Error(`unknown health availability ${String(summary.availability)}`)
         const windowStart = summary.window === undefined ? undefined : 'night' in summary.window ? summary.window.night : summary.window.start
         const windowEnd = summary.window === undefined ? undefined : 'night' in summary.window ? summary.window.night : summary.window.end
+        const previous = this.latestHealthSummaries(userId).find(row => row.type === summary.type)
         this.run(`INSERT INTO health_summary (id, user_id, type, metric_version, window_start, window_end, timezone, unit, statistic, value,
             availability, summarizer_version, adapter, event_id, received_at, superseded)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(id) DO NOTHING`,
           `hs:${userId}:${envelope.eventId}:${summary.type}`, userId, summary.type, summary.metricVersion,
           windowStart, windowEnd, summary.timezone ?? envelope.timezone, summary.unit, summary.statistic,
           jsonOrUndefined(summary.value), summary.availability, summary.summarizerVersion, adapter, envelope.eventId, receivedAt)
+        if (summary.summarizerVersion === 'along-health-v1') {
+          // A later receive is not a later reading. Unknown -> available may legitimately carry an older observation date.
+          const latest = ['weight', 'resting_heart_rate', 'wrist_temperature'].includes(summary.type)
+          const orderedWindow = !previous || (latest && (previous.availability !== 'ok' || summary.availability !== 'ok'))
+            || Date.parse(windowStart ?? '') >= Date.parse(previous.windowStart ?? '')
+          const newer = previous?.summarizerVersion !== 'along-health-v1'
+            || Date.parse(summary.metricVersion) >= Date.parse(previous.metricVersion) && orderedWindow
+          const currentId = newer ? `hs:${userId}:${envelope.eventId}:${summary.type}` : previous!.id
+          this.run(`UPDATE health_summary SET superseded=CASE WHEN id=? THEN 0 ELSE 1 END WHERE user_id=? AND type=?`,
+            currentId, userId, summary.type)
+        }
       }
     })
   }

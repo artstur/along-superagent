@@ -87,7 +87,7 @@ describe('envelope schema and payloadHash', () => {
     expect(EventEnvelopeSchema.safeParse(userMessage({ event_id: 'evt-h-1', event_type: 'along.health_summary_updated',
       payload: { event_type: 'along.health_summary_updated', summaries: [{ type: 'steps', metric_version: 'mv1',
         window: { start: '2026-11-14T00:00:00+08:00', end: '2026-11-15T00:00:00+08:00' }, timezone: 'Asia/Shanghai',
-        value: { total: 5200 }, availability: 'ok', summarizer_version: 's1' }] } })).success).toBe(true)
+        value: 5200, availability: 'ok', summarizer_version: 's1' }] } })).success).toBe(true)
     expect(EventEnvelopeSchema.safeParse(userMessage({ event_id: 'evt-k-1', event_type: 'along.message',
       kind: 'task.completed', goal_id: GOAL, task_id: TASK,
       payload: { event_type: 'along.message', kind: 'task.completed', task_id: TASK, note: '已完成' } })).success).toBe(true)
@@ -210,7 +210,7 @@ describe('acceptEvent transactional receive', () => {
       payload: { event_type: 'along.health_summary_updated', summaries: [
         { type: 'steps', metric_version: 'mv1', unit: '步', statistic: 'sum', timezone: 'Asia/Shanghai',
           window: { start: '2026-11-14T00:00:00+08:00', end: '2026-11-15T00:00:00+08:00' },
-          value: { total: 5200 }, availability: 'ok', summarizer_version: 'summarizer-7' },
+          value: 5200, availability: 'ok', summarizer_version: 'summarizer-7' },
         { type: 'blood_oxygen', metric_version: 'mv1', timezone: 'Asia/Shanghai',
           availability: 'no_permission', summarizer_version: 'summarizer-7' },
       ] } }), identity)
@@ -218,8 +218,8 @@ describe('acceptEvent transactional receive', () => {
     expect(receipt.received_seq).toBeUndefined()
     const rows = store.latestHealthSummaries(USER)
     expect(rows.map(row => `${row.type}:${row.adapter}`).sort()).toEqual(['blood_oxygen:pending', 'steps:known'])
-    expect(rows.find(row => row.type === 'steps')!.value).toEqual({ total: 5200 })
-    expect(count(path, 'delivery')).toBe(1) // 健康事件照常投递（由服务端找相关目标）
+    expect(rows.find(row => row.type === 'steps')!.value).toEqual(5200)
+    expect(count(path, 'delivery')).toBe(0) // Stage C saves facts first; only per-goal follow-ups enter DSH
     store.close()
   })
 
@@ -359,8 +359,11 @@ describe('delivery pump', () => {
     // A health trigger is never human (001 §7.1) and carries the summary inline text.
     inbox.acceptEvent(userMessage({ event_id: 'evt-health-9', event_type: 'along.health_summary_updated',
       payload: { event_type: 'along.health_summary_updated', summaries: [{ type: 'steps', metric_version: 'mv1',
-        timezone: 'Asia/Shanghai', value: { total: 5200 }, availability: 'ok', summarizer_version: 's1' }] } }), identity)
-    const healthTrigger = triggerForDelivery(store, store.claimDueDeliveries(Date.now(), 10).find(r => r.eventId === 'evt-health-9')!)
+        timezone: 'Asia/Shanghai', value: 5200, availability: 'ok', summarizer_version: 's1' }] } }), identity)
+    expect(store.claimDueDeliveries(Date.now(), 10).some(r => r.eventId === 'evt-health-9')).toBe(false)
+    const health = store.findInboxEvent(USER, 'evt-health-9')!
+    const healthTrigger = envelopeForTrigger({event_id:health.eventId,schema_version:'1',event_type:'along.health_summary_updated',
+      occurred_at:health.occurredAt!,received_at:health.receivedAt,timezone:health.timezone!,payload:health.payload as never},identity,`health/${USER}/evt-health-9`)
     expect(healthTrigger.human).toBe(false)
     expect(healthTrigger.addressed).toBeUndefined()
     expect(healthTrigger.threads[0]!.id).toBe(`health/${USER}/evt-health-9`)

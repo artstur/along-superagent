@@ -16,7 +16,7 @@
 | 定时调度 | 记忆维护已通过持久批次与 DSH 工单接通；完整复盘与 Skill 作业待实现 | 见 [定时维护](008-scheduled-maintenance.md) |
 | 业务存储、完整对话、记忆治理 | 阶段 A 基座、记忆治理、Runtime/Worker 工具与定时记忆维护已实现 | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
 | Hy-Memory | 固定版本安装、Runtime 生命周期装配及中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
-| 健康 7 类摘要 | Along 已有，需接入新协议 | [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) |
+| 健康 7 类摘要 | 阶段 C 已接通新协议、前后台可靠队列、逐目标自动派工与跟进；真机后台机会待验收 | [HealthKitReader](../../../Along/ios/AlongHealth/Sources/HealthKitReader.swift) |
 | 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，fork `tests/along-phaseB.spec.ts` |
 
 Along Host 已有 DSH 上游调用协议，但不能据此推定当前 fork 已实现对应服务，两个仓库的接口要实际联调。[Along 当前技术链路](../../../Along/docs/goal-agent-flow.md)是兼容核对入口。

@@ -201,7 +201,7 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
 
         // f — queue for delivery with the stable Trigger id (§4.6; DSH dedupes on it), except the D15 kind:
         // authorization.changed is never delivered, so its row carries no trigger id at all.
-        const deliver = envelope.kind !== 'authorization.changed'
+        const deliver = envelope.kind !== 'authorization.changed' && envelope.event_type !== 'along.health_summary_updated'
         const triggerId = deliver ? `along:${identity.userId}:${envelope.event_id}` : undefined
         if (deliver) store.enqueueDelivery(identity.userId, envelope.event_id, triggerId!)
 

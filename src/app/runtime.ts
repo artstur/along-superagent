@@ -58,6 +58,7 @@ import { createAlongMemory, MemoryService } from '../along/memory/index.ts'
 import { packagePath } from '../infra/paths.ts'
 import { AlongStore, assertAlongDataIsolation } from '../along/store.ts'
 import { createWorkLink, type WorkLinkModule } from '../along/worklink.ts'
+import { HealthFollowup } from '../along/health.ts'
 import { AlongMaintenance } from '../along/maintenance.ts'
 
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
@@ -76,6 +77,7 @@ export interface AlongRuntime {
   /** Host-owned governance, backend lifecycle and batch entry for stage E. */
   readonly memory: MemoryService
   readonly maintenance: AlongMaintenance
+  readonly healthFollowup: HealthFollowup
   /** The worklink module: domain events → WorkLink rows, and the host-bound commit scope lookup. */
   readonly worklink: WorkLinkModule
   /** The record module: Worker ends → RunRecord rows and the outbound execution note (never a model call). */
@@ -162,7 +164,7 @@ export class Runtime extends Service implements SourceHost {
       const along = this.along = this.assembleAlong()
       const policyFor: typeof settingsPolicy = (settings, scope) => {
         const base = settingsPolicy(settings, scope)
-        return along ? along.maintenance.policy(base, settings) : base
+        return along ? along.healthFollowup.policy(along.maintenance.policy(base, settings), settings) : base
       }
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
       const deployed = () => setup.configured()
@@ -203,14 +205,15 @@ export class Runtime extends Service implements SourceHost {
       const { assessor, executor } = this
       const policy = () => policyFor(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy,
-        assessor: { request: candidate => { if (!along?.maintenance.assess(candidate)) assessor.request(candidate) },
+        assessor: { request: candidate => { if (!along?.maintenance.assess(candidate) && !along?.healthFollowup.assess(candidate)) assessor.request(candidate) },
           release: id => assessor.release(id) }, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
           // Along domain-event dispatch first (design §2.7.2): through the orchestrator store's afterCommit so a
           // rolled-back Engine transaction leaves no business row; the notice logic below ignores the ordering.
           along?.dispatch(event)
           // Notify the main Session only about domain events it did not initiate itself.
-          const maintenanceEvent = 'ticketId' in event.data && store.tickets.get(event.data.ticketId)?.mandate.basis.via === 'scheduled'
+          const basis = 'ticketId' in event.data ? store.tickets.get(event.data.ticketId)?.mandate.basis.via : undefined
+          const maintenanceEvent = basis === 'scheduled' || basis === 'health'
           const notice = this.quiet || maintenanceEvent ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
           // A person's message that reached an open ticket is the ticket's; the main Session hears of it in the same transaction,
@@ -227,7 +230,7 @@ export class Runtime extends Service implements SourceHost {
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
-      const evaluateDue = () => { along?.maintenance.tick(); engine.evaluateDue(); evals.set(evalsHealth(store)) }
+      const evaluateDue = () => { along?.maintenance.tick(); along?.healthFollowup.tick(); engine.evaluateDue(); evals.set(evalsHealth(store)) }
       const passes = this.passes = new Passes({ engine: { receive: trigger => engine.receive(trigger), evaluateDue }, effects,
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
@@ -240,7 +243,7 @@ export class Runtime extends Service implements SourceHost {
         // The Along worker tools (design §2.3.6): registered by `executorTools` for the assembled deployment;
         // the scope lookup is the worklink module's host-bound reverse mapping (BC-07-04) — the model cannot
         // specify user, ticket or goal.
-        ...(along ? { maintenance: along.maintenance, along: { service: along.service, memory: along.memory, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
+        ...(along ? { healthFollowup: along.healthFollowup, maintenance: along.maintenance, along: { service: along.service, memory: along.memory, healthFollowup: along.healthFollowup, scopeFor: ticketId => along.worklink.workScopeForTicket(ticketId) } } : {}) }
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
@@ -356,9 +359,11 @@ export class Runtime extends Service implements SourceHost {
       engine: () => this.engine, settings: () => this.store.settings(), available: () => !!this.machine.alongMemory,
       time: () => this.machine.alongMaintenanceTime?.get() ?? '03:00',
       paused: () => this.paused(), closing: () => this.closing() })
+    const healthFollowup = new HealthFollowup({ store: alongStore, repo: this.store, engine: () => this.engine,
+      settings: () => this.store.settings(), paused: () => this.paused(), closing: () => this.closing() })
     return {
       service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore) }),
-      worklink, runrecord, memory, maintenance,
+      worklink, runrecord, memory, maintenance, healthFollowup,
       bridgeToken: bridgeTokenOf(alongBridgeTokenFile),
       stateDir: alongStateDir,
       dispatch: event => {

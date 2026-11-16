@@ -52,7 +52,19 @@ export const HealthSummaryPayloadSchema = z.object({
   value: z.unknown().optional(),
   availability: z.enum(['ok', 'no_permission', 'unavailable', 'not_synced']),
   summarizer_version: z.string().min(1).max(64),
-}).strict()
+}).strict().superRefine((s,ctx)=>{
+  if (s.value !== undefined && s.value !== null && (typeof s.value !== 'number' || !Number.isFinite(s.value))) {
+    ctx.addIssue({code:'custom',message:'Health summaries contain finite scalar aggregates only',path:['value']})
+  }
+  if (s.summarizer_version !== 'along-health-v1') return
+  const units:Record<string,string>={steps:'count',workout:'min',active_energy:'kcal',weight:'kg',resting_heart_rate:'bpm',wrist_temperature:'degC',sleep:'min'}
+  if (!(s.type in units)) return
+  if (s.unit!==units[s.type]) ctx.addIssue({code:'custom',message:'Invalid aggregate unit',path:['unit']})
+  if (!s.window || !('start' in s.window) || Date.parse(s.window.start)>Date.parse(s.window.end)) ctx.addIssue({code:'custom',message:'Explicit valid observation window required',path:['window']})
+  if (!Number.isFinite(Date.parse(s.metric_version))) ctx.addIssue({code:'custom',message:'Collection revision must be an ISO timestamp',path:['metric_version']})
+  if (s.availability==='ok' && (typeof s.value!=='number'||!Number.isFinite(s.value))) ctx.addIssue({code:'custom',message:'Available aggregate requires a number',path:['value']})
+  if (s.availability!=='ok' && s.value!==null && s.value!==undefined) ctx.addIssue({code:'custom',message:'Unavailable aggregate cannot carry a value',path:['value']})
+})
 
 /** Payload rules inside the discriminated union (design §4.1 FeedbackPayloadRefine): a completion/feedback
  * names its task; `authorization.changed` carries no business payload at all (D15: recorded, not acted on).
