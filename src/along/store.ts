@@ -42,12 +42,16 @@ export interface TaskRevisionRow {
   taskId: string; revision: number; userId: string; goalId: string; content: string; status: 'open' | 'done' | 'cancelled'
   scheduledAt?: string; basisChangeset?: string; originEventId?: string; createdAt: string
 }
+export type MessageAudience = 'conversation' | 'background'
 export interface MessageRow {
+  audience: MessageAudience
   id: string; userId: string; eventId: string; role: 'user' | 'assistant' | 'system'; direction: 'inbound' | 'outbound'
   text: string; seq: number; occurredAt?: string; receivedAt: string; timezone?: string
   messageId?: string; causationId?: string; replyToMessageId?: string; createdAt: string
 }
 export interface AppendMessageInput {
+  /** Set only by trusted host code; never accepted from an event or model schema. */
+  audience?: MessageAudience
   userId: string; eventId: string; role: 'user' | 'assistant' | 'system'; direction: 'inbound' | 'outbound'; text: string
   occurredAt?: string; timezone?: string; messageId?: string; causationId?: string; replyToMessageId?: string
 }
@@ -265,7 +269,7 @@ export class AlongStore {
   }
   private messageRow(row: Record<string, SQLInputValue>): MessageRow {
     return { id: this.text(row.id), userId: this.text(row.user_id), eventId: this.text(row.event_id),
-      role: this.text(row.role) as MessageRow['role'], direction: this.text(row.direction) as MessageRow['direction'],
+      audience: this.text(row.audience) as MessageAudience, role: this.text(row.role) as MessageRow['role'], direction: this.text(row.direction) as MessageRow['direction'],
       text: this.text(row.text), seq: this.int(row.seq), occurredAt: this.opt(row.occurred_at), receivedAt: this.text(row.received_at),
       timezone: this.opt(row.timezone), messageId: this.opt(row.message_id), causationId: this.opt(row.causation_id),
       replyToMessageId: this.opt(row.reply_to_message_id), createdAt: this.text(row.created_at) }
@@ -501,13 +505,15 @@ export class AlongStore {
       if (existing !== undefined) return this.messageRow(existing)
       if (typeof input.text !== 'string' || input.text.trim() === '') throw new Error('along message text must not be empty')
       const now = new Date().toISOString()
+      const parent = input.replyToMessageId && this.getMessage(input.userId, input.replyToMessageId)
+      const audience = input.role === 'assistant' && parent && parent.audience === 'background' ? 'background' : input.audience ?? 'conversation'
       const seq = Number(this.scalar('SELECT IFNULL(MAX(seq), 0) FROM message WHERE user_id = ?', input.userId) ?? 0) + 1
-      this.run(`INSERT INTO message (id, user_id, event_id, role, direction, text, seq, occurred_at, received_at, timezone, message_id, causation_id, reply_to_message_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      this.run(`INSERT INTO message (id, user_id, event_id, role, direction, text, seq, occurred_at, received_at, timezone, message_id, causation_id, reply_to_message_id, created_at, audience)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id, input.userId, input.eventId, input.role, input.direction, input.text, seq,
         input.occurredAt === undefined ? null : isoTime(input.occurredAt), now, input.timezone,
-        input.messageId, input.causationId, input.replyToMessageId, now)
-      return { id, userId: input.userId, eventId: input.eventId, role: input.role, direction: input.direction, text: input.text,
+        input.messageId, input.causationId, input.replyToMessageId, now, audience)
+      return { audience, id, userId: input.userId, eventId: input.eventId, role: input.role, direction: input.direction, text: input.text,
         seq, occurredAt: input.occurredAt === undefined ? undefined : isoTime(input.occurredAt), receivedAt: now,
         timezone: input.timezone, messageId: input.messageId, causationId: input.causationId,
         replyToMessageId: input.replyToMessageId, createdAt: now }
@@ -548,21 +554,66 @@ export class AlongStore {
   /** Checks the original input even if a worker re-reads a newer version number before committing. */
   isCurrentChatInput(userId: string, eventId: string, goalId?: string): boolean {
     const source = this.getMessage(userId, `msg:${userId}:${eventId}`)
-    if (!source || source.role !== 'user') return false
-    const messages = goalId === undefined ? this.conversationMessages(userId, eventId)
-      : this.messagesByGoal(userId, goalId, { limit: MAX_PAGE }).items
-    return !messages.some(message => message.direction === 'inbound' && message.role === 'user' && message.seq > source.seq)
+    if (!source || source.audience !== 'conversation' || source.role !== 'user') return false
+    if (goalId !== undefined) {
+      this.assertGoalOwner(userId,goalId)
+      return !this.one(`SELECT 1 FROM message m JOIN message_goal_link l ON l.message_id=m.id AND l.goal_id=?
+        WHERE m.user_id=? AND m.audience='conversation' AND m.direction='inbound' AND m.role='user' AND m.seq>? LIMIT 1`,goalId,userId,source.seq)
+    }
+    return !this.conversationMessages(userId,eventId).some(message => message.audience === 'conversation' && message.direction === 'inbound' && message.role === 'user' && message.seq > source.seq)
   }
   /** Rebuilds a phone cache from durable rows; payloads expose business data only, never execution credentials. */
-  workspaceSync(userId: string, afterSeq: number, limit: number): Page<SyncItem> {
+  workspaceSync(userId: string, afterSeq: number, limit: number, conversationVersion = 1): Page<SyncItem> {
     const page = this.syncPage(userId, afterSeq, limit)
-    return { ...page, items: page.items.map(item => ({ ...item,
-      payload: {
-        ...item.payload as Record<string, unknown>,
-        ...(item.goalId === undefined ? {} : { snapshot: this.goalDetail(userId, item.goalId) }),
-        ...(item.messageId === undefined ? {} : { message: this.getMessage(userId, item.messageId) }),
-      },
-    })) }
+    return { ...page, items: page.items.map(item => {
+      const message = item.messageId === undefined ? undefined : this.getMessage(userId, item.messageId)
+      const snapshot = item.goalId === undefined ? {} : { snapshot: this.goalDetail(userId, item.goalId) }
+      // Old clients cannot understand an audience or remove cached messages. Keep the original sequence so
+      // pagination/ack stay sound, but never forward new internal wording to them. An upgraded client replays.
+      if (message?.audience === 'background' && conversationVersion !== 1) return {
+        ...item, kind: 'changeset_note' as const, payload: snapshot,
+      }
+      return { ...item, payload: { ...item.payload as Record<string, unknown>, ...snapshot,
+        ...(message === undefined ? {} : { message, audience: message.audience }) } }
+    }) }
+  }
+
+  /** Host-only, evidence-backed correction of known development events. Bodies, goal/task state and inbox
+   * receipts stay immutable. No API or Worker tool exposes this operation. Shared conversation roots are NOT
+   * followed: a later real user message may share the root but is never a descendant answer to this input. */
+  isolateDevelopmentEvents(userId: string, eventIds: readonly string[], evidenceRef: string, options: { dryRun?: boolean } = {}): { changed: string[] } {
+    if (!eventIds.length || eventIds.length > 100 || typeof evidenceRef !== 'string' || !evidenceRef.trim() || evidenceRef.length > 1000)
+      throw new Error('explicit development events and evidence are required')
+    return this.atomic(() => {
+      const changed: string[] = []
+      for (const eventId of new Set(eventIds)) {
+        const source = this.getMessage(userId, `msg:${userId}:${eventId}`)
+        const inbox = this.findInboxEvent(userId, eventId)
+        if (!source || !inbox || inbox.status !== 'accepted' || inbox.eventType !== 'along.user_message' || source.role !== 'user') throw new OwnershipError()
+        const rows = this.all(`SELECT DISTINCT m.* FROM message m WHERE m.user_id=? AND (
+          m.id=? OR (m.role='assistant' AND m.direction='outbound' AND m.reply_to_message_id=?) OR m.id IN (
+            SELECT o.message_id FROM sync_outbox o JOIN changeset c ON c.id=o.changeset_id
+            WHERE o.user_id=? AND c.user_id=? AND c.trigger_event_id=? AND o.kind='message'
+          ) OR m.event_id IN (
+            SELECT 'out:'||r.ticket_id||':'||r.assignment_id FROM run_record r WHERE r.user_id=? AND r.trigger_event_id=?
+          )) ORDER BY m.seq`, userId, source.id, source.id, userId, userId, eventId, userId, eventId)
+        for (const row of rows) {
+          const message = this.messageRow(row)
+          if (message.audience === 'background' || changed.includes(message.id)) continue
+          if (options.dryRun) { changed.push(message.id); continue }
+          this.run('INSERT INTO message_audience_audit(message_id,user_id,source_event_id,evidence_ref,previous_audience,created_at) VALUES(?,?,?,?,?,?)',
+            message.id, userId, eventId, evidenceRef, message.audience, new Date().toISOString())
+          this.run("UPDATE message SET audience='background' WHERE id=? AND user_id=?", message.id, userId)
+          const prior = this.one("SELECT * FROM sync_outbox WHERE user_id=? AND message_id=? AND kind='message' ORDER BY seq DESC LIMIT 1", userId, message.id)
+          const item = prior && this.syncRow(prior)
+          this.appendSync({ userId, kind:'message', messageId:message.id,
+            goalId:item?.goalId, taskId:item?.taskId, changesetId:item?.changesetId,
+            payload:{ ...item?.payload as Record<string,unknown>, audience:'background', classification_only:true } })
+          changed.push(message.id)
+        }
+      }
+      return { changed }
+    })
   }
   /** Links one message to many goals without copying the body (BC-08-08); every goal must belong to the message's user. */
   linkMessageToGoals(messageId: string, goalIds: readonly string[], relation: 'direct' | 'derived'): void {
@@ -639,6 +690,21 @@ export class AlongStore {
       const oldest = items[0]
       return { items, nextCursor: items.length === limit && oldest ? String(oldest.seq) : undefined }
     })
+  }
+  /** Worker-facing history: filter trusted conversation and separate task-event facts BEFORE LIMIT. Internal
+   * execution/maintenance rows never masquerade as user utterances and cannot consume a conversation page. */
+  conversationContextPage(userId:string,goalId:string,beforeSeq?:number,limit=20):Page<MessageRow> {
+    this.assertGoalOwner(userId,goalId)
+    const size=pageLimit(limit)
+    const rows=this.all(`SELECT m.* FROM message m WHERE m.user_id=? AND (? IS NULL OR m.seq<?) AND (
+      (m.audience='conversation' AND EXISTS (SELECT 1 FROM message_goal_link l WHERE l.message_id=m.id AND l.goal_id=?))
+      OR EXISTS (SELECT 1 FROM event_inbox e JOIN user_task t ON t.id=COALESCE(e.task_id,json_extract(e.payload,'$.task_id'))
+        AND t.user_id=e.user_id WHERE e.user_id=m.user_id AND e.event_id=m.event_id AND t.goal_id=?
+        AND e.status='accepted' AND e.event_type='along.message'
+        AND COALESCE(e.kind,json_extract(e.payload,'$.kind')) IN ('task.feedback','task.completed'))
+      ) ORDER BY m.seq DESC LIMIT ?`,userId,beforeSeq,beforeSeq,goalId,goalId,size+1)
+    const items=rows.slice(0,size).map(row=>this.messageRow(row)).reverse()
+    return {items,...(rows.length>size?{nextCursor:String(items[0]!.seq)}:{})}
   }
   /** Original task feedback from older snapshots may have no message_goal_link; resolve its owned task at read time. */
   taskFeedbackByGoal(userId:string,goalId:string,beforeSeq?:number,limit=50):MessageRow[] {

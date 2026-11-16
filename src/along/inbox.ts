@@ -184,7 +184,7 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
           const text = feedback.note !== undefined && feedback.note.trim() !== '' ? feedback.note
             : feedback.kind === 'task.completed' ? `任务完成反馈：${feedbackTask.content}` : '任务反馈'
           const message = store.appendMessage({ userId: identity.userId, eventId: envelope.event_id,
-            role: 'user', direction: 'inbound', text, occurredAt: envelope.occurred_at, timezone: envelope.timezone,
+            role: 'user', direction: 'inbound', audience:'background', text, occurredAt: envelope.occurred_at, timezone: envelope.timezone,
             messageId: envelope.message_id, causationId: envelope.causation_id,
             replyToMessageId: feedback.reply_to_message_id })
           receivedSeq = message.seq

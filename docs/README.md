@@ -7,6 +7,7 @@
 | 阅读目的 | 入口 |
 | --- | --- |
 | 从手机启动 Mac 本地服务 | [Along 一条命令激活](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#一条命令激活本机服务2026-11-16)；在相邻 `Along/` 中执行 `npm run activate` |
+| 核对目标聊天与后台编排的可见性边界 | [聊天边界、兼容迁移与验收](along/011-conversation-boundary.md) |
 | 理解进程、Router / Worker、健康跟进与长期记忆 | [当前运行图](along/009-current-runtime.md) |
 | 核对已实现范围和待验项 | [实施与验收](along/003-implementation.md) 第 1 节 |
 | 查找 DSH 核心模块与测试 | [代码架构索引](007-architecture.md)；Along 入口为 [`src/along/`](../src/along/) 和 [`src/app/runtime.ts`](../src/app/runtime.ts) |

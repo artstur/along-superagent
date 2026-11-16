@@ -226,7 +226,7 @@ describe('BC-08-11 full conversation, goals, tasks, and change sets survive a re
     expect(reopened.getTask(USER, task.id)?.scheduledAt).toBe('2026-11-18T07:00:00.000Z')
     expect(reopened.changeSetByIdempotencyKey(USER, 'idem-1')?.ops).toEqual([{ op: 'task.create', content: '周三运动 30 分钟' }])
     // 对话里没有模型隐藏推理字段：行字段只有声明的那些
-    expect(Object.keys(reopened.messagesByGoal(USER, GOAL).items[0]!).sort()).toEqual(['causationId', 'createdAt', 'direction', 'eventId', 'goals',
+    expect(Object.keys(reopened.messagesByGoal(USER, GOAL).items[0]!).sort()).toEqual(['audience', 'causationId', 'createdAt', 'direction', 'eventId', 'goals',
       'id', 'messageId', 'occurredAt', 'receivedAt', 'replyToMessageId', 'role', 'seq', 'text', 'timezone', 'userId'].sort())
     reopened.close()
   })

@@ -438,6 +438,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 
 | Test | Covers |
 | --- | --- |
+| `tests/along-conversation-boundary.spec.ts` | Host-owned conversation audience, exact evidence-backed historical isolation, migration and capability-safe sync replay |
 | `tests/along-weekly-completion.spec.ts` | Registered ready refusal before a real weekly update, update/recommendation ordering and original task/time preservation |
 | `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |

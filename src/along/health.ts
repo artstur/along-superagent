@@ -447,6 +447,7 @@ export class HealthFollowup {
                   eventId,
                   role: 'assistant',
                   direction: 'outbound',
+                  audience: args.outcome === 'ask' ? 'conversation' : 'background',
                   text: recommendationText(structured,args.text)
                 })
               store.linkMessageToGoals(message.id, [d.goalId], 'derived')
