@@ -40,6 +40,7 @@ pnpm check    # 类型检查、全部测试、构建
 
 ## 文档与代码导航
 
+- **当前代码的运行图**：[进程、派工与长期记忆](docs/along/009-current-runtime.md)，区分 DSH Router / Worker、健康触发、Hy-Memory SDK 接入与生效边界；当前不接 MemHub 桌面产品。
 - **产品决策与规范**：[决策记录](docs/along/000-decisions.md)、[系统架构](docs/along/001-architecture.md)、[记忆与技能](docs/along/002-memory-and-skills.md)。这些文件包含目标设计，不能把尚未实现的部分视为当前能力。
 - **实现与验收**：[阶段与剩余范围](docs/along/003-implementation.md)，以及上表各模块的实施记录；旧记录中的版本与测试条数对应当时的快照。
 - **DSH 核心机制**：[设计原则](docs/000-philosophy.md)、[领域模型](docs/001-domain.md)、[授权](docs/002-authorization.md)、[执行](docs/003-execution.md)、[提示词](docs/004-prompts.md)、[管理面板](docs/005-panel.md)、[部署运维](docs/006-deployment.md)、[代码架构](docs/007-architecture.md)、[来源扩展](docs/008-cookbook.md)。
