@@ -63,7 +63,7 @@ it('isolates only evidenced development inputs and their exact reply, plan note 
   expect(store.isolateDevelopmentEvents(user,['dev'],'private-evidence-manifest.json')).toEqual({changed:[]})
   expect(store.syncPage(user,cursor,200).items).toEqual([])
   const item=store.workspaceSync(user,0,200).items.find(i=>i.messageId===answer.id)!
-  expect(item.payload).toMatchObject({audience:'background',message:{audience:'background'},recommendation:{retained:true},notification:{retained:true}})
+  expect(item.payload).toMatchObject({audience:'background',classification_only:true,message:{audience:'background'},recommendation:{retained:true},notification:{retained:true}})
   const correction=store.workspaceSync(user,0,200).items.filter(i=>i.messageId===answer.id).at(-1)!
   expect(correction.payload).toMatchObject({classification_only:true,notification:{retained:true}})
   expect(()=>alongTools({service:new AlongService(store),scopeFor:()=>({userId:user,triggerEventId:'dev',allowedGoalId:goal.id})},'t')
@@ -106,11 +106,11 @@ it('task facts keep their audit body without appearing as a user-authored chat',
   expect(store.getMessage(user,`msg:${user}:completed`)).toMatchObject({audience:'background',text:'任务完成反馈：散步'})
   expect(store.getTask(user,task.id)?.status).toBe('done')
 })
-it('migrates only proven execution and automatic-update records while preserving human wording and essential questions',()=>{
+it('migrates proven execution and all automatic follow-ups while preserving direct human wording',()=>{
   const {path,store,goal,say}=setup();say('human','ready 补齐提醒 followup_lookalike')
   for(const [eventId,text] of [['execution','完成'],['followup_update','更新'],['followup_ask','缺必要信息？']] as const){
     const m=store.appendMessage({userId:user,eventId,role:'assistant',direction:'outbound',text})
-    store.appendSync({userId:user,kind:'message',goalId:goal.id,messageId:m.id,payload:eventId==='execution'?{presentation:'execution'}:{}})
+    store.appendSync({userId:user,kind:'message',goalId:goal.id,messageId:m.id,payload:eventId==='execution'?{presentation:'execution'}:eventId==='followup_ask'?{notification:{event_id:'old_ask_notice',kind:'task_result'}}:{}})
   }
   stores.splice(stores.indexOf(store),1);store.close()
   const raw=new DatabaseSync(path)
@@ -120,7 +120,11 @@ it('migrates only proven execution and automatic-update records while preserving
   const next=new AlongStore(path);stores.push(next)
   expect(next.getMessage(user,`msg:${user}:execution`)?.audience).toBe('background')
   expect(next.getMessage(user,`msg:${user}:followup_update`)?.audience).toBe('background')
-  expect(next.getMessage(user,`msg:${user}:followup_ask`)?.audience).toBe('conversation')
+  expect(next.getMessage(user,`msg:${user}:followup_ask`)?.audience).toBe('background')
+  const original=next.syncPage(user,0,200).items.find(i=>i.messageId===`msg:${user}:followup_ask`)!
+  expect(original.payload).toHaveProperty('notification')
+  expect(next.workspaceSync(user,0,200).items.find(i=>i.messageId===original.messageId)!.payload).toMatchObject({classification_only:true,notification:{event_id:'old_ask_notice'}})
+  expect(next.syncPage(user,0,200).items.find(i=>i.seq===original.seq)).toEqual(original)
   expect(next.getMessage(user,`msg:${user}:human`)?.audience).toBe('conversation')
   expect(next.counts(user).messages).toBe(4)
 })

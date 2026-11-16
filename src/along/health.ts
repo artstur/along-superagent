@@ -402,7 +402,7 @@ export class HealthFollowup {
       alongTool({
         name: 'along_health_followup',
         description:
-          'Finish the bound automatic health evaluation. types lists health types actually relevant to this goal (empty for unrelated). keep changes nothing; update requires an applied task ChangeSet; ask requires one essential user-facing question. Read along_health_read first. Ordinary keep is silent. Identity, goal and evaluated snapshot are host-bound.',
+          'Finish the bound automatic health evaluation. types lists health types actually relevant to this goal (empty for unrelated). keep changes nothing; update requires an applied task ChangeSet; ask records missing information in the background without adding personal chat or a notification. It does not prove the user task completed. Use existing report states honestly; do not require a human action for routine missing observations. Read along_health_read first. Ordinary keep is silent. Identity, goal and evaluated snapshot are host-bound.',
         schema: z
           .object({
             outcome: z.enum(['keep', 'update', 'ask']),
@@ -422,7 +422,7 @@ export class HealthFollowup {
               throw new Error('health capability unavailable')
             if (d.result) {
               if (!isDeepStrictEqual(d.result, args)) throw new Error('follow-up already finished differently')
-              return { status: 'recorded', reused: true }
+              return { status: 'recorded', reused: true, ...(d.result.outcome==='ask'?{audience:'background',delivery:'background_only'}:{}) }
             }
             if (!d.readSnapshot) throw new Error('read along_health_read before finishing')
             if(args.recommendation&&(!d.due||!args.text))throw new Error('recommendation requires a bound due task and user-facing text')
@@ -438,7 +438,7 @@ export class HealthFollowup {
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
-            const notice=structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
+            const notice=args.outcome==='ask'?undefined:structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
             store.health.finish(d, args)
             if ((args.outcome !== 'keep'||structured) && args.text) {
               const eventId = `followup_${d.eventId}`,
@@ -447,7 +447,7 @@ export class HealthFollowup {
                   eventId,
                   role: 'assistant',
                   direction: 'outbound',
-                  audience: args.outcome === 'ask' ? 'conversation' : 'background',
+                  audience: 'background',
                   text: recommendationText(structured,args.text)
                 })
               store.linkMessageToGoals(message.id, [d.goalId], 'derived')
@@ -463,7 +463,7 @@ export class HealthFollowup {
                 }}:{}) }
               })
             }
-            return { status: 'recorded', reused: false }
+            return { status: 'recorded', reused: false, ...(args.outcome==='ask'?{audience:'background',delivery:'background_only'}:{}) }
           })
       })
     ]

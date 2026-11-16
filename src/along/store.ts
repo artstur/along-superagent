@@ -568,12 +568,16 @@ export class AlongStore {
     return { ...page, items: page.items.map(item => {
       const message = item.messageId === undefined ? undefined : this.getMessage(userId, item.messageId)
       const snapshot = item.goalId === undefined ? {} : { snapshot: this.goalDetail(userId, item.goalId) }
+      const payload = { ...item.payload as Record<string,unknown> }
+      // A historical model-labelled ask has no host authority to alert a person. Project safely without
+      // mutating its original audit/outbox row or refreshing the notification's age.
+      if (message && this.one("SELECT 1 FROM message_audience_audit WHERE user_id=? AND message_id=? UNION ALL SELECT 1 FROM health_dispatch WHERE user_id=? AND 'followup_'||event_id=? AND json_extract(result,'$.outcome')='ask' LIMIT 1",userId,message.id,userId,message.eventId)) payload.classification_only=true
       // Old clients cannot understand an audience or remove cached messages. Keep the original sequence so
       // pagination/ack stay sound, but never forward new internal wording to them. An upgraded client replays.
       if (message?.audience === 'background' && conversationVersion !== 1) return {
         ...item, kind: 'changeset_note' as const, payload: snapshot,
       }
-      return { ...item, payload: { ...item.payload as Record<string, unknown>, ...snapshot,
+      return { ...item, payload: { ...payload, ...snapshot,
         ...(message === undefined ? {} : { message, audience: message.audience }) } }
     }) }
   }

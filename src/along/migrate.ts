@@ -38,7 +38,7 @@ const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
     UPDATE message SET audience='background' WHERE id IN (
       SELECT message_id FROM sync_outbox WHERE kind='message' AND json_valid(payload) AND json_extract(payload,'$.presentation')='execution'
     ) OR EXISTS (SELECT 1 FROM health_dispatch d WHERE d.user_id=message.user_id
-      AND message.event_id='followup_'||d.event_id AND (d.result IS NULL OR json_extract(d.result,'$.outcome')<>'ask'))
+      AND message.event_id='followup_'||d.event_id)
       OR EXISTS (SELECT 1 FROM event_inbox e WHERE e.user_id=message.user_id AND e.event_id=message.event_id
         AND e.status='accepted' AND e.event_type='along.message');`)
   },

@@ -572,8 +572,8 @@ it('dispatches one clock event per occurrence without a phone read, serializes w
   await h.runtime.pump(); await h.runtime.idle()
   expect(h.runtime.store.tickets.list()).toHaveLength(2)
   const notices=store.workspaceSync(USER,0,200).items.filter(i=>(i.payload as {notification?:unknown}).notification)
-  expect(notices).toHaveLength(1)
-  expect(notices[0]).toMatchObject({kind:'message',goalId:goal.id,taskId:once.id,payload:{notification:{kind:'task_result',event_id:expect.any(String)}}})
+  expect(notices).toHaveLength(0)
+  expect(store.getTask(USER,once.id)?.status).toBe('open')
 },30000)
 
 it('rejects an outdated task review after rescheduling, cancellation, or replacing the mandate while a worker is running', async () => {
@@ -663,4 +663,25 @@ it('retains the prior task-bound daily mandate on keep despite a cancellation of
   expect(store.goalDetail(USER,goal.id).tasks.find(t=>t.id===task.id)?.previousDailyOccurrence).toBeUndefined()
   store.health.setDaily(task.id)
   expect(store.health.soleTaskFromMandate(task.id,goal.id,'daily_walk')).toBe(false)
+},25000)
+
+it('automatic ask cannot promote execution wording into chat or push, and assessment completion preserves the real task',async()=>{
+ const {h,store,goal,task,event,dispatch}=await setup();event('classification_guard')
+ const {worker,ticket}=await dispatch();await h.runTool(worker,'along_health_read',{})
+ const args={outcome:'ask',types:['steps'],reason:'routine maintenance completed; no missing user fact',text:'内部验收已完成，提醒计划补齐成功。'}
+ expect(await h.runTool(worker,'along_health_followup',args)).toMatchObject({status:'recorded',audience:'background',delivery:'background_only'})
+ expect(await h.runTool(worker,'along_health_followup',args)).toMatchObject({reused:true,delivery:'background_only'})
+ const log=store.messagesByGoal(USER,goal.id,{limit:100}).items.find(m=>m.text===args.text)!
+ expect(log.audience).toBe('background')
+ const sync=store.workspaceSync(USER,0,200).items.find(i=>i.messageId===log.id)!
+ expect(sync.payload).not.toHaveProperty('notification')
+ expect(await h.runTool(worker,'orchestrator_report',{state:'ready',summary:'本次评估记录缺少观察，等待后续事实'}))
+   .toMatchObject({reported:true,notification:'internal_only'})
+ expect(h.runtime.store.tickets.get(ticket.id)?.ended?.outcome).toBe('completed')
+ expect(h.runtime.store.tickets.get(ticket.id)?.attention).toBeUndefined()
+ expect(store.getTask(USER,task.id)?.status).toBe('open')
+ expect(store.messagesByGoal(USER,goal.id,{limit:100}).items.every(m=>m.audience==='background')).toBe(true)
+ event('next_health_fact',summaries(4000,'steps','2026-11-16T04:01:00.000Z'))
+ await h.runtime.pump();await h.runtime.idle()
+ expect(h.runtime.store.tickets.list().some(t=>t.id!==ticket.id&&t.mandate.basis.via==='health')).toBe(true)
 },25000)
