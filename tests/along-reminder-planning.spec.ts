@@ -224,3 +224,34 @@ it('keeps the booking weekday separate from the activity weekday when the Worker
   expect(supportsRecurrence(followsReminder,followsReminder,'课程','预约周三课程','weekly',2)).toBe(true)
   expect(supportsRecurrence(followsReminder,followsReminder,'课程','预约周三课程','weekly',3)).toBe(false)
 })
+
+
+it('keeps explicit cadence weekdays when a booking action follows the activity noun',async()=>{
+  now();const {say,commit}=fixture()
+  for(const [text,content] of [
+    ['每周一提醒我为周二陶艺课预约','为周二陶艺课预约'],
+    ['每周一提醒我安排周二陶艺课的预约','安排周二陶艺课的预约'],
+    ['每周一为周二陶艺课预约','为周二陶艺课预约'],
+  ]) {
+    say(text!)
+    const op=(at:string)=>({op:'task.create',content,scheduled_at:at,repeat:'weekly',reminder_plan:{...agent,evidence:text,action:'陶艺课'}})
+    expect(await commit([op('2027-01-05T02:00:00Z')])).toMatchObject({status:'invalid',reason:'task_scoped_repeat_evidence_required'})
+    expect(await commit([op(first)])).toMatchObject({status:'applied'})
+  }
+  const english='Every Monday remind me to arrange Tuesday pottery class booking'
+  expect(supportsRecurrence(english,english,'pottery class','arrange Tuesday pottery class booking','weekly',2)).toBe(false)
+  expect(supportsRecurrence(english,english,'pottery class','arrange Tuesday pottery class booking','weekly',1)).toBe(true)
+  const multiple='每周一和周四提醒我为周二和周五陶艺课预约'
+  expect(supportsRecurrence(multiple,multiple,'陶艺课','为周二和周五陶艺课预约','weekly',4)).toBe(true)
+  expect(supportsRecurrence(multiple,multiple,'陶艺课','为周二和周五陶艺课预约','weekly',2)).toBe(false)
+})
+
+
+it('does not mix activity weekdays in another language into an explicit cadence',()=>{
+  const mixed='每周一提醒我安排Tuesday pottery class booking'
+  expect(supportsRecurrence(mixed,mixed,'pottery class','安排Tuesday pottery class booking','weekly',1)).toBe(true)
+  expect(supportsRecurrence(mixed,mixed,'pottery class','安排Tuesday pottery class booking','weekly',2)).toBe(false)
+  const converse='Every Monday remind me to arrange 周二陶艺课 booking'
+  expect(supportsRecurrence(converse,converse,'陶艺课','arrange 周二陶艺课 booking','weekly',1)).toBe(true)
+  expect(supportsRecurrence(converse,converse,'陶艺课','arrange 周二陶艺课 booking','weekly',2)).toBe(false)
+})

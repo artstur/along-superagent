@@ -77,9 +77,13 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   // The day after “book” is the activity day. An explicit weekly appointment or delegated
   // reminder on the weekday before that action can establish the continuing schedule.
   if (!delegated && !/提醒|通知|安排|预约|预订|叫我|remind|schedule|book/i.test(clause)) return false
-  const days=weekdays(prefix)
+  // A cadence directly qualified by weekdays (every Monday / 每周一和周四) takes
+  // precedence over later dates qualifying the activity, including postposed bookings.
+  const cadence=/(?:每(?:个)?(?:周|星期|礼拜)|每逢(?:周|星期))([一二三四五六日天](?:\s*(?:和|及|与|、|&|\/)\s*(?:(?:周|星期|礼拜))?[一二三四五六日天])*)/u.exec(prefix)
   const en=['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
-  for (const [i,word] of en.entries()) if (new RegExp('\\b'+word+'\\b','i').test(prefix)) days.push(i+1)
+  const enCadence=new RegExp('\\bevery\\s+((?:'+en.join('|')+')(?:\\s*(?:and|&|,)\\s*(?:'+en.join('|')+'))*)','i').exec(prefix)
+  const days=cadence ? [...cadence[1]!].filter(c=>'一二三四五六日天'.includes(c)).map(weekLabel) : enCadence ? [] : weekdays(prefix)
+  for (const [i,word] of en.entries()) if (new RegExp('\\b'+word+'\\b','i').test(enCadence?.[1]??(cadence?'':prefix))) days.push(i+1)
   return days.includes(weekday)
 }
 
