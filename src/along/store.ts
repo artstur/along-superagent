@@ -355,6 +355,13 @@ export class AlongStore {
     return this.opt(this.one('SELECT content FROM task_revision WHERE task_id=? AND revision=? AND user_id=?',taskId,revision,userId)?.content)
       ??(task.currentRevision===revision?task.content:undefined)
   }
+  /** Wording before this host message's own edits, using existing revision history (not a clock snapshot). */
+  taskBeforeMessage(userId:string,taskId:string,message:MessageRow):{content:string;scheduledAt?:string}|undefined {
+    if(!this.getTask(userId,taskId)||message.userId!==userId)return
+    const row=this.one(`SELECT content,scheduled_at FROM task_revision WHERE user_id=? AND task_id=? AND created_at<=?
+      AND (origin_event_id IS NULL OR origin_event_id<>?) ORDER BY revision DESC LIMIT 1`,userId,taskId,message.receivedAt,message.eventId)
+    return row?{content:this.text(row.content),scheduledAt:this.opt(row.scheduled_at)}:undefined
+  }
   getTask(userId: string, taskId: string): TaskRow | undefined {
     const row = this.one('SELECT * FROM user_task WHERE id = ?', taskId)
     return row === undefined || this.text(row.user_id) !== userId ? undefined : this.taskRow(row)
