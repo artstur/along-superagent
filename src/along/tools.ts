@@ -91,7 +91,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
     const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
     const original=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)?.text:undefined
-    return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
+    return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(bound.triggerEventId?{budgetEventId:bound.triggerEventId}:{}),...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
   }
   return [
     ...researchTools(store.research,researchScope,host.web??(()=>undefined)),

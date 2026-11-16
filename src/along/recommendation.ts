@@ -30,8 +30,14 @@ export function isResearchTaskContent(content:string):boolean {
  return /研究|查询|查天气|比较|(?:安排|规划|决定|挑选|选择|推荐).*(?:徒步|目的地|路线|去哪里)|\bresearch\b|\brecommend\b|\bcheck (?:the )?weather\b|\bplan\b.{0,40}\b(?:route|hike|weekend)\b/i.test(content)
 }
 const normalized=(text:string)=>text.normalize('NFKC').replace(/\s+/g,' ').trim()
-const activeAlert=(quote:string)=>/(?:当前|正在|现正).{0,35}(?:预警|警报)|(?:预警|警报).{0,25}(?:生效中|正在生效|已生效)|(?:已|正在)发布.{0,25}(?:预警|警报)|(?:current|active).{0,25}(?:warning|alert)/i.test(normalized(quote))
-const severeWeather=(quote:string)=>/暴雨|雷暴|台风|雷电|大风|强风|极端高温|heavy rain|thunderstorm|typhoon|strong wind/i.test(normalized(quote))
+const weatherClauses=(quote:string)=>normalized(quote).split(/[，,。；;!?！？]/).filter(clause=>
+ !noActiveAlert(clause)&&!/(?:没有|暂无|未见|未出现|未发布|未生效|不再|解除|取消|终止|失效)|无(?:明显|任何|持续)?(?:暴雨|雷暴|台风|雷电|大风|强风)|如果|假如|如遇|若遇|若有|若出现|若发布|一旦|倘若|当.{0,25}(?:预警|警报|暴雨|雷暴).{0,10}时|\b(?:no|not|without|if|would|cancelled|canceled|lifted|expired)\b/i.test(clause))
+const activeAlert=(quote:string)=>weatherClauses(quote).some(clause=>/(?:当前|正在|现正).{0,35}(?:预警|警报)|(?:预警|警报).{0,25}(?:生效中|正在生效|已生效)|(?:已|正在)发布.{0,25}(?:预警|警报)|(?:current|active).{0,25}(?:warning|alert)/i.test(clause))
+const severeWeather=(quote:string)=>weatherClauses(quote).some(clause=>/暴雨|雷暴|台风|雷电|大风|强风|极端高温|heavy rain|thunderstorm|typhoon|strong wind/i.test(clause))
+const routeMeasure=(fact:{label:string;value:string},origins:ResearchEvidence[])=>/\d/.test(fact.value)&&origins.every(source=>source.purpose==='route')
+ &&/距离|长度|里程|爬升|海拔|用时|耗时|distance|length|ascent|elevation|duration/i.test(fact.label)
+ &&fact.value.replace(/全程|大约|约|总长|累计|往返|单程|上升|下降|爬升|海拔|高度|公里|千米|分钟|小时|米|hours?|minutes?|km|min|m|h|[0-9\s.,+~～–—/:;，。、()（）-]/gi,'')===''
+
 const recentPublication=(source:ResearchEvidence,now:number)=>!!source.publishedAt&&Date.parse(source.publishedAt)>=now-36*3600_000&&Date.parse(source.publishedAt)<=now+300_000
 const plainRouteTitle=(title:string)=>title.replace(/[（(【\[][^）)】\]]*(?:推荐|首选|备选|不建议|安全|优先)[^）)】\]]*[）)】\]]/g,'').replace(/^(?:推荐|首选|优先|安全路线)[:：]?\s*/,'').trim()||'待核实路线'
 const needsProjection=(kind:Recommendation['kind'],options:Recommendation['options'])=>kind==='hiking'&&(!options.length||options.some(option=>option.status!=='recommended'))
@@ -102,13 +108,14 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
   const checked=checks.every(check=>check.status==='ok')&&(kind!=='hiking'||['access','weather'].every(kind=>checks.some(c=>c.kind===kind&&c.status==='ok')))
   const removed:string[]=[]
   const retainedFacts=kind!=='hiking'?facts:facts.filter((fact,index)=>{
-   const origins=factSources[index]!,label=fact.label
+   const origins=factSources[index]!,label=fact.label+' '+fact.value
    const access=origins.some(source=>source.purpose==='access')||/开放|闭园|门票|费用|价格|预约|名额|通行|入园|open|close|admission|ticket|booking/i.test(label)
    const weather=origins.some(source=>['weather','alerts'].includes(source.purpose))||/警报|预警|天气|降雨|温度|风速|风力|alert|warning|weather|rain|temperature/i.test(label)
    const keep=origins.every(source=>source.fetched&&Date.parse(source.expiresAt)>now)
     &&(!access||origins.every(primary)&&checks.some(check=>check.kind==='access'&&check.status==='ok'))
     &&(!weather||origins.every(primary)&&checks.some(check=>check.kind==='weather'&&check.status==='ok'))
-   if(!keep)removed.push(label)
+    &&(checks.some(check=>check.kind==='access'&&check.status==='ok')&&checks.some(check=>check.kind==='weather'&&check.status==='ok')||routeMeasure(fact,origins))
+   if(!keep)removed.push(fact.label)
    return keep
   })
   const unknowns=removed.length?[`以下参数当前值尚未核实：${removed.join('、').slice(0,250)}`,...option.unknowns].slice(0,12):option.unknowns

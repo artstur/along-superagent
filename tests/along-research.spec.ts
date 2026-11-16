@@ -344,3 +344,56 @@ it.each(['research','outing'] as const)('routes a fresh chat recommendation on a
  if(kind==='research')expect(payload.notification).toMatchObject({kind:'task_result',revision:1})
  else expect(payload.notification).toBeUndefined()
 })
+it('does not turn explicit no-alert, negated or hypothetical weather evidence into an active risk',()=>{
+ const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
+ for(const quote of ['当前无气象灾害预警信号','当前暴雨预警已解除','如果当前发布暴雨预警，请勿进山']){
+  const source=store.research.save(scope,{title:'合成官方气象',url:'https://www.sz.gov.cn/alerts',content:quote,purpose:'alerts',fetched:true,publishedAt:new Date().toISOString()})
+  const input=plan(route.id,access.id,weather.id)
+  input.options[0]!.checks[1]={kind:'weather',status:'risk',summary:'当前预警生效',evidence:[{sourceId:weather.id,quote:'周末晴天'}],alertStatus:'risk',alertEvidence:[{sourceId:source.id,quote}]}
+  const result=recommendation(store.research,scope,input)
+  expect(result.options[0]!.checks[1]!.status).toBe('unknown');expect(result.options[0]!.status).toBe('conditional')
+  expect(result.summary).not.toContain('已核实限制或天气风险')
+ }
+ for(const quote of ['没有暴雨','无明显暴雨','如果有雷暴请避开山路']){
+  const source=store.research.save(scope,{title:'合成官方预报',url:'https://www.nmc.cn/forecast',content:quote,purpose:'weather',fetched:true,publishedAt:new Date().toISOString()})
+  const input=plan(route.id,access.id,weather.id)
+  input.options[0]!.checks[1]={kind:'weather',status:'risk',summary:'暴雨风险',evidence:[{sourceId:source.id,quote}]}
+  expect(recommendation(store.research,scope,input).options[0]!.checks[1]!.status).toBe('unknown')
+ }
+})
+it('cannot hide unverified access facts behind a route purpose and an innocuous model label',()=>{
+ const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天')
+ const secondary=store.research.save(scope,{title:'路线游记',url:'https://trip.com/trail',content:'无需预约。建议任意时间进入。6公里需登记',purpose:'route',fetched:true})
+ const input=plan(route.id,access.id,weather.id),option=input.options[0]!
+ option.checks.forEach(check=>{check.status='unknown'})
+ option.facts.push({label:'小贴士',value:'无需预约',evidence:[{sourceId:secondary.id,quote:'无需预约'}]},
+ {label:'路线长度',value:'6公里需登记',evidence:[{sourceId:secondary.id,quote:'6公里需登记'}]},
+ {label:'提示',value:'建议任意时间进入',evidence:[{sourceId:secondary.id,quote:'建议任意时间进入'}]})
+ const result=recommendation(store.research,scope,input)
+ expect(result.options[0]!.facts).toEqual([{label:'路线距离',value:'6公里',sourceIds:[route.id]}])
+ expect(result.options[0]!.unknowns.join(' ')).toContain('小贴士')
+})
+it('renews only the host-bound event budget on a reused ticket, preserving retry limits and fresh sources across restart',async()=>{
+ const {store,scope,save,deviceId}=fixture(),path=join(dirs.at(-1)!,'along.sqlite'),inbox=createInbox(store)
+ const event=(eventId:string)=>inbox.acceptEvent({event_id:eventId,schema_version:'1',event_type:'along.user_message',goal_id:scope.goalId,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'在同一任务继续核查路线资料'}},{userId:scope.userId,deviceId})
+ const web:ResearchWeb={assertProvider:()=>{},search:vi.fn(async()=>({sources:[],truncated:false})),fetch:vi.fn()}
+ const signal=new AbortController().signal;let trigger='first_research_event'
+ event(trigger)
+ const originalSource=save('route','全程6公里')
+ const tool=(s:AlongStore)=>alongTools({service:new AlongService(s),web:()=>web,scopeFor:()=>({userId:scope.userId,allowedGoalId:scope.goalId,triggerEventId:trigger})},scope.ticketId).find(t=>t.name==='along_web_search')!
+ const search=async(s:AlongStore)=>{const t=tool(s);return await t.execute(t.schema.parse({query:'公开路线资料',purpose:'route'}),signal)}
+ for(let n=0;n<16;n++)expect(await search(store)).toMatchObject({status:'empty'})
+ expect(await search(store)).toMatchObject({status:'failed',error:{code:'RESEARCH_LIMIT'}})
+ expect(web.search).toHaveBeenCalledTimes(16)
+ store.close();stores.splice(stores.indexOf(store),1)
+ const reopened=new AlongStore(path);stores.push(reopened)
+ expect(await search(reopened)).toMatchObject({status:'failed',error:{code:'RESEARCH_LIMIT'}})
+ trigger='second_research_event'
+ expect(createInbox(reopened).acceptEvent({event_id:trigger,schema_version:'1',event_type:'along.user_message',goal_id:scope.goalId,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'请重新联网，不改原目标和任务'}},{userId:scope.userId,deviceId})).toMatchObject({status:'accepted'})
+ for(let n=0;n<16;n++)expect(await search(reopened)).toMatchObject({status:'empty'})
+ expect(await search(reopened)).toMatchObject({status:'failed',error:{code:'RESEARCH_LIMIT'}})
+ expect(web.search).toHaveBeenCalledTimes(32)
+ expect(reopened.research.get(scope,originalSource.id)?.content).toBe('全程6公里')
+ const t=tool(reopened)
+ expect(()=>t.schema.parse({query:'公开路线资料',purpose:'route',budgetEventId:'invented'})).toThrow()
+})

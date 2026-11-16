@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS research_request (
 CREATE TABLE IF NOT EXISTS research_reply (
  message_id TEXT PRIMARY KEY REFERENCES message(id), input TEXT NOT NULL, recommendation TEXT, notification TEXT
 );`
-export interface ResearchScope { userId: string; goalId: string; ticketId: string; requiredKind?:'hiking' }
+export interface ResearchScope { userId: string; goalId: string; ticketId: string; requiredKind?:'hiking'; budgetEventId?:string }
 export type ResearchPurpose = 'weather' | 'alerts' | 'access' | 'route' | 'general'
 export interface ResearchSource {
  id: string; title: string; url: string; retrievedAt: string; expiresAt: string; publishedAt?: string
@@ -40,9 +40,10 @@ export class ResearchStore {
   return row ? JSON.parse(String(row.metadata)) as ResearchEvidence : undefined
  }
  claimRequest(scope:ResearchScope,operation:string):number | undefined {
-  const n=this.db.prepare('SELECT count(*) AS n FROM research_request WHERE user_id=? AND goal_id=? AND ticket_id=?').get(scope.userId,scope.goalId,scope.ticketId)
+  const operationKey=(kind:string)=>scope.budgetEventId?JSON.stringify([scope.budgetEventId,kind]):kind
+  const n=this.db.prepare('SELECT count(*) AS n FROM research_request WHERE user_id=? AND goal_id=? AND ticket_id=? AND operation IN (?,?)').get(scope.userId,scope.goalId,scope.ticketId,operationKey('search'),operationKey('fetch'))
   if(Number(n?.n)>=16)return undefined
-  const result=this.db.prepare('INSERT INTO research_request(user_id,goal_id,ticket_id,operation,status,at) VALUES(?,?,?,?,?,?)').run(scope.userId,scope.goalId,scope.ticketId,operation,'started',new Date().toISOString());return Number(result.lastInsertRowid)
+  const result=this.db.prepare('INSERT INTO research_request(user_id,goal_id,ticket_id,operation,status,at) VALUES(?,?,?,?,?,?)').run(scope.userId,scope.goalId,scope.ticketId,operationKey(operation),'started',new Date().toISOString());return Number(result.lastInsertRowid)
  }
  finishRequest(scope:ResearchScope,id:number,status:string):void {
   this.db.prepare('UPDATE research_request SET status=? WHERE id=? AND user_id=? AND goal_id=? AND ticket_id=?').run(status,id,scope.userId,scope.goalId,scope.ticketId)
