@@ -421,7 +421,8 @@ export class HealthFollowup {
     if (prior && prior.evidence !== evidence) throw new Error('daily mandate belongs to another instruction')
     const message = store.getMessage(d.userId, `msg:${d.userId}:${evidence}`)
     const supported = message && (prior?.quote && prior.action
-      ? supportsRecurrence(message.text,prior.quote,prior.action,task.content,prior.weekday ? 'weekly' : 'daily',prior.weekday ?? 1)
+      ? supportsRecurrence(message.text,prior.quote,prior.action,task.content,prior.weekday ? 'weekly' : 'daily',prior.weekday ?? 1,
+          task.reminderPlan?.state==='scheduled'?task.reminderPlan.recurrenceSource:undefined)
       : hasDailyMandate(message.text))
     if (task.status !== 'open' || !task.scheduledAt || !message || message.role !== 'user'
       || message.direction !== 'inbound' || !message.timezone || !supported

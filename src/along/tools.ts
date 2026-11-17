@@ -240,7 +240,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             text:message.text,at:message.occurredAt??message.receivedAt}
         })
         const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, conversation)
-        return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), task_feedback:feedback, messages: (context?.messages ?? conversation).map(message =>
+        const timezone=page.items.at(-1)?.timezone??[...page.items].reverse().find(m=>m.timezone)?.timezone
+        let civil:Record<string,string>={}
+        if(timezone)try {civil={local_now:new Intl.DateTimeFormat('sv-SE',{timeZone:timezone,dateStyle:'full',timeStyle:'long',hourCycle:'h23'}).format(new Date()),
+          local_weekday:new Intl.DateTimeFormat('en-US',{timeZone:timezone,weekday:'long'}).format(new Date())}}catch{/* Never invent a civil clock for an unknown zone. */}
+        return { timezone, now:new Date().toISOString(),...civil, ...(context ? { memories: context.memories, memory_history: context.history } : {}), task_feedback:feedback, messages: (context?.messages ?? conversation).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
           ...(page.nextCursor !== undefined ? { next_before_seq: Number(page.nextCursor) } : {}) }
       },

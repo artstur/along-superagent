@@ -74,3 +74,11 @@ it('retains a daily action and its adjacent lead-time reminder without borrowing
  expect(supportsRecurrence(quote,quote,'入睡','睡前准备并在凌晨2点前入睡','daily',1)).toBe(true)
  expect(supportsRecurrence('每天散步，明天提醒喝水','每天散步，明天提醒喝水','喝水','喝水','daily',1)).toBe(false)
 })
+it('separates Agent-inferred goal cadence from a literal user rule without relaxing one-off/stop constraints',()=>{
+ const goal='我想长期保持资料整洁，逐步整理收集的研究笔记'
+ expect(supportsRecurrence(goal,goal,'定期回顾笔记','梳理研究资料并安排下一步','weekly',2,'agent')).toBe(true)
+ expect(supportsRecurrence(goal,goal,'定期回顾笔记','梳理研究资料并安排下一步','weekly',2,'user')).toBe(false)
+ for(const text of ['只做这一次整理资料','停止整理研究笔记','如果每周整理会怎样','仅本周整理研究笔记'])
+  expect(supportsRecurrence(text,text,'整理资料','整理资料','weekly',2,'agent')).toBe(false)
+ expect(supportsRecurrence('每周一提醒整理资料','每周一提醒整理资料','整理资料','整理资料','weekly',4,'agent')).toBe(false)
+})

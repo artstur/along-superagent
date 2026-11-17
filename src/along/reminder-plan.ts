@@ -8,6 +8,7 @@ export const PLAN = z.discriminatedUnion('state', [
     evidence:z.string().trim().min(2).max(300).optional().describe('Exact text from this user message for a user-specified clock.'),
     action:z.string().trim().min(2).max(100).optional().describe('User-specified clock or recurring: identifying task action appearing in both the quoted clause and task content.'),
     evidence_event_id:z.string().min(1).max(96).optional().describe('Optional original accepted user instruction already linked to this goal. Background repair may cite it; it grants no new user message or permission.'),
+    recurrence_source:z.enum(['user','agent']).optional().describe('Separate from clock source: user means an explicit recurrence instruction; agent means cadence inferred within this authorized goal from its cited context. Do not infer over an explicit one-off, stop or fixed contrary instruction.'),
   }).strict(),
   z.object({ state:z.literal('needs_time'), question:explanation }).strict(),
   z.object({ state:z.literal('off'), reason:z.enum(['opt_out','untimed']) }).strict(),
@@ -15,7 +16,7 @@ export const PLAN = z.discriminatedUnion('state', [
 export type PlanInput = z.infer<typeof PLAN>
 export type Repeat = 'once'|'daily'|'weekly'
 export type ReminderPlan = Exclude<PlanInput,{state:'scheduled'}> |
-  {state:'scheduled'; source:'agent'|'user'; explanation:string; repeat:Repeat; weekday?:number; timezone?:string; wallTime?:string}
+  {state:'scheduled'; source:'agent'|'user'; explanation:string; repeat:Repeat; weekday?:number; timezone?:string; wallTime?:string;recurrenceSource?:'user'|'agent'}
 
 export function localWeekday(date: string, zone:string):number {
   const day=new Intl.DateTimeFormat('en-US',{timeZone:zone,weekday:'short'}).format(new Date(date))
@@ -52,7 +53,7 @@ function precedingBookingDay(message: string, quote: string, action: string, con
   return false
 }
 export function singleOccurrence(message: string, content: string, action: string):boolean {
-  const once = /(?:仅|只)(?:需要|要|需)?(?:这次|此次|本次|提醒这次|提醒一次|一次)|一次性|just once|only once|one.off/i
+  const once = /(?:仅|只)(?:需要|要|需)?(?:做|执行|处理|安排)?(?:这(?:一)?次|此次|本次|提醒这次|提醒一次|一次)|一次性|just once|only once|one.off/i
   return clauses(message).some(clause => {
     const limit = once.exec(clause)
     if (!limit) return false
@@ -60,8 +61,23 @@ export function singleOccurrence(message: string, content: string, action: strin
     return !subject || content.includes(subject) || clause.includes(action)
   })
 }
-export function supportsRecurrence(message:string,quote:string,action:string,content:string,repeat:Repeat,weekday:number):boolean {
+export function supportsRecurrence(message:string,quote:string,action:string,content:string,repeat:Repeat,weekday:number,source:'user'|'agent'='user'):boolean {
   if (!message.includes(quote) || declinesReminder(message,content) || singleOccurrence(message,content,action)) return false
+  if(source==='agent') {
+    // Semantic decomposition belongs to the planner. Here evidence is a real owned goal instruction;
+    // callers verify its origin/version/authority. Do not require a synonym or clause-order whitelist.
+    // Explicit reminder weekdays remain facts even when the Agent chose the civil clock.
+    if(denial.test(quote))return false
+    const remind=/提醒|通知|remind/i.exec(quote)
+    if(repeat==='weekly'&&remind&&!/前一天|day before/i.test(quote)) {
+      const before=quote.slice(0,remind.index)
+      if(/每(?:个)?(?:周|星期|礼拜)|\b(?:weekly|every)\b/i.test(before)) {
+        const days=weekdays(before)
+        if(days.length&&!days.includes(weekday))return false
+      }
+    }
+    return true
+  }
   const delegated=delegatesPlan(message)
   // An ongoing goal may delegate a habitual activity without spelling “every” before every weekday.
   // Validate the cited activity/offset relationship, rather than assuming any weekday is recurring.
@@ -158,12 +174,13 @@ export function planError(plan:PlanInput,time:string|null|undefined,repeat:Repea
   if (plan.source==='user' && (!quote || !message.text.includes(quote) || /[，,。；;!?！？\n]/.test(quote) ||
     !plan.action || !quote.includes(plan.action) || !content.includes(plan.action) || /^(?:提醒|安排|预约|通知|完成|进行)$/.test(plan.action) || !agentExecution&&!/提醒|叫我|通知|闹钟|remind|alert|notif/i.test(quote) ||
     /[点时](?:前|之前|以前)|\d[:：]\d\d\s*(?:前|之前|以前)|deadline|due by/i.test(quote) || !clockInQuote(quote,time,message.timezone,plan.action,agentExecution) || !sameSpecifiedDay(quote,plan.action,time,message))) return 'user_clock_evidence_required'
-  if (repeat!=='once' && (!quote || !plan.action || !supportsRecurrence(message.text,quote,plan.action,content,repeat,localWeekday(time,message.timezone)))) return 'task_scoped_repeat_evidence_required'
+  if (repeat!=='once' && (!quote || !plan.action || !supportsRecurrence(message.text,quote,plan.action,content,repeat,localWeekday(time,message.timezone),plan.recurrence_source))) return 'task_scoped_repeat_evidence_required'
   return undefined
 }
 export function publicPlan(plan:PlanInput,repeat:Repeat,weekday?:number):ReminderPlan {
   if (plan.state!=='scheduled') return plan
-  return {state:plan.state,source:plan.source,explanation:plan.explanation,repeat,...(repeat==='weekly'?{weekday}:{})}
+  return {state:plan.state,source:plan.source,explanation:plan.explanation,repeat,...(repeat==='weekly'?{weekday}:{}),
+    ...(repeat!=='once'&&plan.recurrence_source?{recurrenceSource:plan.recurrence_source}:{})}
 }
 
 /** A declined notification is never turned back on by an unrelated edit. A task-specific opt-out

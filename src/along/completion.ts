@@ -46,7 +46,7 @@ function weeklyCompletion(host:CompletionHost,ticketId:string) {
   &&task.status==='open'&&plan?.state==='scheduled'&&plan.repeat==='weekly'&&plan.weekday===expected.weekday
   &&plan.timezone===expected.zone&&mandate?.weekday===expected.weekday&&mandate.zone===expected.zone
   &&!!original&&original.role==='user'&&original.direction==='inbound'&&!!mandate.quote&&!!mandate.action
-  &&supportsRecurrence(original.text,mandate.quote,mandate.action,task.content,'weekly',expected.weekday)
+  &&supportsRecurrence(original.text,mandate.quote,mandate.action,task.content,'weekly',expected.weekday,plan.recurrenceSource)
   &&!!at&&Number.isFinite(Date.parse(at))&&Date.parse(at)>Date.now()
   &&(!preservedAt||Date.parse(at)===Date.parse(preservedAt))
   &&localWeekday(at,expected.zone)===expected.weekday&&clockAt(at,expected.zone)===expected.clock

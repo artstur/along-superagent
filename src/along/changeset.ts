@@ -395,7 +395,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       if (mandate?.action && mandate.quote && fields.content) {
         const source = store.getMessage(scope.userId, `msg:${scope.userId}:${mandate.evidence}`)
         if (!source || !supportsRecurrence(source.text,mandate.quote,mandate.action,fields.content,
-          mandate.weekday ? 'weekly' : 'daily',mandate.weekday ?? 1)) return refuse('invalid','cannot_keep_reminder_plan')
+          mandate.weekday ? 'weekly' : 'daily',mandate.weekday ?? 1,
+          existing.reminderPlan.state==='scheduled'?existing.reminderPlan.recurrenceSource:undefined)) return refuse('invalid','cannot_keep_reminder_plan')
       }
       if (userMessage && existing.reminderPlan.state==='scheduled' && declinesReminder(userMessage.text,fields.content??existing.content))
         return refuse('invalid','reminder_declined')
@@ -422,7 +423,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
         const original = store.getMessage(scope.userId,`msg:${scope.userId}:${prior.evidence}`)
         if (original && userMessage.timezone===prior.zone && Number.isFinite(Date.parse(time))
           && (!prior.weekday || localWeekday(time,prior.zone)===prior.weekday)
-          && supportsRecurrence(original.text,prior.quote,prior.action,content,prior.weekday?'weekly':'daily',prior.weekday??1)) {
+          && supportsRecurrence(original.text,prior.quote,prior.action,content,prior.weekday?'weekly':'daily',prior.weekday??1,
+            existing?.reminderPlan?.state==='scheduled'?existing.reminderPlan.recurrenceSource:undefined)) {
           retained.set(op,prior)
         } else if (!fields.repeat) return refuse('invalid','task_scoped_repeat_evidence_required')
       }
@@ -559,6 +561,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     if (prior) repeat=prior.weekday?'weekly':'daily'
     const weekday=repeat==='weekly' && time && userMessage?.timezone ? localWeekday(time,userMessage.timezone) : undefined
     const next=publicPlan(plan,repeat,weekday)
+    if(prior&&next.state==='scheduled'&&!next.recurrenceSource&&task.reminderPlan?.state==='scheduled'&&task.reminderPlan.recurrenceSource)
+      next.recurrenceSource=task.reminderPlan.recurrenceSource
     store.health.savePlan(task.id,next)
     if (prior && time) store.health.setDaily(task.id,{...prior,eventId:prior.evidence,wallTime:time})
     else if (plan.state==='scheduled' && repeat!=='once' && userMessage) {
@@ -618,7 +622,10 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
           else store.health.savePlan(task.id,undefined)
         }
       }
-      if(op.fields.trigger&&op.fields.trigger!=='keep')store.triggers.put(task,op.fields.trigger,input.input_version)
+      if(op.fields.trigger&&op.fields.trigger!=='keep') {
+        const d=op.fields.trigger,preserveNotice=prior.reminderPlan?.state==='scheduled'&&(!prior.trigger||prior.trigger.notifyBefore)
+        store.triggers.put(task,d.actor==='agent'&&d.kind==='time'&&d.notify_before===undefined&&preserveNotice?{...d,notify_before:true}:d,input.input_version)
+      }
       if(plan&&plan!=='keep'&&plan.state==='off'&&plan.reason==='opt_out')store.triggers.cancel(scope.userId,task.id)
       touchedTasks.push({ task_id: op.task_id, revision, status })
     } else if (op.op === 'task.cancel') {
