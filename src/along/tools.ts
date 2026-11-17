@@ -243,7 +243,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         if (goalId !== undefined) store.linkMessageToGoals(message.id, [goalId], 'derived')
         store.research.saveReply(message.id,args,structured,notification)
         store.appendSync({ userId: bound.userId, kind: 'message', goalId, taskId, messageId: message.id,
-          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(notification ? { notification } : {}), ...(structured ? {recommendation:structured} : {}) } })
+          payload: { message_id: message.id, role: 'assistant', text: message.text, conversation_id: root, ...(task?{task_execution_revision:task.currentRevision}:{}), ...(notification ? { notification } : {}), ...(structured ? {recommendation:structured} : {}) } })
         return { status: 'replied', message_id: message.id, reused: false }
       }),
     }),

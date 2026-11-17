@@ -20,6 +20,7 @@ import { ResearchStore } from './research-store.ts'
 import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 import { recommendedSources, type DataSourceInput, type GoalDataSource } from './data-sources.ts'
+import { taskExecution, type TaskExecutionSummary } from './task-execution.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
 export interface Page<T> { items: T[]; nextCursor?: string }
@@ -38,6 +39,7 @@ export interface GoalRevisionRow {
 export interface TaskRow {
   id: string; goalId: string; userId: string; status: 'open' | 'done' | 'cancelled'; content: string
   scheduledAt?: string; reminderPlan?: ReminderPlan; previousDailyOccurrence?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
+  execution?: TaskExecutionSummary
 }
 export interface TaskRevisionRow {
   taskId: string; revision: number; userId: string; goalId: string; content: string; status: 'open' | 'done' | 'cancelled'
@@ -654,7 +656,7 @@ export class AlongStore {
     return this.atomic(() => ({
       goal: this.assertGoalOwner(userId, goalId),
       revision: this.currentGoalRevision(goalId),
-      tasks: this.listTasks(userId, { goalId }, { limit: MAX_PAGE }).items,
+      tasks: this.listTasks(userId, { goalId }, { limit: MAX_PAGE }).items.map(task => ({ ...task, execution: this.taskExecution(userId, task.id) })),
       recentChangesets: this.changeSetsByGoal(userId, goalId, { limit: 5 }).items,
       dataSources: this.goalDataSources(userId, goalId),
     }))
@@ -684,6 +686,11 @@ export class AlongStore {
       this.appendSync({userId,goalId,kind:'goal_updated',payload:{}})
       return true
     })
+  }
+  /** Product execution evidence, separate from worker assignment/run audit. */
+  taskExecution(userId: string, taskId: string): TaskExecutionSummary {
+    const task = this.assertTaskOwner(userId, taskId)
+    return taskExecution(this.db, userId, task)
   }
   /** Tasks newest first, optionally filtered by goal (ownership-checked) and status. */
   listTasks(userId: string, filter: TaskFilter = {}, cursor: PageCursor = { limit: 50 }): Page<TaskRow> {
