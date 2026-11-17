@@ -3,6 +3,7 @@ import {mkdtempSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {DatabaseSync} from 'node:sqlite'
+import {ALONG_SCHEMA_VERSION} from '../src/along/schema.ts'
 import {AlongStore} from '../src/along/store.ts'
 import {AlongService} from '../src/along/service.ts'
 import {createInbox} from '../src/along/inbox.ts'
@@ -94,12 +95,12 @@ it('keeps the entry under original private bridge authentication and refuses bod
  expect(await call(f.input,{'x-along-device':'d_ffffffff'})).toMatchObject({status:400,body:{error:'task_review_identity_mismatch'}});expect(await call(f.input)).toMatchObject({status:200,body:{status:'pending'}})
 })
 
-it('migrates schema 11 to 12 transactionally while preserving all original goals, tasks and evidence',()=>{
+it('migrates schema 11 to current transactionally while preserving all original goals, tasks and evidence',()=>{
  const f=fixture(),before=f.store.goalDetail(f.userId,f.goal.id);f.store.close();stores.splice(stores.indexOf(f.store),1)
  const old=new DatabaseSync(f.path);old.exec('DROP TABLE task_trigger_review');old.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run();old.close()
  const reopened=new AlongStore(f.path);stores.push(reopened);expect(reopened.goalDetail(f.userId,f.goal.id)).toEqual(before)
  expect(requestTaskReview(reopened,f.identity,f.input)).toMatchObject({status:'pending'})
- const probe=new DatabaseSync(f.path);expect(probe.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('12');probe.close()
+ const probe=new DatabaseSync(f.path);expect(probe.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe(String(ALONG_SCHEMA_VERSION));probe.close()
 })
 
 it('retains old pairing invalidation while a legitimately new bound device receives a distinct review',()=>{

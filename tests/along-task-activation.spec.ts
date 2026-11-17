@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { AlongStore } from '../src/along/store.ts'
 import { TaskActivation } from '../src/along/task-activation.ts'
-import { createChangeSetModule } from '../src/along/changeset.ts'
+import { ALONG_CHANGE_SET_INPUT_SCHEMA, createChangeSetModule } from '../src/along/changeset.ts'
 const dirs:string[]=[],stores:AlongStore[]=[]
 afterEach(()=>{vi.useRealTimers();for(const s of stores.splice(0))s.close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true})})
 function fixture(){
@@ -66,8 +66,23 @@ it('resumes an actually unavailable executor after restart, but keeps source-con
  const store=new AlongStore(f.path);stores.push(store)
  new TaskActivation({store,available:()=>true}).prepare()
  expect(store.getTask(f.userId,f.task.id)?.scheduledAt).toBeDefined()
+ const restored=new TaskActivation({store,available:()=>true});restored.prepare();expect(restored.allowDue(store.assertTaskOwner(f.userId,f.task.id))).toBe(true)
  const task=store.insertTask({userId:f.userId,goalId:f.goal.id,content:'摘要就绪后核算'});store.appendTaskRevision({userId:f.userId,taskId:task.id})
  store.triggers.put(store.assertTaskOwner(f.userId,task.id),{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_account_summary'}]},1)
  const a=new TaskActivation({store,available:()=>true});a.prepare()
  expect(store.getTask(f.userId,task.id)?.scheduledAt).toBeUndefined()
+})
+it('requires actual user completion instead of an automatic human reminder or executor substitution',()=>{
+ const {store,userId,goal,task}=fixture(),at=new Date(Date.now()-1000).toISOString()
+ store.appendTaskRevision({userId,taskId:task.id,scheduledAt:at})
+ const current=store.assertTaskOwner(userId,task.id)
+ store.triggers.put(current,{kind:'time',actor:'user',capability:'reminder'},1)
+ new TaskActivation({store,available:()=>true}).prepare()
+ const d=store.health.dispatchDue(userId,goal.id,1,{taskId:task.id,revision:current.currentRevision,dueAt:at},[])
+ store.health.read(d.eventId,[])
+ const commit=(key:string,fields:unknown)=>createChangeSetModule(store).commitChangeSet(ALONG_CHANGE_SET_INPUT_SCHEMA.parse({idempotency_key:key,goal_id:goal.id,base_revision:1,input_version:1,reason:'到点不代表真人已完成',ops:[{op:'task.update',task_id:task.id,base_revision:current.currentRevision,fields}]}),{userId,allowedGoalId:goal.id,triggerEventId:d.eventId})
+ expect(commit('no_human_done',{status:'done'})).toMatchObject({status:'invalid',reason:'human_completion_requires_user_feedback'})
+ expect(commit('no_executor_substitution',{trigger:{kind:'immediate',actor:'agent',capability:'calculation'}})).toMatchObject({status:'invalid',reason:'human_executor_cannot_be_replaced_by_due_work'})
+ expect(store.getTask(userId,task.id)?.status).toBe('open')
+ expect(store.taskExecution(userId,task.id).count).toBe(0)
 })
