@@ -37,6 +37,18 @@ const TOOL_CREATE_GOAL_SCHEMA = z.discriminatedUnion('domain', [
   createGoalOperation.extend({ domain: z.enum(['health', 'finance']), metric: ALONG_METRIC_SCHEMA }),
 ])
 const TOOL_OPS_SCHEMA = z.array(z.discriminatedUnion('op', [TOOL_CREATE_GOAL_SCHEMA, ...otherOperations])).min(1)
+// Reuse the business operation's fields object itself; a second lookalike schema would drift.
+const taskUpdateOperation = ALONG_OPS_SCHEMA.element.options.find(op=>op.shape.op.value==='task.update') as (typeof ALONG_OPS_SCHEMA.element.options)[4]
+const TASK_MUTATION_CONTEXT = {
+  task_id:ALONG_ID_SCHEMA,
+  base_revision:ALONG_BASE_REVISION_SCHEMA.describe('JSON integer from this existing task revision; never the goal revision or a quoted string.'),
+  goal_revision:ALONG_BASE_REVISION_SCHEMA.describe('JSON integer from along_goal_read.goal.current_revision.'),
+  input_version:ALONG_INPUT_VERSION_SCHEMA,
+  idempotency_key:z.string().min(1).max(128),
+  reason:ALONG_REASON_SCHEMA,
+}
+const TASK_UPDATE_INPUT = z.object({...TASK_MUTATION_CONTEXT,fields:taskUpdateOperation.shape.fields}).strict()
+const TASK_CANCEL_INPUT = z.object(TASK_MUTATION_CONTEXT).strict()
 
 /** Host dependencies of the Along tools; the Runtime assembles them when the Along service is installed. */
 export interface AlongToolsHost {
@@ -78,6 +90,19 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if (bound === undefined) throw new Error(`ticket ${ticketId} has no Along work scope; Along tools are unavailable`)
     return bound
   }
+  const currentVersions = () => {
+    const bound=scope()
+    if(!bound.allowedGoalId)return undefined
+    const goal=store.assertGoalOwner(bound.userId,bound.allowedGoalId)
+    return {base_revision:goal.currentRevision,input_version:store.inputVersion(goal.id),
+      tasks:store.listTasks(bound.userId,{goalId:goal.id},{limit:100}).items.map(t=>({task_id:t.id,base_revision:t.currentRevision}))}
+  }
+  const mutationRecovery = (name:string,error:z.ZodError) => {
+    const recovery=alongArgumentRecovery(name,error),versions=currentVersions()
+    return {...recovery,...(versions?{current_versions:{goal_revision:versions.base_revision,input_version:versions.input_version,tasks:versions.tasks}}:{}),
+      required_types:{base_revision:'JSON integer from the task revision',goal_revision:'JSON integer from goal current_revision',input_version:'JSON integer from goal input_version'},
+      guidance:'No operation was written. Repair the listed fields, never coerce numeric strings. Copy top-level task base_revision, goal_revision and input_version as JSON integers from actual read tools/current_versions. Use this original task_id; do not create a replacement task after a rejected update. fields is the existing task.update fields object; preserve omitted fields. Re-read after conflicts, use a fresh key after a corrected submission.'}
+  }
   // Reads are bound to the dispatch scope: a bound ticket reads its own goal (a foreign goal_id is refused);
   // an unbound ticket must name a goal_id, which the store still ownership-checks (BC-07-05).
   const readableGoalId = (bound: CommitScope, provided?: string): string => {
@@ -105,7 +130,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
   const dueWork=host.healthFollowup?.forTicket(ticketId)?.due
   const execution=dueWork&&store.triggers.get(scope().userId,dueWork.taskId)?.definition
   const taskFinish=automatic.find(tool=>tool.name==='along_health_followup')
-  return [
+  const tools:Tool[] = [
     ...(dueWork?[
     alongTool({name:'along_source_read',description:'Request the authorized current summary for this host-dispatched Agent task. A pending/stale/unavailable result is a durable request: report waiting, do not invent data, finish the task or repeatedly poll. Host retries on the same occurrence; credentials never reach this tool. Only ready returns private scoped data; never send private values into public search.',
       schema:SourceReadInputSchema,execute:async(args)=>{
@@ -333,11 +358,9 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         ops: TOOL_OPS_SCHEMA.describe('Each new task needs its typed trigger. For task.update put the task numeric base_revision beside op/task_id, outside fields; fields contains actual changes. A timing edit preserves trigger:"keep" or supplies the full typed trigger. Only time triggers need scheduled_at/reminder_plan; repeat once/daily/weekly belongs beside scheduled_at, never inside reminder_plan. A scheduled plan has state/source/explanation, original evidence/action and optional recurrence_source. Use custom and omit metric for qualitative goals. Numeric goals require their actual metric.'),
       }).strict(),
       invalidArguments:error=>{
-        const recovery=alongArgumentRecovery('along_changes_commit',error),bound=scope()
-        if(!bound.allowedGoalId)return recovery
-        const goal=store.assertGoalOwner(bound.userId,bound.allowedGoalId)
-        return {...recovery,current_versions:{base_revision:goal.currentRevision,input_version:store.inputVersion(goal.id),
-          tasks:store.listTasks(bound.userId,{goalId:goal.id},{limit:100}).items.map(t=>({task_id:t.id,base_revision:t.currentRevision}))},
+        const recovery=alongArgumentRecovery('along_changes_commit',error),versions=currentVersions()
+        if(!versions)return recovery
+        return {...recovery,current_versions:versions,
           update_structure:{op:'task.update',task_id:'copy an owned task_id above',base_revision:'copy its numeric base_revision above without quotes',fields:{trigger:'keep',scheduled_at:'the authorized ISO time',repeat:'preserve actual cadence',reminder_plan:'a valid plan object; repeat stays outside'}}}
       },
       execute: async args => {
@@ -373,5 +396,18 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         return result
       },
     }),
+  ]
+  const commit=tools.find(tool=>tool.name==='along_changes_commit')!
+  const mutate = (args:z.infer<typeof TASK_CANCEL_INPUT>|z.infer<typeof TASK_UPDATE_INPUT>,signal:AbortSignal) => {
+    if(!scope().allowedGoalId)throw new Error('an existing goal must be bound before updating or cancelling its task')
+    const {task_id,base_revision,goal_revision,input_version,idempotency_key,reason}=args
+    const op='fields' in args?{op:'task.update',task_id,base_revision,fields:args.fields}:{op:'task.cancel',task_id,base_revision}
+    return commit.execute(commit.schema.parse({idempotency_key,base_revision:goal_revision,input_version,reason,ops:[op]}),signal)
+  }
+  return [...tools,
+    alongTool({name:'along_task_update',description:'Update ONE existing task by its stable task_id. Prefer this for a single-task change. All versions are TOP-LEVEL JSON integers: base_revision is this task revision; goal_revision is the goal current_revision; input_version is the goal input_version. fields uses the existing task.update contract; omitted fields stay unchanged. Timing changes preserve trigger:"keep" or supply the authorized typed trigger and validated plan/cadence. The Host uses the ordinary ChangeSet writer and scope guards. Read back the same task after applied; never create a replacement after a rejection. Multi-task atomic changes and new tasks still use along_changes_commit.',
+      schema:TASK_UPDATE_INPUT,invalidArguments:error=>mutationRecovery('along_task_update',error),execute:mutate}),
+    alongTool({name:'along_task_cancel',description:'Cancel ONE existing task by its original stable task_id. All versions are TOP-LEVEL JSON integers: task base_revision, goal_revision and input_version. Reuses the ordinary ChangeSet writer, bound goal, current authority and idempotency. Does not create or delete another task, mark a human action complete, or accept user/goal identity. Read current versions first and read back cancellation; stale results/old occurrences cannot revive it.',
+      schema:TASK_CANCEL_INPUT,invalidArguments:error=>mutationRecovery('along_task_cancel',error),execute:mutate}),
   ]
 }
