@@ -371,6 +371,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/research-store.ts`, `recommendation.ts`, `web-research.ts` | Host-scoped durable public web evidence, validated recommendation protocol and bounded Harness web service adapters |
 | `src/along/calculation.ts` | Bounded exact decimal arithmetic, dimensional units, explicit conversion and reproducible calculation traces without executable expressions |
 | `src/along/calculation-store.ts` | Host-bound, transaction-sharing calculation receipts with execution-time task context and deterministic replay identities |
+| `src/along/calculation-result.ts` | Deterministic publication of computed public outputs; private calculation shows only its final result, never raw inputs or model arithmetic claims |
 | `src/along/calculation-evidence.ts` | Exact private-quantity bindings to fresh scoped source reads, rechecked before calculation publication |
 | `src/along/source-state.ts` | Monotonic Host-attested source metadata and private task-scoped cache reads with authorization, freshness and replay boundaries |
 | `src/along/task-trigger.ts` | Registered task trigger definitions, generations and durable execution/completion occurrences |
@@ -457,6 +458,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
 | `tests/along-task-execution.spec.ts` | Task execution evidence, legal source reuse, occurrence deduplication, development isolation, completion transitions, ownership and bounded history |
 | `tests/along-calculation-registered.spec.ts` | Controlled synthetic Runtime/Engine/Sessions registered-tool and authenticated API proof for mixed inputs, scope/schema refusal, freshness and one execution; no real model/network/device |
+| `tests/along-calculation-result.spec.ts` | Complete computed public result projection and suppression of private intermediate/input amounts |
 | `tests/along-calculation-evidence.spec.ts` | Fresh private fields, explicit user/standard parameters, unit/literal provenance and receipt publication boundaries |
 | `tests/along-calculation.spec.ts` | Exact arithmetic, units, rounding, bounded invalid input, receipt ownership, replay, caller rollback and restart durability |
 | `tests/along-prompts.spec.ts` | Actual Sessions role selection, on-demand capability registration, isolated overrides, provenance and packaged prompt fixture |

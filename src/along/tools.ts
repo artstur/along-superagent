@@ -120,6 +120,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if(!bound.allowedGoalId)throw new Error('research requires a bound existing goal')
     if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
     const due=host.healthFollowup?.forTicket(ticketId)?.due
+    const link=store.getWorkLink(ticketId)
+    if(!due&&link&&store.changeSetsByWork(link.workId).some(change=>change.status==='applied'&&change.ops.some(raw=>{
+      const op=raw as {op?:string;trigger?:{actor?:string;capability?:string}}
+      return op.op==='task.create'&&op.trigger?.actor==='agent'&&op.trigger.capability==='research'
+    })))throw new Error('Research execution is already queued by this planning work. Read back its durable task, give the planning reply and report ready; the Host dispatches a separate occurrence with its own sources/results. Do not execute or impersonate that occurrence here.')
     if(due)host.healthFollowup!.taskContext(ticketId)
     const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
     const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
@@ -159,7 +164,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           return store.atomic(()=>{
             const definition=store.triggers.get(calcScope.userId,calcScope.taskId)?.definition
             const sourceDependent=definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated')
-            if(sourceDependent&&(!args.source_request_id||!args.quantity_sources))throw new Error('source-dependent calculation requires source_request_id and quantity_sources from an actual fresh task read')
+            if((sourceDependent||store.sources.hasRead(calcScope))&&(!args.source_request_id||!args.quantity_sources))throw new Error('source-dependent calculation requires source_request_id and quantity_sources from an actual fresh task read')
             if((args.source_request_id===undefined)!==(args.quantity_sources===undefined))throw new Error('source request and quantity bindings must be provided together')
             if(args.quantity_parameters&&!args.source_request_id)throw new Error('explicit private calculation parameters require the current source read')
             const bindings=args.source_request_id?store.calculationEvidence.verify(calcScope,args.source_request_id,args.quantity_sources,args.calculation.quantities,args.quantity_parameters):undefined

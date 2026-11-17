@@ -10,7 +10,7 @@ afterEach(async()=>{
  const active=host;host=undefined
  try{await active?.stop()}finally{vi.restoreAllMocks()}
 })
-async function fixture(requestFirst=true,oldUser=false,immediate=false){
+async function fixture(requestFirst=true,oldUser=false,immediate=false,independent=false){
  const userId='u_1234abcd',deviceId='d_1234abcd',h=host=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}))
  h.runtime.sources.register(alongKind)
  const settings=h.runtime.store.settings()
@@ -25,7 +25,7 @@ async function fixture(requestFirst=true,oldUser=false,immediate=false){
   await h.runTool(priorWorker,'along_chat_reply',{text:'收到参考信息，等待你继续。'})
   await h.runTool(priorWorker,'orchestrator_report',{state:'ready',summary:'原始直接参考消息已保留，按要求未执行'})
  }
- const text='我的目标是1000美元，按12个月安排，再对比24个月。请根据只读账户摘要核算每月差额。'
+ const text='我的目标是1000美元，按12个月安排，再对比24个月。请根据只读账户摘要核算每月差额。'+(independent?'另外独立算一下3次25分钟一共多少分钟，不用等账户。':'')
  expect(along.service.acceptEvent({event_id:'current_parameters',schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text}},{userId,deviceId})).toMatchObject({status:'accepted'})
  await h.runtime.pump();await h.runtime.idle()
  await vi.waitFor(()=>expect(store.getDelivery('along:'+userId+':current_parameters')?.status).toBe('delivered'),{timeout:10000})
@@ -152,4 +152,32 @@ it.each(['stale','revoked'])('revalidates private receipt evidence even on an im
  else expect(await f.h.alongApi('POST','source-events',{...f.source,event_id:'revoked_immediate',revision:2,state:'revoked',capabilities:[]},f.headers)).toMatchObject({status:200})
  await expect(f.h.runTool(f.worker,'along_task_finish',{outcome:'keep',types:[],reason:'不得用立即触发绕过私有数据复核',calculation_receipt:receipt.receipt_id})).rejects.toThrow('fresh authorized source read')
  await stillOpen(f)
+},30000)
+it('an immediate occurrence that requested private data cannot drop evidence labels to pretend the numbers are public',async()=>{
+ const f=await fixture(true,false,true)
+ const unbound={calculation:f.input.calculation}
+ await expect(f.h.runTool(f.worker,'along_calculate',unbound)).rejects.toThrow('source-dependent calculation requires')
+ expect(await f.supply()).toMatchObject({status:200,body:{status:'accepted'}})
+ expect(await f.read()).toMatchObject({state:'ready'})
+ await expect(f.h.runTool(f.worker,'along_calculate',unbound)).rejects.toThrow('source-dependent calculation requires')
+ expect(f.store.taskExecution(f.userId,f.task.id).count).toBe(0)
+ expect(f.store.syncPage(f.userId,0,200).items.some(i=>(i.payload as any).calculation_receipt_id)).toBe(false)
+},30000)
+
+it('a private read wait does not block an independent real calculation in the same goal or taint its separate occurrence',async()=>{
+ const f=await fixture(true,false,false,true)
+ expect(f.requested.state).toBe('pending')
+ // Controlled Host idle transition after the real read tool; no user event, fake result or time travel.
+ f.h.runtime.engine.report(f.ticket.id,{state:'waiting',summary:'Private read pending; wait on actual Host response.'})
+ const independent=f.store.insertTask({userId:f.userId,goalId:f.goal.id,content:'计算3次25分钟的总时长'});f.store.appendTaskRevision({userId:f.userId,taskId:independent.id})
+ f.store.triggers.put(f.store.assertTaskOwner(f.userId,independent.id),{kind:'immediate',actor:'agent',capability:'calculation'},f.store.inputVersion(f.goal.id))
+ await f.h.runtime.pump();await f.h.runtime.idle()
+ const ticket=f.h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due'&&!t.ended&&t.id!==f.ticket.id)!;expect(ticket).toBeDefined()
+ const worker='worker-'+ticket.id;await vi.waitFor(()=>expect(f.h.tools.has(worker)).toBe(true));expect(await f.h.runTool(worker,'along_task_context',{})).toMatchObject({task:{task_id:independent.id}})
+ const receipt=await f.h.runTool(worker,'along_calculate',{calculation:{quantities:[{name:'count',value:'3',unit:'1'},{name:'duration',value:'25',unit:'minute'}],steps:[{id:'total',op:'multiply',inputs:['count','duration']},{id:'minutes',op:'convert',inputs:['total'],unit:'minute'}],result_step:'minutes'}})
+ expect(receipt).toMatchObject({result:{value:'75',unit:'minute'}})
+ await f.h.runTool(worker,'along_task_finish',{outcome:'keep',types:[],reason:'独立步骤真实完成，不等待账户',calculation_receipt:receipt.receipt_id})
+ await f.h.runTool(worker,'orchestrator_report',{state:'ready',summary:'75分钟已持久化'})
+ expect(f.store.taskExecution(f.userId,independent.id).count).toBe(1);expect(f.store.taskExecution(f.userId,f.task.id).count).toBe(0)
+ expect(f.store.getTask(f.userId,f.task.id)?.status).toBe('open')
 },30000)

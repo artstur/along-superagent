@@ -60,7 +60,7 @@ it('executes a newly planned immediate calculation through the durable due outbo
  expect(store.taskExecution(userId,task.id)).toMatchObject({count:1,records:[{kind:'calculation',outcome:'calculated',summary:'计算结果：1990 CNY'}]})
  const results=store.syncPage(userId,0,200).items.filter(i=>(i.payload as {calculation_receipt_id?:string}).calculation_receipt_id)
  expect(results).toHaveLength(1)
- expect(results[0]).toMatchObject({taskId:task.id,payload:{text:'计算结果：1990 CNY',notification:{kind:'task_result'}}})
+ expect(results[0]).toMatchObject({taskId:task.id,payload:{text:'计算结果：1990 CNY\n其他核算结果：2850 CNY',notification:{kind:'task_result'}}})
  expect(store.conversationContextPage(userId,goalId,undefined,100).items.map(m=>m.text)).toEqual([
   '帮我算一下4200元预算减去1350元房租和860元生活费后还剩多少，马上算。','已安排立即核算，结果会保存在任务详情。'
  ])
@@ -146,3 +146,22 @@ it('does not complete a research operation from an empty unavailable recommendat
  await expect(h.runTool(worker,'orchestrator_report',{state:'ready',summary:'假完成'})).rejects.toThrow('not complete')
  expect(store.getTask(userId,task.id)?.status).toBe('open');expect(store.taskExecution(userId,task.id).count).toBe(0)
 },30_000)
+it('releases a queued research plan rather than browsing through the planning role, while the actual occurrence can browse',async()=>{
+ const h=host=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}));h.runtime.sources.register(alongKind)
+ const settings=h.runtime.store.settings();h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},eval:{...settings.eval,mode:'auto'},policy:{...settings.policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}})
+ const service=h.runtime.along!.service,store=service.alongStore;store.assertUser(userId,deviceId)
+ service.acceptEvent({event_id:'research_plan',schema_version:'1',event_type:'along.user_message',occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'新建公园研究目标，现在核实公共步道开放信息。'}},{userId,deviceId})
+ await h.runtime.pump();await h.runtime.idle();await vi.waitFor(()=>expect(store.getDelivery('along:'+userId+':research_plan')?.status).toBe('delivered'),{timeout:10000})
+ const route=await h.route({kind:'accept',trigger_id:'along:'+userId+':research_plan',title:'安排真实研究',worktree_name:'research-plan',acknowledgement:'安排核实。'}),planner='worker-'+(route.ticket as {ticket_id:string}).ticket_id
+ await h.runtime.idle()
+ await vi.waitFor(()=>expect(h.tools.has(planner)).toBe(true),{timeout:10000})
+ const search=vi.fn(async()=>({sources:[],truncated:false}));vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search,fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:undefined)
+ expect(await h.runTool(planner,'along_changes_commit',{idempotency_key:'queued_research',base_revision:0,input_version:1,reason:'安排真正研究执行',ops:[{op:'goal.create',domain:'custom',title:'公园开放核实',context:[]},{op:'task.create',content:'联网核实公共步道开放信息',trigger:{kind:'immediate',actor:'agent',capability:'research'}}]})).toMatchObject({status:'applied'})
+ await expect(h.runTool(planner,'along_web_search',{query:'公共步道 官方 开放',purpose:'access'})).rejects.toThrow('Research execution is already queued')
+ expect(search).not.toHaveBeenCalled()
+ await h.runTool(planner,'along_chat_reply',{text:'已安排实际联网核实，结果进入这条任务。'});await h.runTool(planner,'orchestrator_report',{state:'ready',summary:'研究触发已持久安排，释放执行'})
+ await h.runtime.pump();await h.runtime.idle();const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due')!,worker='worker-'+ticket.id
+ await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true));await h.runTool(worker,'along_task_context',{})
+ expect(await h.runTool(worker,'along_web_search',{query:'公共步道 官方 开放',purpose:'access'})).toMatchObject({status:'empty'})
+ expect(search).toHaveBeenCalledTimes(1)
+},30000)

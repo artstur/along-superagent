@@ -288,7 +288,7 @@ export class HealthFollowup {
         const other=repo.tickets.get(link.ticketId)
         if(!other||other.ended)return false
         const review=this.forTicket(other.id)
-        if(review)return !review.result&&this.current(review)
+        if(review&&(review.result||!this.current(review)))return false
         const assignment=latestAssignment(other),report=assignment?.report
         return !report||!['waiting','blocked','failed'].includes(report.state)||!!(assignment?.deliveredAt&&assignment.deliveredAt>report.at)
       }))continue
@@ -305,14 +305,14 @@ export class HealthFollowup {
         const ticket = repo.tickets.get(link.ticketId)
         if (!ticket || ticket.ended) return false
         const review = this.forTicket(ticket.id)
-        if (review) return !review.result && this.current(review)
+        if (review&&(review.result||!this.current(review)))return false
         const assignment = latestAssignment(ticket), report = assignment?.report
         // A settled question can wait while a new fact or clock tick gets its own work.
         return !report || !['waiting', 'blocked', 'failed'].includes(report.state)
           || !!(assignment?.deliveredAt && assignment.deliveredAt > report.at)
       })
       return active || store.health.pending().some(d => d.goalId === goalId && d.inputVersion === version && this.current(d)
-        && !repo.tickets.list().some(t => t.origin.triggerId === this.trigger(d).id && t.ended))
+        && !repo.tickets.list().some(t => t.origin.triggerId === this.trigger(d).id))
     }
     for (const { userId, goalId, due } of store.health.dueTasks(now)) {
       const version = store.inputVersion(goalId)
@@ -515,7 +515,7 @@ export class HealthFollowup {
             const definition=this.activation.definition(d)?.definition
             const calculation=args.calculation_receipt?store.calculations.get(this.calculationScope(ticketId),args.calculation_receipt):undefined
             if(args.calculation_receipt&&!calculation)throw new Error('calculation receipt is not bound to this task occurrence')
-            const privateCalculation=!!calculation&&store.calculationEvidence.has(calculation.id)
+            const privateCalculation=!!calculation&&(store.calculationEvidence.has(calculation.id)||store.sources.hasRead(this.sourceScope(ticketId)))
             if(calculation&&(privateCalculation||definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated')))
               store.calculationEvidence.assertCurrent(this.sourceScope(ticketId),calculation.id,calculation.calculation.input.quantities)
             if(definition?.actor==='agent'&&args.outcome!=='ask') {

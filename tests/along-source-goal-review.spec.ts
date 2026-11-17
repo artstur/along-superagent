@@ -34,9 +34,12 @@ it('atomic source acceptance dispatches a private review, preserves old actions,
  expect(f.store.health.pending().filter(d=>d.sourceReview)).toHaveLength(1)
  expect(await f.source()).toMatchObject({status:200,body:{status:'accepted',reused:true}})
  const {ticket,session}=await f.worker(),names=[...f.h.tools.get(session)!.keys()]
- expect(names.sort()).toEqual(['along_source_review_context','along_source_review_finish','along_goal_read','along_conversation_read','along_task_list','along_data_sources_catalog','along_changes_commit','orchestrator_report'].sort())
+ expect(names.sort()).toEqual(['along_source_review_context','along_source_review_finish','along_task_update','along_task_cancel','along_goal_read','along_conversation_read','along_task_list','along_data_sources_catalog','along_changes_commit','orchestrator_report'].sort())
  const context=await f.h.runTool(session,'along_source_review_context',{})
  expect(context).toMatchObject({source:{private_data_read:false,unavailable_coverage:expect.arrayContaining(['trade_history'])},tasks:expect.arrayContaining([{...f.tasks[0],execution:expect.anything()}])})
+ const narrow={task_id:f.tasks[0]!.id,base_revision:1,goal_revision:f.store.getGoal(userId,f.goal.id)!.currentRevision,input_version:f.store.inputVersion(f.goal.id),reason:'新工具保留旧任务语义'}
+ expect(await f.h.runTool(session,'along_task_cancel',{...narrow,idempotency_key:'source_review_no_cancel'})).toMatchObject({status:'invalid',reason:'outside_source_review'})
+ expect(await f.h.runTool(session,'along_task_update',{...narrow,idempotency_key:'source_review_no_relabel',fields:{content:'替换成计算任务'}})).toMatchObject({status:'invalid',reason:'outside_source_review'})
  await expect(f.h.runTool(session,'along_source_review_finish',{outcome:'need_data',reason:'缺交易历史',needs:['需要本人导出交易历史']})).rejects.toThrow('legacy_trigger_not_persisted')
  expect(await f.commit(session,[{op:'task.update',task_id:f.tasks[0]!.id,base_revision:1,fields:{status:'done'}}],'bad_status')).toMatchObject({status:'invalid',reason:'outside_source_review'})
  expect(await f.commit(session,[...f.waiting,{op:'task.create',content:'记录当前账户权益摘要',trigger:{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_account_summary'}]}}])).toMatchObject({status:'applied'})
