@@ -75,7 +75,9 @@ it('controlled synthetic mixed inputs (no model) persist the real tool result an
  const finish={outcome:'keep',types:[],reason:'按真实缓存字段和明确用户参数核算，恒等常量不改变数值',calculation_receipt:receipt.receipt_id}
  expect(await f.h.runTool(f.worker,'along_task_finish',finish)).toMatchObject({status:'recorded',reused:false})
  expect(await f.h.runTool(f.worker,'along_task_finish',finish)).toMatchObject({reused:true})
- await f.h.runTool(f.worker,'orchestrator_report',{state:'ready',summary:'差额72.9USD/month，来源标签保留；收据只证明算术与输入归属'})
+ await f.h.runTool(f.worker,'orchestrator_report',{state:'ready',summary:'私有审计：权益125.2USD，差额72.9USD/month；收据只证明算术与输入归属'})
+ const assignment=f.h.runtime.store.tickets.get(f.ticket.id)!.assignments.at(-1)!
+ expect(f.store.getRunRecord(f.ticket.id,assignment.id)?.reportSummary).toContain('125.2')
  expect(f.store.getTask(f.userId,f.task.id)?.status).toBe('done')
  expect(f.store.taskExecution(f.userId,f.task.id).count).toBe(1)
  const outbox=f.store.syncPage(f.userId,0,200).items.filter(i=>(i.payload as {calculation_receipt_id?:string}).calculation_receipt_id)

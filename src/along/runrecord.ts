@@ -139,6 +139,10 @@ export function createRunRecord(deps: RunRecordDeps) {
     const userId = input.userId
     if (userId === undefined) return
     const { ticketId, assignmentId, goalId } = input
+    const via=repo.tickets.get(ticketId)?.mandate.basis.via
+    // Automatic reports may contain private source/health context. RunRecord is the private audit;
+    // only the separately validated task result is a mobile delivery, never this model summary.
+    if(via&&['health','task_due','task_trigger_review','source_review','scheduled'].includes(via))return
     const eventId = outboundEventId(ticketId, assignmentId)
     store.atomic(() => {
       const id = `msg:${userId}:${eventId}`
