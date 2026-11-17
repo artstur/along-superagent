@@ -228,18 +228,24 @@ it.each(['research','outing','recommended_outing'] as const)('uses the current r
   const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({goalId:goal.id,userId,title:'合成活动',status:'active'});store.ensureInputVersion(userId,goal.id)
   const task=store.insertTask({userId,goalId:goal.id,content:kind==='research'?'根据天气安排周末徒步':kind==='outing'?'完成周末徒步':'完成推荐路线的徒步',scheduledAt:'2027-01-08T10:59:00Z'})
   store.appendTaskRevision({userId,taskId:task.id})
+  if(kind==='research'){
+   vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
+   store.triggers.put(store.assertTaskOwner(userId,task.id),{kind:'time',actor:'agent',capability:'research'},1)
+  }
   h.runtime.along!.healthFollowup.tick();await h.runtime.idle()
   const ticket=h.runtime.store.tickets.list()[0]!,worker='worker-'+ticket.id
   await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true));await h.runTool(worker,'along_health_read',{})
   const read=await h.runTool(worker,'along_goal_read',{}) as any
-  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'complete',base_revision:read.goal.current_revision,input_version:read.goal.input_version,reason:'合成单次任务结果',ops:[{op:'task.update',task_id:task.id,base_revision:1,fields:{status:'done'}}]})).toMatchObject({status:'applied'})
+  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'complete',base_revision:read.goal.current_revision,input_version:read.goal.input_version,reason:'合成单次任务结果',ops:[{op:'task.update',task_id:task.id,base_revision:1,fields:{status:'done'}}]})).toMatchObject({status:'invalid'})
+  if(kind!=='research')expect(h.runtime.along!.service.acceptEvent({event_id:'actual_user_completion_'+kind,schema_version:'1',event_type:'along.message',kind:'task.completed',task_id:task.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.message',kind:'task.completed',task_id:task.id}},{userId,deviceId})).toMatchObject({status:'accepted'})
   const scope={userId,goalId:goal.id,ticketId:ticket.id}
   const source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方资料',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
   const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
   const rec=plan(route.id,access.id,weather.id);rec.options[0]!.checks[1]!.alertStatus='unknown';rec.options[0]!.checks[1]!.alertEvidence=[]
   rec.summary='当前有生效中的强降雨预警';rec.nextStep='改去另一处户外公园'
-  await h.runTool(worker,'along_health_followup',{outcome:'update',types:[],reason:'本次资料已整理',text:'当前有生效中的强降雨预警，改去另一处户外公园。',recommendation:rec})
+  const finished=await h.runTool(worker,'along_health_followup',{outcome:'keep',types:[],reason:'本次资料已整理',text:'当前有生效中的强降雨预警，改去另一处户外公园。',recommendation:rec})
   const item=store.syncPage(userId,0,200).items.find(i=>(i.payload as any).recommendation)!
+  if(kind!=='research'){expect(finished).toMatchObject({status:'conflicted'});expect(item).toBeUndefined();expect(store.getTask(userId,task.id)?.status).toBe('done');return}
   expect(item.taskId).toBe(task.id)
   expect((item.payload as any).text).not.toContain('生效中的强降雨预警');expect((item.payload as any).text).not.toContain('改去另一处户外公园')
   if(kind==='research')expect(item.payload).toMatchObject({notification:{kind:'task_result',revision:2}})

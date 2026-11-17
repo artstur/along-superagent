@@ -31,7 +31,7 @@ it('recovers observed revision/source/explanation failures without executing or 
  const badVersions=structuredClone(valid) as any;badVersions.ops[0].base_revision='1'
  const before={task:store.getTask(userId,task.id),changes:store.changeSetsByGoal(userId,goal.id),sync:store.workspaceSync(userId,0,200)}
  const invalid=await run('along_changes_commit',badVersions)
- expect(invalid).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:[{path:'ops.0.base_revision',message:expect.stringContaining('number')}],guidance:expect.stringContaining('JSON integers')})
+ expect(invalid).toMatchObject({current_versions:{base_revision:1,input_version:store.inputVersion(goal.id),tasks:[{task_id:task.id,base_revision:1}]},status:'invalid',reason:'invalid_arguments',issues:[{path:'ops.0.base_revision',message:expect.stringContaining('number')}],guidance:expect.stringContaining('JSON integers')})
  const badPlan=structuredClone(valid) as any;badPlan.ops[0].fields.reminder_plan={state:'scheduled',source:'manual'}
  expect(await run('along_changes_commit',badPlan)).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:expect.arrayContaining([{path:'ops.0.fields.reminder_plan.source',message:expect.any(String)},{path:'ops.0.fields.reminder_plan.explanation',message:expect.any(String)}]),guidance:expect.stringContaining('scheduled plans require explanation')})
  expect({task:store.getTask(userId,task.id),changes:store.changeSetsByGoal(userId,goal.id),sync:store.workspaceSync(userId,0,200)}).toEqual(before)

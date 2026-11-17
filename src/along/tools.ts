@@ -18,6 +18,7 @@ import { SourceReadInputSchema } from './source-state.ts'
 import { QUANTITY_SOURCES,QUANTITY_PARAMETERS } from './calculation-evidence.ts'
 import { DATA_SOURCE_CATALOG, DATA_SOURCE_INPUT } from './data-sources.ts'
 import { alongTool } from './tool.ts'
+import { alongArgumentRecovery } from './argument-recovery.ts'
 import type { MemoryService } from './memory/service.ts'
 import { memoryTools } from './memory/tools.ts'
 import { createHash } from 'node:crypto'
@@ -329,8 +330,16 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         reason: ALONG_REASON_SCHEMA.describe('One-sentence change note the user will see.'),
         derived_from_changeset: ALONG_ID_SCHEMA.optional()
           .describe('For「改回去」: the applied ChangeSet whose goal snapshot is restored; fields must match or be omitted.'),
-        ops: TOOL_OPS_SCHEMA.describe('For qualitative goals choose custom and omit metric. Numeric health/finance goals require type, target, unit and period. Every new task needs reminder_plan: scheduled (supply future scheduled_at, source agent or user, and explanation), needs_time (one question), or off (untimed or opt_out). For edits keep is explicit. Daily/weekly require a matching quoted user mandate and action.'),
+        ops: TOOL_OPS_SCHEMA.describe('Each new task needs its typed trigger. For task.update put the task numeric base_revision beside op/task_id, outside fields; fields contains actual changes. A timing edit preserves trigger:"keep" or supplies the full typed trigger. Only time triggers need scheduled_at/reminder_plan; repeat once/daily/weekly belongs beside scheduled_at, never inside reminder_plan. A scheduled plan has state/source/explanation, original evidence/action and optional recurrence_source. Use custom and omit metric for qualitative goals. Numeric goals require their actual metric.'),
       }).strict(),
+      invalidArguments:error=>{
+        const recovery=alongArgumentRecovery('along_changes_commit',error),bound=scope()
+        if(!bound.allowedGoalId)return recovery
+        const goal=store.assertGoalOwner(bound.userId,bound.allowedGoalId)
+        return {...recovery,current_versions:{base_revision:goal.currentRevision,input_version:store.inputVersion(goal.id),
+          tasks:store.listTasks(bound.userId,{goalId:goal.id},{limit:100}).items.map(t=>({task_id:t.id,base_revision:t.currentRevision}))},
+          update_structure:{op:'task.update',task_id:'copy an owned task_id above',base_revision:'copy its numeric base_revision above without quotes',fields:{trigger:'keep',scheduled_at:'the authorized ISO time',repeat:'preserve actual cadence',reminder_plan:'a valid plan object; repeat stays outside'}}}
+      },
       execute: async args => {
         const bound = scope()
         const createFirst = args.ops[0] !== undefined && args.ops[0].op === 'goal.create'
