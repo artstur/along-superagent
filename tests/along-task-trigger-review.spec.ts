@@ -12,13 +12,13 @@ import {requestTaskReview,taskReviewContext,finishTaskReview,taskReviewCurrent} 
 
 const dirs:string[]=[],stores:AlongStore[]=[]
 afterEach(()=>{for(const s of stores.splice(0))s.close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true})})
-function fixture(){
+function fixture(text='每周四9点提醒我预约西语课。'){
  const dir=mkdtempSync(join(tmpdir(),'along-task-repair-'));dirs.push(dir);const path=join(dir,'along.sqlite')
  const store=new AlongStore(path);stores.push(store)
  const identity={userId:'u_00112233',deviceId:'d_00112233'},userId=identity.userId;store.assertUser(userId,identity.deviceId)
  const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({userId,goalId:goal.id,title:'每周学习语言',context:['持续上课，提前预约'],status:'active'});store.ensureInputVersion(userId,goal.id)
  const service=new AlongService(store,{inbox:createInbox(store),changeset:createChangeSetModule(store),taskReviews:{requestTaskReview:(who,body)=>requestTaskReview(store,who,body)}})
- service.acceptEvent({event_id:'real_synthetic_user',schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'每周四9点提醒我预约西语课。'}},identity)
+ service.acceptEvent({event_id:'real_synthetic_user',schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text}},identity)
  const task=store.insertTask({userId,goalId:goal.id,content:'周四预约周五西语课',scheduledAt:'2030-01-03T01:00:00.000Z'});store.appendTaskRevision({userId,taskId:task.id})
  const input={task_id:task.id,evidence_event_id:'real_synthetic_user',reason:'复核这项任务的持久触发和重复安排'}
  const request=()=>requestTaskReview(store,identity,input)
@@ -121,4 +121,13 @@ it('an ordinary health-context read cannot substitute for the explicit maintenan
 it('keeps the review and its outbox in the caller transaction when admission is rolled back',()=>{
  const f=fixture();expect(()=>f.store.atomic(()=>{f.request();throw Error('controlled rollback')})).toThrow('controlled rollback')
  expect(f.store.health.pending().filter(d=>d.repair)).toEqual([]);expect(f.request()).toMatchObject({status:'pending',reused:false})
+})
+
+it('honors the actually persisted Agent-inferred cadence authority without reapplying the old user-wording template',()=>{
+ const quote='我想持续学习西语，坚持固定上课，西语课需要提前预约。',f=fixture(quote);f.context()
+ expect(f.commit([{op:'task.update',task_id:f.task.id,base_revision:1,fields:{trigger:f.definition,repeat:'weekly',reminder_plan:{state:'scheduled',source:'agent',recurrence_source:'agent',explanation:'在长期授权目标内推定每周复查，并保留既有钟点',evidence:quote,action:'西语课',evidence_event_id:f.input.evidence_event_id}}}])).toMatchObject({status:'applied'})
+ expect(f.store.getTask(f.userId,f.task.id)?.reminderPlan).toMatchObject({repeat:'weekly',recurrenceSource:'agent'})
+ expect(finishTaskReview(f.store,f.dispatch(),{outcome:'repaired',reason:'已核对宿主接受的语义推定周期',expected_trigger:f.definition,expected_repeat:'weekly'})).toMatchObject({status:'done'})
+ const limited='只在本周四预约一次西语课。',once=fixture(limited);once.context()
+ expect(once.commit([{op:'task.update',task_id:once.task.id,base_revision:1,fields:{trigger:once.definition,repeat:'weekly',reminder_plan:{state:'scheduled',source:'agent',recurrence_source:'agent',explanation:'不能越过用户单次限制',evidence:limited,action:'西语课',evidence_event_id:once.input.evidence_event_id}}}])).toMatchObject({status:'invalid'})
 })

@@ -92,7 +92,7 @@ export function finishTaskReview(store:AlongStore,d:HealthDispatch,body:unknown)
    if(plan.repeat!=='once') {
     const source=taskReviewEvidence(store,d)
     if(!daily||!daily.zone||!daily.wallTime||daily.evidence!==d.repair!.evidenceEventId||!daily.quote||!daily.action||!source
-     ||!supportsRecurrence(source.text,daily.quote,daily.action,task.content,plan.repeat,daily.weekday??1)
+     ||!supportsRecurrence(source.text,daily.quote,daily.action,task.content,plan.repeat,daily.weekday??1,plan.recurrenceSource)
      ||plan.timezone!==daily.zone||plan.wallTime!==daily.wallTime
      ||plan.repeat==='weekly'&&(plan.weekday!==daily.weekday||localWeekday(task.scheduledAt,daily.zone)!==daily.weekday))return fail('task_review_cadence_not_persisted')
    }
