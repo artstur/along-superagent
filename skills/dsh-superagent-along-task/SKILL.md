@@ -27,3 +27,5 @@ For pending/stale/unavailable private reads, do not call along_task_finish or us
 
 
 Keep task.content as the action, not execution output, arithmetic results or background progress. The planner must not overwrite a task after its same-input Agent occurrence has already settled. Do not complete an Agent research/calculation task via a status edit or conversational preview: only its actual scoped executor and successful validated result can complete that operation. Background schedule-evidence repair never revives a cancelled/completed task from old user intent; a new explicit current mandate is necessary.
+
+For a known source dependency, persist trigger.kind:event with its registered source_ready/health_available condition, even while disconnected. Do not use an unconditioned waiting:capability_available because the calculator/research executor already exists; that wait concerns an actually missing executor, not source data. The Host evaluates already-ready conditions for new tasks.

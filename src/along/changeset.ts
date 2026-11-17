@@ -20,7 +20,7 @@
 import { isResearchTaskContent } from './recommendation.ts'
 import { z } from 'zod'
 import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, type PlanInput, type Repeat } from './reminder-plan.ts'
-import { TASK_TRIGGER_SCHEMA, type TaskTriggerInput } from './task-trigger.ts'
+import { TASK_TRIGGER_SCHEMA, type TaskCapability, type TaskTriggerInput } from './task-trigger.ts'
 import { hasDailyMandate } from './task-schedule.ts'
 import { randomToken, type AlongStore, type ChangeSetRow, type ChangeSetSave, type GoalRevisionRow, type TaskRow } from './store.ts'
 
@@ -259,7 +259,7 @@ const triggerMessageText = (store: AlongStore, scope: CommitScope): string | und
   return store.getMessage(scope.userId, `msg:${scope.userId}:${scope.triggerEventId}`)?.text
 }
 
-function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: CommitScope): ChangeSetResult {
+function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: CommitScope, available?:(capability:TaskCapability)=>boolean): ChangeSetResult {
   let goalId: string | undefined
   const refuse = (status: 'conflicted' | 'invalid', reason: string,diagnostic?:Record<string,unknown>): ChangeSetResult => {
     // No business rows: the changeset row itself records the status and reason for audit (BC-02-01/02).
@@ -362,6 +362,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     if(fields.trigger==='keep'&&(!priorTrigger||reopening||fields.content!==undefined&&fields.content!==existing?.content))return refuse('invalid','cannot_keep_task_trigger')
     const trigger=fields.trigger==='keep'?priorTrigger?.definition:fields.trigger??priorTrigger?.definition
     if(trigger) {
+      if(trigger.kind==='waiting'&&trigger.resume==='capability_available'&&!trigger.conditions?.length&&available?.(trigger.capability)===true)
+        return refuse('invalid','waiting_trigger_requires_condition')
       if(trigger.kind==='time') {
         const time=fields.scheduled_at===undefined?existing?.scheduledAt:fields.scheduled_at
         if(!time)return refuse('invalid','time_trigger_requires_schedule')
@@ -661,7 +663,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
 }
 
 /** The changeset module factory (design §2.3): one instance per Along service, over the shared `AlongStore`. */
-export function createChangeSetModule(store: AlongStore): { commitChangeSet(input: ChangeSetInput, scope: CommitScope): ChangeSetResult } {
+export function createChangeSetModule(store: AlongStore,options:{available?:(capability:TaskCapability)=>boolean}={}): { commitChangeSet(input: ChangeSetInput, scope: CommitScope): ChangeSetResult } {
   return {
     commitChangeSet(input, scope) {
       // Layer 1 (schema): zod strict is the authority — the facade may hand over a structurally-typed shape.
@@ -676,7 +678,7 @@ export function createChangeSetModule(store: AlongStore): { commitChangeSet(inpu
       return store.atomic(() => {
         const existing = store.changeSetByIdempotencyKey(scope.userId, parsed.data.idempotency_key)
         if (existing !== undefined) return replayResult(existing)
-        return validateAndApply(store, parsed.data, scope)
+        return validateAndApply(store, parsed.data, scope, options.available)
       })
     },
   }

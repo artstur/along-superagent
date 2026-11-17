@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { AlongStore } from '../src/along/store.ts'
 import { TaskActivation } from '../src/along/task-activation.ts'
+import { createChangeSetModule } from '../src/along/changeset.ts'
 const dirs:string[]=[],stores:AlongStore[]=[]
 afterEach(()=>{vi.useRealTimers();for(const s of stores.splice(0))s.close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true})})
 function fixture(){
@@ -46,4 +47,25 @@ it('restores the same durable pending occurrence after reopening its SQLite file
  store.appendTaskRevision({userId:f.userId,taskId:task.id,status:'cancelled'});activation.prepare()
  expect(store.triggers.byId(f.userId,first.id)?.state).toBe('invalidated')
  expect(activation.allowDue(store.assertTaskOwner(f.userId,task.id))).toBe(false)
+})
+it('does not mistake an installed calculator for missing source readiness, and rejects the unbound wait at runtime planning',()=>{
+ const {store,userId,goal,task}=fixture()
+ store.triggers.put(store.assertTaskOwner(userId,task.id),{kind:'waiting',actor:'agent',capability:'calculation',resume:'capability_available',reason:'等待账户摘要'},1)
+ new TaskActivation({store,available:()=>true}).prepare()
+ expect(store.getTask(userId,task.id)?.scheduledAt).toBeUndefined()
+ expect(store.triggers.get(userId,task.id)).toMatchObject({state:'waiting'})
+ expect(createChangeSetModule(store,{available:()=>true}).commitChangeSet({idempotency_key:'bad_capability_wait',goal_id:goal.id,base_revision:1,input_version:1,reason:'等待真实数据',ops:[{op:'task.create',content:'等待摘要后核算',trigger:{kind:'waiting',actor:'agent',capability:'calculation',resume:'capability_available',reason:'等待账户摘要'}}]},{userId,allowedGoalId:goal.id})).toMatchObject({status:'invalid',reason:'waiting_trigger_requires_condition'})
+})
+it('resumes an actually unavailable executor after restart, but keeps source-conditioned waits tied to the source',()=>{
+ const f=fixture()
+ f.store.triggers.put(f.store.assertTaskOwner(f.userId,f.task.id),{kind:'waiting',actor:'agent',capability:'research',resume:'capability_available',reason:'研究工具暂不可用'},1)
+ new TaskActivation({store:f.store,available:()=>false}).prepare()
+ f.store.close();stores.splice(stores.indexOf(f.store),1)
+ const store=new AlongStore(f.path);stores.push(store)
+ new TaskActivation({store,available:()=>true}).prepare()
+ expect(store.getTask(f.userId,f.task.id)?.scheduledAt).toBeDefined()
+ const task=store.insertTask({userId:f.userId,goalId:f.goal.id,content:'摘要就绪后核算'});store.appendTaskRevision({userId:f.userId,taskId:task.id})
+ store.triggers.put(store.assertTaskOwner(f.userId,task.id),{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_account_summary'}]},1)
+ const a=new TaskActivation({store,available:()=>true});a.prepare()
+ expect(store.getTask(f.userId,task.id)?.scheduledAt).toBeUndefined()
 })
