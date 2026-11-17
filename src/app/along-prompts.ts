@@ -13,6 +13,7 @@ export function alongSkillDefinitions(config:PromptConfig) {
 export function alongPromptParts(config:PromptConfig,context:AlongPromptContext) {
   const names=['shared',context.role,...context.role==='worker'&&context.via==='scheduled'?['maintenance']:
     context.role==='worker'&&context.via==='task_trigger_review'?['task-review']:
+    context.role==='worker'&&context.via==='source_review'?['source-review']:
     context.role==='worker'&&context.via==='task_due'?['task-due']:
     context.role==='worker'&&context.via==='health'?['health']:[]]
   return [...names.map(name=>{

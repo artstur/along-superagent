@@ -79,13 +79,13 @@ it('actual Along Worker decoration selects only its business contract and regist
 
 })
 
-it.each(['task_due','health','scheduled','task_trigger_review'])('selects exactly the %s addon on real automatic Worker decoration',async via=>{
+it.each(['task_due','health','scheduled','task_trigger_review','source_review'])('selects exactly the %s addon on real automatic Worker decoration',async via=>{
  const h=await decorated({via,...via==='scheduled'?{source:'along-maintenance'}:{}}),text=h.section.text({})
  const names=alongPromptParts(h.config,{role:'worker',via}).map(p=>p.key)
- const expected=via==='task_due'?'task-due':via==='scheduled'?'maintenance':via==='task_trigger_review'?'task-review':'health'
+ const expected=via==='task_due'?'task-due':via==='scheduled'?'maintenance':via==='task_trigger_review'?'task-review':via==='source_review'?'source-review':'health'
  expect(names).toEqual(['along/shared','along/worker','along/'+expected,'along/skill-index'])
  expect(text).toContain(builtInParts()[`along/${expected}`].text)
- for(const other of ['task-due','health','maintenance','task-review'] as const)if(other!==expected)expect(text).not.toContain(builtInParts()[`along/${other}`].text)
+ for(const other of ['task-due','health','maintenance','task-review','source-review'] as const)if(other!==expected)expect(text).not.toContain(builtInParts()[`along/${other}`].text)
  expect(h.store.get(`session-along-prompt:${h.agent.id}`)).toBeUndefined() // preview is not a model request
 })
 
