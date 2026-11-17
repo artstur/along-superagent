@@ -428,6 +428,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/envelope.ts` | Strict Along event schemas and canonical payload hashing |
 | `src/along/inbox.ts` | Transactional acceptance, ownership, receipts and duplicate/conflict handling |
 | `src/along/runrecord.ts` | Deterministic registration of worker execution records and outbound notes |
+| `src/along/task-execution.ts` | Read-only product task execution projection from scoped research results and actual completion feedback, excluding development sources and worker retry counts |
 | `src/along/completion.ts` | Along-only ready postconditions for a current explicit bound-task weekly update |
 | `src/along/argument-recovery.ts` | Along ChangeSet/recommendation type repair paths and complete structural examples, preserving strict identity rejection |
 | `src/along/tool.ts` | Shared strict lossless JSON output for Along business and memory tools |
@@ -442,6 +443,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-weekly-completion.spec.ts` | Registered ready refusal before a real weekly update, update/recommendation ordering and original task/time preservation |
 | `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
+| `tests/along-task-execution.spec.ts` | Task execution evidence, legal source reuse, occurrence deduplication, development isolation, completion transitions, ownership and bounded history |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
