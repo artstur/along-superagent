@@ -10,7 +10,7 @@ afterEach(async()=>{
  const active=host;host=undefined
  try{await active?.stop()}finally{vi.restoreAllMocks()}
 })
-async function fixture(requestFirst=true,oldUser=false){
+async function fixture(requestFirst=true,oldUser=false,immediate=false){
  const userId='u_1234abcd',deviceId='d_1234abcd',h=host=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}))
  h.runtime.sources.register(alongKind)
  const settings=h.runtime.store.settings()
@@ -36,7 +36,7 @@ async function fixture(requestFirst=true,oldUser=false){
  for(const name of ['along_calculate','along_source_read','along_task_context','along_task_finish'])expect(plannerTools).not.toContain(name)
  await h.runTool(planner,'along_goal_read',{})
  expect(await h.runTool(planner,'along_data_sources_recommend',{base_revision:1,input_version:store.inputVersion(goal.id),sources:[{provider:'okx',reason:'按用户目标核算只读摘要'}]})).toMatchObject({status:'recommended'})
- expect(await h.runTool(planner,'along_changes_commit',{idempotency_key:'mixed_create',base_revision:1,input_version:store.inputVersion(goal.id),reason:'先等待授权摘要，再实际计算',ops:[{op:'task.create',content:'根据目标、周期和只读摘要核算每月差额',trigger:{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_account_summary'}]}}]})).toMatchObject({status:'applied'})
+ expect(await h.runTool(planner,'along_changes_commit',{idempotency_key:'mixed_create',base_revision:1,input_version:store.inputVersion(goal.id),reason:'先等待授权摘要，再实际计算',ops:[{op:'task.create',content:'根据目标、周期和只读摘要核算每月差额',trigger:immediate?{kind:'immediate',actor:'agent',capability:'calculation'}:{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_account_summary'}]}}]})).toMatchObject({status:'applied'})
  const task=store.goalDetail(userId,goal.id).tasks[0]!
  await h.runTool(planner,'along_chat_reply',{text:'已安排在数据可读取后核算，结果进入任务详情。'})
  await h.runTool(planner,'orchestrator_report',{state:'ready',summary:'数据依赖任务已持久安排'})
@@ -142,5 +142,14 @@ it.each(['stale','revoked','source_revision','user_input','task_revision'])('a v
  const finish=()=>f.h.runTool(f.worker,'along_task_finish',{outcome:'keep',types:[],reason:'旧收据不得越过新状态',calculation_receipt:receipt.receipt_id})
  if(kind==='stale')await expect(finish()).rejects.toThrow('fresh authorized source read')
  else expect(await finish()).toMatchObject({status:'conflicted',reason:'conflicted_input'})
+ await stillOpen(f)
+},30000)
+
+it.each(['stale','revoked'])('revalidates private receipt evidence even on an immediate trigger after %s',async kind=>{
+ const f=await fixture(true,false,true);expect(await f.supply()).toMatchObject({status:200,body:{status:'accepted'}})
+ const receipt=await f.h.runTool(f.worker,'along_calculate',{...f.input,source_request_id:f.requested.request_id})
+ if(kind==='stale'){const spy=vi.spyOn(Date,'now').mockReturnValue(Date.now()+61_000);restoreClock=()=>spy.mockRestore()}
+ else expect(await f.h.alongApi('POST','source-events',{...f.source,event_id:'revoked_immediate',revision:2,state:'revoked',capabilities:[]},f.headers)).toMatchObject({status:200})
+ await expect(f.h.runTool(f.worker,'along_task_finish',{outcome:'keep',types:[],reason:'不得用立即触发绕过私有数据复核',calculation_receipt:receipt.receipt_id})).rejects.toThrow('fresh authorized source read')
  await stillOpen(f)
 },30000)

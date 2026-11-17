@@ -15,3 +15,5 @@ Finish with orchestrator_report: ready after the required durable postconditions
 A truthful user question may end conversational work while its task remains waiting; never report the underlying execution complete.
 
 For pending/stale/unavailable private reads, do not call along_task_finish or use outcome ask: record orchestrator_report state:progress with the concrete waiting reason and end the turn for Host retry of this occurrence. There is no report state named waiting. A genuinely essential missing user answer can instead use the supported task_finish outcome ask to persist waiting(user_input); that is not an automatic success.
+
+When a requested calculation has only been planned, do not publish computed numbers or embed derived quantities into another task/reminder yet. Say the real calculation is queued; its separate executor/tool will save the verified numerical result. Original user numbers and persisted calendar times remain planning facts, not a calculation receipt.

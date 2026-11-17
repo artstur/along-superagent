@@ -87,6 +87,7 @@ const semantic = (value: VerifiedCalculationEvidence) => ({ ...value, read: { ..
 /** Private receipt evidence only; caller wraps verify/calculate/record or final publication in its Host transaction. */
 export class CalculationEvidenceStore {
   constructor(private readonly db: DatabaseSync, private readonly sources: SourceStateStore) {}
+  has(receiptId:string):boolean {return !!this.db.prepare('SELECT 1 FROM task_calculation_source WHERE receipt_id=?').get(receiptId)}
   verify(scope: SourceReadScope, requestId: string, rawSources: unknown, rawQuantities: CalculationInput['quantities'], rawParameters: unknown = []): VerifiedCalculationEvidence {
     const bindings = QUANTITY_SOURCES.parse(rawSources), parameters = QUANTITY_PARAMETERS.parse(rawParameters)
     const quantities = CalculationInputSchema.shape.quantities.parse(rawQuantities)

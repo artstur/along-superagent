@@ -16,6 +16,7 @@ import { supportsRecurrence } from './reminder-plan.ts'
 import { hasDailyMandate, nextDailyTime } from './task-schedule.ts'
 import { alongTool } from './tool.ts'
 import { requestTaskReview, taskReviewCurrent, taskReviewContext, finishTaskReview, TASK_REVIEW_FINISH, TaskReviewError } from './task-repair.ts'
+import { calculationResultText } from './calculation-result.ts'
 import type { AlongIdentity } from './service.ts'
 import { TaskActivation, type ActivationHost } from './task-activation.ts'
 import type { CalculationScope } from './calculation-store.ts'
@@ -494,7 +495,8 @@ export class HealthFollowup {
             const definition=this.activation.definition(d)?.definition
             const calculation=args.calculation_receipt?store.calculations.get(this.calculationScope(ticketId),args.calculation_receipt):undefined
             if(args.calculation_receipt&&!calculation)throw new Error('calculation receipt is not bound to this task occurrence')
-            if(calculation&&definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated'))
+            const privateCalculation=!!calculation&&store.calculationEvidence.has(calculation.id)
+            if(calculation&&(privateCalculation||definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated')))
               store.calculationEvidence.assertCurrent(this.sourceScope(ticketId),calculation.id,calculation.calculation.input.quantities)
             if(definition?.actor==='agent'&&args.outcome!=='ask') {
               if(definition.capability==='calculation'&&!calculation)throw new Error('calculation task requires its actual persisted tool receipt')
@@ -512,7 +514,7 @@ export class HealthFollowup {
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
             if(definition?.actor==='agent'&&definition.capability==='research'&&args.outcome!=='ask'&&!structured?.sources.length)
               throw new Error('research execution requires actual verified sources; report failed or blocked, not completion')
-            const resultText=calculation?`计算结果：${calculation.calculation.result.value}${calculation.calculation.result.unit==='1'?'':` ${calculation.calculation.result.unit}`}`:args.text
+            const resultText=calculation?calculationResultText(calculation.calculation,privateCalculation):args.text
             const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)
             this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':structured?'researched':'notification_queued')

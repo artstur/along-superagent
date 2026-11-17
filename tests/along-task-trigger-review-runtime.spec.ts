@@ -30,9 +30,12 @@ it('automatically dispatches a new private Worker, repairs only the bound task, 
  const f=await setup(),messages=f.store.counts(userId).messages,review=await f.request();expect(review).toMatchObject({status:200,body:{status:'pending',reused:false}})
  const {ticket,session}=await f.worker();const trigger=f.h.runtime.store.triggers.get(ticket.origin.triggerId)!
  expect(trigger).toMatchObject({human:false,meta:{event_type:'along.task_trigger_review',task_id:f.task.id}});expect(trigger.meta.health_dispatch).toBeUndefined()
- expect([...f.h.tools.get(session)!.keys()].sort()).toEqual(['along_task_review_context','along_task_review_finish','along_goal_read','along_conversation_read','along_task_list','along_changes_commit','orchestrator_report'].sort())
+ expect([...f.h.tools.get(session)!.keys()].sort()).toEqual(['along_task_review_context','along_task_review_finish','along_task_update','along_task_cancel','along_goal_read','along_conversation_read','along_task_list','along_changes_commit','orchestrator_report'].sort())
  await expect(f.h.runTool(session,'orchestrator_report',{state:'ready',summary:'只诊断，不落地'})).rejects.toThrow('not complete')
  const context=await f.h.runTool(session,'along_task_review_context',{});expect(context).toMatchObject({review:{origin:'host_task_trigger_maintenance',evidence_event_id:'accepted_original_goal'},task:{id:f.task.id},evidence:{text:'每周四9点提醒我预约西语课。'}})
+ const narrow={task_id:f.task.id,base_revision:1,goal_revision:f.store.getGoal(userId,f.goal.id)!.currentRevision,input_version:f.store.inputVersion(f.goal.id),reason:'窄工具也不能越过维护范围'}
+ expect(await f.h.runTool(session,'along_task_cancel',{...narrow,idempotency_key:'repair_no_cancel'})).toMatchObject({status:'invalid',reason:'outside_task_review'})
+ expect(await f.h.runTool(session,'along_task_update',{...narrow,idempotency_key:'repair_no_clock_change',fields:{scheduled_at:'2030-01-03T02:00:00.000Z'}})).toMatchObject({status:'invalid',reason:'task_review_clock_preserved'})
  const definition={kind:'time',actor:'user',capability:'reminder'}
  const commit=(ops:unknown[])=>f.h.runTool(session,'along_changes_commit',{idempotency_key:'task_review_repair',base_revision:f.store.getGoal(userId,f.goal.id)!.currentRevision,input_version:f.store.inputVersion(f.goal.id),reason:'保留原钟点，补上真实每周委托',ops})
  expect(await commit([{op:'goal.update',fields:{title:'unauthorized'}}])).toMatchObject({status:'invalid',reason:'outside_task_review'})
