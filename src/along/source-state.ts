@@ -135,6 +135,22 @@ export class SourceStateStore {
       AND task_revision=? AND input_version=? AND ticket_id=? AND execution_key=? LIMIT 1`)
       .get(scope.userId,scope.goalId,scope.taskId,scope.taskRevision,scope.inputVersion,scope.ticketId,scope.executionKey)
   }
+  /** Host retry gate: metadata only, no normalization/write, private payload or model-context read. */
+  awaitingData(scope:SourceReadScope):boolean {
+    if(!this.scopeValid(scope))return false
+    const row=this.db.prepare(`SELECT state,generation,expected_revision,actual_result_revision,actual_result_reference,
+      observed_at,max_age_seconds FROM source_state_read WHERE user_id=? AND goal_id=? AND task_id=?
+      AND task_revision=? AND input_version=? AND ticket_id=? AND execution_key=? ORDER BY created_at DESC,rowid DESC LIMIT 1`)
+      .get(scope.userId,scope.goalId,scope.taskId,scope.taskRevision,scope.inputVersion,scope.ticketId,scope.executionKey)
+    if(!row||!['pending','stale','unavailable','ready'].includes(String(row.state)))return false
+    const source=this.queryCurrent(scope.userId,scope.goalId,'okx')
+    if(!source||source.generation!==Number(row.generation)||['revoked','disconnected'].includes(source.state)
+      ||source.revision!==Math.max(Number(row.expected_revision),Number(row.actual_result_revision??0)))return false
+    const observed=Date.parse(String(row.observed_at)),now=this.clock().ms
+    return !(row.state==='ready'&&source.state==='ready'&&source.capabilities.includes('trading_account_summary')
+      &&Number(row.actual_result_revision)===source.revision&&row.actual_result_reference===source.reference
+      &&Number.isFinite(observed)&&observed<=now+30000&&now-observed<Number(row.max_age_seconds)*1000)
+  }
   private serial = 0
   private readonly prefix = 'source_state_' + randomUUID().replaceAll('-', '')
   constructor(private readonly db: DatabaseSync, private readonly options: Options = {}) {}
@@ -303,7 +319,12 @@ export class SourceStateStore {
       const id = 'sread_' + hash([scope.userId, scope.goalId, scope.taskId, scope.taskRevision, scope.inputVersion,
         scope.executionKey, input.provider, input.capability, source.generation, input.max_age_seconds]).slice(0, 40)
       const now = this.clock(), previous = this.row(scope.userId, id)
-      if (previous) return this.view(this.normalize(previous, now), now)
+      if (previous) {
+        // A real Worker has now requested this newer source version. Preserve the request identity,
+        // but do not wake it on every retry tick while that same new version still lacks fresh data.
+        if(Number(previous.expected_revision)<source.revision)this.db.prepare('UPDATE source_state_read SET expected_revision=? WHERE id=? AND user_id=?').run(source.revision,id,scope.userId)
+        return this.view(this.normalize(this.row(scope.userId,id)!, now), now)
+      }
       this.db.prepare(`INSERT INTO source_state_read(id,user_id,goal_id,task_id,task_revision,input_version,ticket_id,execution_key,
         provider,capability,generation,expected_revision,max_age_seconds,state,next_attempt_at,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`)

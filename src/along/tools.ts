@@ -169,7 +169,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             if((args.source_request_id===undefined)!==(args.quantity_sources===undefined))throw new Error('source request and quantity bindings must be provided together')
             if(args.quantity_parameters&&!args.source_request_id)throw new Error('explicit private calculation parameters require the current source read')
             const bindings=args.source_request_id?store.calculationEvidence.verify(calcScope,args.source_request_id,args.quantity_sources,args.calculation.quantities,args.quantity_parameters):undefined
-            const receipt=store.calculations.calculate(calcScope,args.calculation)
+            const receipt=store.calculations.calculate(calcScope,args.calculation,bindings?store.calculationEvidence.digest(bindings):undefined)
             if(bindings)store.calculationEvidence.record(receipt.id,args.source_request_id!,bindings)
             return {receipt_id:receipt.id,result:receipt.calculation.result,input:receipt.calculation.input,trace:receipt.calculation.trace,
               calculated_at:receipt.calculatedAt,reused:receipt.reused,persisted:true,
