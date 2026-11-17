@@ -15,7 +15,8 @@ import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
 import { initializeRoleModel } from './role-models.ts'
-import { bundledSkills } from './skill-files.ts'
+import { alongSkills, bundledSkills } from './skill-files.ts'
+import { alongPromptProvenance, composeAlongPrompt } from './along-prompts.ts'
 import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import type { Store } from './store.ts'
 import { KV } from '../kv.ts'
@@ -43,7 +44,7 @@ export interface SessionsHost {
  * What Sessions registered for an agent it decorated: the releases of its prompt section, tools and skill scope, the scope
  * its skills are registered in, and the skills of one prompt revision; for a worker's subagent, only its tool limits.
  */
-interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true }
+interface SessionBinding { sessionId?: string; along?: boolean; disposers: (() => void)[]; scope?: Context; skills?: { revision: number; along: boolean; dispose: () => void }; subagent?: true }
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -239,7 +240,7 @@ export class Sessions {
     const master = agent.id === host.masterId
     const ticket = master ? undefined : this.ticketOf(agent)
     if (!master && !ticket) { this.limitSubagent(agent); return }
-    const binding: SessionBinding = { disposers: [] }
+    const binding: SessionBinding = { sessionId: agent.id, along: ticket?.mandate.actor?.source === 'along' || ticket?.mandate.actor?.source === 'along-maintenance' && ticket.mandate.basis.via === 'scheduled', disposers: [] }
     this.bindings.set(agent, binding)
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
@@ -248,18 +249,21 @@ export class Sessions {
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
-      const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
-      const along = current?.mandate.actor?.source === 'along'
-      const maintenance = current?.mandate.basis.via === 'scheduled'
+      const along = current?.mandate.actor?.source === 'along' || current?.mandate.actor?.source === 'along-maintenance' && current.mandate.basis.via === 'scheduled'
       const settings = host.store.settings()
       const alongRouter = master && settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
-      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
-        + (maintenance ? '\n\n## Scheduled memory maintenance\nCall along_maintenance_run with {}. This host tool owns extraction, cleanup, validation, credentials and durable checkpoints. Repeat pending only without retry_at. With retry_at report failed and end the turn; the scheduler handles backoff. Report ready only after done. Do not ask the user, edit files, modify goals/tasks or post chat. Do not read private storage or extract memories yourself.' : '')
-        + (along ? `\n\n## Along personal goal work\nThis ticket maintains the user's personal goal workspace, not this repository. The following Along contract governs the business task.\n${bundledSkills.alongGoal.content}\n\n${bundledSkills.alongTask.content}\n\nBefore planning, read along_conversation_read and use along_memory_search for relevant long-term context. Current explicit instructions take priority. Read timestamps, source order and memory status: recent information usually describes the current preference better, while an older fact may still apply. Use history to understand corrections instead of mechanically replacing everything by time. memory history contains superseded/candidate/conflict/withdrawn evidence, not automatically effective facts. A withdrawn record is inactive; do not revive it from an old summary. needsClarification signals stored ambiguity: inspect current intent and history, and ask only when you cannot resolve it. degraded means SQLite fallback, not permission to invent context. On an explicit request to forget, use along_memory_forget and acknowledge it; do not delete chat or cancel/reschedule existing goals/tasks.` : '')
-        + (current?.mandate.basis.via === 'health' ? '\n\n## Automatic health follow-up\nThis is a non-human health event. Read along_goal_read, along_conversation_read, along_health_read and relevant memory. Use along_goal_overview to respect other goals, explicit priorities and hard constraints while writing only this goal. An aggregate does not prove a specific task was completed. An open sleep window or missing record is not a deficit. Decide which of the seven health types actually affect this goal; persist those types with along_health_followup (empty when unrelated). Do not create, edit or archive goals. You may adjust tasks only through validated changes. Read the current summaries before finishing. Use keep without chat when no adjustment is justified; use update after applied changes and ask only for an essential missing fact. Call along_health_followup before reporting ready. Do not use along_chat_reply because there is no user message. New chat supersedes this work; on conflicted_input report dropped and let newer work handle it. Never invent zero or clinical thresholds.' : '')
-        + (current?.mandate.basis.via === 'task_due' ? '\n\n## Scheduled task review\nThe clock reached a real task time. Read along_health_read for the bound task, due time and eligible new phone summaries, and along_goal_read/along_conversation_read for the actual task and intent. No new summary means no observation. Clock time cannot prove an activity occurred. Keep silently, ask one essential question, or update this task through along_changes_commit if warranted. Finish with along_health_followup then report ready. To renew an explicitly delegated daily schedule, pass renew_daily_from_event with the original user event_id found in the conversation or the stored daily mandate. Check later corrections first. Never renew a one-off, completed or revoked task. If the due work is superseded, report dropped. If the actual task delegates current research or recommendations, perform that research with dsh-superagent-along-research and the relevant domain skill, using Along web tools. Deliver its structured recommendation with along_health_followup; do not merely remind the user to do the delegated research.' : '')
-        + (alongRouter ? '\n\n## Along local conversation routing\nThis installation serves personal goal conversations, not repository change requests. Every admitted Along user_message needs conversational work, including observations and questions. Accept it as a Ticket or attach it when the existing routing rules permit; a Worker reads the original conversation and responds with along_chat_reply. The Worker decides whether goal/task changes are justified. An observation needs a response without creating a goal; it is never ignored merely because it asks for no repository change. Preserve user stops, pause and authorization.' : '')
-    }, ...(master ? { complete: true } : {}) }))
+      const role = master ? 'orchestrator' : 'worker'
+      const composed = along || alongRouter
+        ? composeAlongPrompt(version.config, { role, via: current?.mandate.basis.via })
+        : host.prompts.compose(version.config, role, current ? host.environment(current) : undefined)
+      if ((along || alongRouter) && context.signal !== undefined) {
+        const provenance = { revision: version.revision, ...alongPromptProvenance(version.config, { role, via: current?.mandate.basis.via }) }
+        const key = `session-along-prompt:${agent.id}`
+        const previous = host.store.get(key)
+        if (JSON.stringify(previous) !== JSON.stringify(provenance)) host.store.set(key, provenance)
+      }
+      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current && !along ? mandateInstructions(current.mandate) : ''}`
+    }, ...(master || binding.along ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
       binding.scope = scope
@@ -330,21 +334,24 @@ export class Sessions {
   /** Register the skills of a prompt version in the agent's skill scope, in place of an earlier version's. */
   private bindSkills(binding: SessionBinding, version: PromptVersion): void {
     const { scope, skills: previous } = binding
-    if (!scope || previous?.revision === version.revision) return
+    const settings = this.host.store.settings()
+    const along = binding.along === true || this.host.masterId === binding.sessionId && settings.sources.along?.enabled === true && settings.sources.github?.enabled === false
+    if (!scope || previous?.revision === version.revision && previous.along === along) return
     previous?.dispose()
     const disposers: (() => void)[] = []
     for (const [name, content] of this.host.prompts.skills(version.config)) {
+      if (along && (!name.startsWith('along-') || alongSkills.some(skill => skill.name === `${SKILL_PREFIX}${name}`))) continue
       const bundled = name === 'feishu' || name === 'github' ? bundledSkills[name] : undefined
       const body = version.config.skills[name] ?? ''
       const description = bundled?.description ?? (body.replace(/\s+/g, ' ').slice(0, 120) || 'Custom dsh-superagent operational skill.')
       disposers.push(scope.skills.register({ name: `${SKILL_PREFIX}${name}`, description, content, source: 'runtime',
         ...(bundled ? { resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } } : {}) }))
     }
-    for (const bundled of [bundledSkills.alongGoal, bundledSkills.alongTask, bundledSkills.alongResearch, bundledSkills.alongHiking]) {
+    for (const bundled of along ? alongSkills : []) {
       disposers.push(scope.skills.register({ name: bundled.name, description: bundled.description, content: bundled.content, source: 'runtime',
         resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } }))
     }
-    binding.skills = { revision: version.revision, dispose: () => { disposers.forEach(dispose => dispose()) } }
+    binding.skills = { revision: version.revision, along, dispose: () => { disposers.forEach(dispose => dispose()) } }
   }
   /** Return the current prompt version, updating the agent's skills and recording the revision in Store when bound to a model request. */
   private promptFor(agent: Agent, bind: boolean): PromptVersion {
