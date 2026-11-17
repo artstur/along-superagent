@@ -23,6 +23,6 @@ export const alongTool = <S extends z.ZodType>(definition: { name: string; descr
   invalidArguments?:(error:z.ZodError)=>unknown
   execute: (args: z.infer<S>, signal: AbortSignal) => Promise<unknown> }): Tool => ({ ...definition,
     execute: async (args: z.infer<S>, signal: AbortSignal) => jsonOutput(await definition.execute(args, signal)),
-    ...(['along_changes_commit','along_chat_reply','along_health_followup'].includes(definition.name)
+    ...(['along_changes_commit','along_task_update','along_task_cancel','along_chat_reply','along_health_followup'].includes(definition.name)
       ? {invalidArguments:definition.invalidArguments??((error:z.ZodError)=>alongArgumentRecovery(definition.name,error))} : {}),
   }) as unknown as Tool

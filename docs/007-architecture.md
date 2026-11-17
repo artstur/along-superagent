@@ -452,6 +452,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-data-sources.spec.ts` | Per-goal source recommendations, host-bound writes, migration, persistence, replay and semantic health relevance |
 | `tests/along-weekly-completion.spec.ts` | Registered ready refusal before a real weekly update, update/recommendation ordering and original task/time preservation |
 | `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
+| `tests/along-single-task-mutations.spec.ts` | Real registered single-task update/cancel, numeric versions, original IDs/clock changes, stale scope and human completion guards |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
 | `tests/along-task-execution.spec.ts` | Task execution evidence, legal source reuse, occurrence deduplication, development isolation, completion transitions, ownership and bounded history |
 | `tests/along-calculation-registered.spec.ts` | Controlled synthetic Runtime/Engine/Sessions registered-tool and authenticated API proof for mixed inputs, scope/schema refusal, freshness and one execution; no real model/network/device |
