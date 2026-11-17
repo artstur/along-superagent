@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Mac Host verifies a source's real read-only permission and saves its credential privately before publishing a capability fact. The Agent records only that fact. An account summary is never embedded in a source event, ordinary event bus, chat or synchronization snapshot.
+For the deployed device-first OKX path, iPhone native code stores credentials only in Keychain, calls the fixed official read-only APIs, checks the actual permission and bounded summary, then uploads through the original paired channel. The Mac Host validates the bound user/device/goal, grant, sequence and strict summary before its durable journal publishes a capability fact. This is an admitted native observation, not a claim that the Mac independently contacted OKX or holds the phone's credentials. Legacy Mac vault code remains a compatibility path and cannot override a device-owned scope. The Agent records only the capability fact; a fresh restricted read is a separate requirement. An account summary is never embedded in a source event, ordinary event bus, chat or synchronization snapshot. See the client repository's `docs/device-data-sources.md` and `host/device-source-gateway.mjs` for the actual collector/admission contract.
 
 This upstream module does not register routes/tools or change the global schema version. The orchestration integration supplies the existing private bridge authentication and bound identity, adds `SOURCE_STATE_SCHEMA` in a versioned migration, and invokes these methods on AlongStore's shared SQLite handle.
 
@@ -35,4 +35,4 @@ Fresh ready, denied and invalidated requests are not repeatedly dispatched. An a
 
 ## Acceptance
 
-Synthetic SQLite tests cover event hash replay/conflict, dropped/late source revisions, terminal revocation/reconnect, per-user/goal/task boundaries, current input checks, private-data isolation, recoverable cache freshness, duplicate negative results, retry backoff, old-generation denial and rejection of late/foreign ready data. Shared route authentication and real Host vault/network behavior are tested by their integration owners.
+Synthetic SQLite tests cover event hash replay/conflict, dropped/late source revisions, terminal revocation/reconnect, per-user/goal/task boundaries, current input checks, private-data isolation, recoverable cache freshness, duplicate negative results, retry backoff, old-generation denial and rejection of late/foreign ready data. Shared route authentication, native Keychain/collector and actual account/network behavior are verified separately by their integration owners; a synthetic cache response is not a real account connection or model acceptance. Unchanged private reads are held by the Host rather than repeatedly invoking the model; see [020](020-private-read-wait.md).
