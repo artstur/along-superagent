@@ -18,6 +18,8 @@ Along Worker/maintenance and Router mark `dsh-superagent-policy` complete:true: 
 | [along/orchestrator](../../prompts/along/orchestrator.md) | Along-only Router | Route original trigger, avoid duplicate/misattached work, preserve stop/hold; no business execution or duplicate user delivery |
 | [along/worker](../../prompts/along/worker.md) | Every Along Worker | Read current evidence, load matching skills, commit/read back, run real tools and report truthful durable outcome |
 | [along/task-due](../../prompts/along/task-due.md) | Host task activation (`task_due`, including immediate/event) | Read `along_task_context`; execute capability and finish occurrence with result, not human activity |
+| [along/task-review](../../prompts/along/task-review.md) | Trusted `task_trigger_review` | Repair only the bound task trigger/cadence from real user evidence; scoped writers/readback ([018](018-single-task-mutations.md)) |
+| [along/source-review](../../prompts/along/source-review.md) | Trusted `source_review` | Metadata-only first-ready continuation for legacy tasks; preserve human actions and finish durable trigger/waiting postconditions ([019](019-source-ready-bootstrap.md)) |
 | [along/health](../../prompts/along/health.md) | Host health event | Assess actual relevant summaries, minimally preserve/revise, finish `along_health_followup`; no direct chat |
 | [along/maintenance](../../prompts/along/maintenance.md) | Scheduled memory maintenance | Only `along_maintenance_run`; tool-owned checkpoints/backoff, no goal edits or chat |
 | `along/skill-index` (generated) | Every Along role | Names/descriptions only; bodies load on demand |
@@ -46,7 +48,7 @@ The scheduler currently implements once/daily/weekly, with weekly weekday derive
 
 A plan committed, Worker occurrence finished, result persisted, notification intent queued, iOS notification scheduled, banner delivered, detail opened and person acted are separate facts. A Worker may report only the layer actually confirmed. Replans, retries, repair and recurrence renewal do not inflate execution count. Same-occurrence identical inputs are idempotent; corrected arithmetic inputs can create a separate receipt without a second occurrence. New task/input/source revisions invalidate stale work through Host guards.
 
-Background followup/result/maintenance must not append personal chat. Useful results go to stable goal/task details and the existing notification channel. A source result is private task input, not general event metadata or a notification body. The accepted goal/task/data-source modules and existing task detail typography are unaffected by this prompt change.
+Automatic Worker report summaries stay in private RunRecord audit and never enter generic mobile message/sync delivery; validated task results and direct user replies retain their existing channels. Background followup/result/maintenance must not append personal chat. Useful results go to stable goal/task details and the existing notification channel. A source result is private task input, not general event metadata or a notification body. The accepted goal/task/data-source modules and existing task detail typography are unaffected by this prompt change.
 
 ## Evidence, regression and release
 
