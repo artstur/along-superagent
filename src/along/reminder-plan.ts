@@ -53,10 +53,11 @@ function precedingBookingDay(message: string, quote: string, action: string, con
   return false
 }
 export function singleOccurrence(message: string, content: string, action: string):boolean {
-  const once = /(?:仅|只)(?:需要|要|需)?(?:做|执行|处理|安排)?(?:这(?:一)?次|此次|本次|提醒这次|提醒一次|一次)|一次性|just once|only once|one.off/i
+  const once = /(?:仅|只)(?:需要|要|需)?(?:(?:做|执行|处理|安排)?(?:这(?:一)?次|此次|本次|提醒这次|提醒一次|一次)|在?(?:本|这|今)(?:周|天)[^，,。；;!?！？\n]{0,60}?一次)|一次性|just once|only once|one.off/i
   return clauses(message).some(clause => {
     const limit = once.exec(clause)
     if (!limit) return false
+    if(/(?:不是|并非|不只是?|不仅(?:仅)?)\s*$/u.test(clause.slice(0,limit.index)))return false
     const subject = clause.slice(0,limit.index).replace(/^(?:但|但是|不过|这次|本次|此次|这项|这个任务|这些|我|都|请)+/,'').trim()
     return !subject || content.includes(subject) || clause.includes(action)
   })

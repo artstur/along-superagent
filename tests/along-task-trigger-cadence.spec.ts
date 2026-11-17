@@ -78,7 +78,7 @@ it('separates Agent-inferred goal cadence from a literal user rule without relax
  const goal='我想长期保持资料整洁，逐步整理收集的研究笔记'
  expect(supportsRecurrence(goal,goal,'定期回顾笔记','梳理研究资料并安排下一步','weekly',2,'agent')).toBe(true)
  expect(supportsRecurrence(goal,goal,'定期回顾笔记','梳理研究资料并安排下一步','weekly',2,'user')).toBe(false)
- for(const text of ['只做这一次整理资料','停止整理研究笔记','如果每周整理会怎样','仅本周整理研究笔记'])
+ for(const text of ['只做这一次整理资料','只在本周四整理一次资料','停止整理研究笔记','如果每周整理会怎样','仅本周整理研究笔记'])
   expect(supportsRecurrence(text,text,'整理资料','整理资料','weekly',2,'agent')).toBe(false)
  expect(supportsRecurrence('每周一提醒整理资料','每周一提醒整理资料','整理资料','整理资料','weekly',4,'agent')).toBe(false)
 })
