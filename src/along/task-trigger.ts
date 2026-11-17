@@ -195,7 +195,7 @@ export class TaskTriggerStore {
   dependencyFact(userId:string,taskId:string):TriggerOccurrence|undefined {
     const r=this.db.prepare(`SELECT x.* FROM task_trigger_occurrence x JOIN task_trigger t ON t.user_id=x.user_id AND t.task_id=x.task_id AND t.generation=x.generation
       WHERE x.user_id=? AND x.task_id=? AND x.state='settled' AND t.state<>'cancelled'
-      AND (x.completion_event_id IS NOT NULL OR x.outcome IN ('calculated','researched')) ORDER BY x.created_at DESC LIMIT 1`).get(userId,taskId)
+      AND (x.completion_event_id IS NOT NULL OR x.outcome IN ('calculated','researched','agent_researched')) ORDER BY x.created_at DESC LIMIT 1`).get(userId,taskId)
     return r&&occurrence(r)
   }
   view(userId:string,taskId:string):TaskTriggerView|undefined {

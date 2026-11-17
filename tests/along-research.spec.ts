@@ -432,9 +432,11 @@ it('uses an explicit page publication date instead of search metadata, and leave
 })
 
 it.each(['once','on_change'] as const)('notifies a typed Agent %s output without research keywords using scoped evidence and actual persisted execution',async repeat=>{
- const h=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}))
+ const dir=mkdtempSync(join(tmpdir(),'along-typed-research-dependency-'));dirs.push(dir)
+ const seed=new Store(join(dir,'orchestrator.sqlite'));seed.saveSettings({...seed.settings(),eval:{...seed.settings().eval,mode:'auto'},sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}});seed.close()
+ let h=await startRuntime(undefined,{dir})
  try{
-  h.runtime.sources.register(alongKind);const settings=h.runtime.store.settings(),userId='u_typed_result',deviceId='d_typed_result'
+  const settings=h.runtime.store.settings(),userId='u_typed_result',deviceId='d_typed_result'
   h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...settings.policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}})
   const quote='评估策略需要成交记录及费用明细',url='https://www.deepseek.com/public-methodology'
   const search=vi.fn(async()=>({sources:[{url,title:'合成公开方法资料',summary:quote}],truncated:false}))
@@ -450,6 +452,8 @@ it.each(['once','on_change'] as const)('notifies a typed Agent %s output without
    store.sources.acceptEvent({userId,deviceId},{event_id:'typed_result_source',goal_id:goal.id,provider:'okx',generation:1,revision:1,state:'ready',capabilities:['trading_account_summary'],occurred_at:new Date().toISOString(),reference:'synthetic_ref'})
   }
   store.triggers.put(store.assertTaskOwner(userId,task.id),repeat==='once'?{kind:'immediate',actor:'agent',capability:'research'}:{kind:'event',actor:'agent',capability:'research',repeat:'on_change',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_account_summary'}]},1)
+  const dependent=store.insertTask({userId,goalId:goal.id,content:'前置资料产出后核算3次25分钟总时长'});store.appendTaskRevision({userId,taskId:dependent.id})
+  store.triggers.put(store.assertTaskOwner(userId,dependent.id),{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'task_completed',task_id:task.id}]},1)
   await h.runtime.pump();await h.runtime.idle();const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due')!,worker='worker-'+ticket.id
   await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true));const bound=await h.runTool(worker,'along_task_context',{}) as any
   // Real scoped research tool bodies with controlled provider/DNS seams; no external-network claim.
@@ -472,11 +476,41 @@ it.each(['once','on_change'] as const)('notifies a typed Agent %s output without
   expect(recommendationNotice({...validated,sources:[]},current,content,true)).toBeUndefined()
   expect(recommendationNotice(validated,{status:'done',content:'完成推荐路线的徒步'},'完成推荐路线的徒步')).toBeUndefined()
   await h.runTool(worker,'orchestrator_report',{state:'ready',summary:'框架产出已保存，不等于策略表现评估完成'})
+  const finishDependent=async()=>{
+   await vi.waitFor(async()=>{await h.runtime.pump();await h.runtime.idle();expect(h.runtime.store.tickets.list().some(t=>!t.ended&&h.runtime.along!.healthFollowup.forTicket(t.id)?.due?.taskId===dependent.id)).toBe(true)})
+   const next=h.runtime.store.tickets.list().find(t=>!t.ended&&h.runtime.along!.healthFollowup.forTicket(t.id)?.due?.taskId===dependent.id)!,session='worker-'+next.id
+   await vi.waitFor(()=>expect(h.tools.has(session)).toBe(true));await h.runTool(session,'along_task_context',{})
+   const receipt=await h.runTool(session,'along_calculate',{calculation:{quantities:[{name:'count',value:'3',unit:'1'},{name:'duration',value:'25',unit:'minute'}],steps:[{id:'total',op:'multiply',inputs:['count','duration']},{id:'minutes',op:'convert',inputs:['total'],unit:'minute'}],result_step:'minutes'}})
+   expect(receipt).toMatchObject({result:{value:'75',unit:'minute'}})
+   const args={outcome:'keep',types:[],reason:'前置真实产出完成后实际核算',calculation_receipt:receipt.receipt_id}
+   expect(await h.runTool(session,'along_task_finish',args)).toMatchObject({reused:false});expect(await h.runTool(session,'along_task_finish',args)).toMatchObject({reused:true})
+   await h.runTool(session,'orchestrator_report',{state:'ready',summary:'后续75分钟核算已完成'})
+  }
+  await finishDependent();expect(store.taskExecution(userId,dependent.id).count).toBe(1)
+  // Merely firing a reminder for a human action is not task_completed evidence.
+  const human=store.insertTask({userId,goalId:goal.id,content:'本人归档已整理的材料'});store.appendTaskRevision({userId,taskId:human.id})
+  store.triggers.put(store.assertTaskOwner(userId,human.id),{kind:'immediate',actor:'user',capability:'reminder'},1)
+  const blocked=store.insertTask({userId,goalId:goal.id,content:'本人归档完成后才可继续的计算'});store.appendTaskRevision({userId,taskId:blocked.id})
+  store.triggers.put(store.assertTaskOwner(userId,blocked.id),{kind:'event',actor:'agent',capability:'calculation',conditions:[{kind:'task_completed',task_id:human.id}]},1)
+  await h.runtime.pump();await h.runtime.idle()
+  const humanTicket=h.runtime.store.tickets.list().find(t=>!t.ended&&h.runtime.along!.healthFollowup.forTicket(t.id)?.due?.taskId===human.id)!,humanWorker='worker-'+humanTicket.id
+  await vi.waitFor(()=>expect(h.tools.has(humanWorker)).toBe(true));await h.runTool(humanWorker,'along_task_context',{})
+  await h.runTool(humanWorker,'along_task_finish',{outcome:'keep',types:[],reason:'只发出提醒，不代表本人已行动',text:'请本人归档材料'})
+  await h.runTool(humanWorker,'orchestrator_report',{state:'ready',summary:'人类行动提醒已处理，仍待本人行动'})
+  expect(store.triggers.dependencyFact(userId,human.id)).toBeUndefined();expect(store.getTask(userId,human.id)?.status).toBe('open')
+  await h.runtime.pump();expect(h.runtime.store.tickets.list().some(t=>h.runtime.along!.healthFollowup.forTicket(t.id)?.due?.taskId===blocked.id)).toBe(false)
   const previousGeneration=store.triggers.get(userId,task.id)!.generation
   store.appendTaskRevision({userId,taskId:task.id,content:'暂停这项产出，等待新材料',status:'open',originEventId:'synthetic_authorized_change'})
   store.triggers.put(store.assertTaskOwner(userId,task.id),{kind:'waiting',actor:'agent',capability:'research',resume:'user_input',reason:'等待用户提供新的材料范围'},store.inputVersion(goal.id))
   expect(store.triggers.get(userId,task.id)!.generation).toBeGreaterThan(previousGeneration)
   expect(store.taskExecution(userId,task.id)).toMatchObject({count:1,records:[{kind:'research',outcome:'researched',recommendationEventId:(results[0]!.payload as any).notification.event_id}]})
+  const originalTickets=h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='task_due').map(t=>t.id).sort()
+  await h.stop();h=await startRuntime(undefined,{dir});await h.runtime.pump();await h.runtime.idle()
+  const restored=h.runtime.along!.service.alongStore
+  expect(restored.taskExecution(userId,task.id).count).toBe(1);expect(restored.taskExecution(userId,dependent.id).count).toBe(1)
+  expect(restored.taskExecution(userId,blocked.id).count).toBe(0)
+  expect(h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='task_due').map(t=>t.id).sort()).toEqual(originalTickets)
+
 
  }finally{await h.stop()}
 },30000)
