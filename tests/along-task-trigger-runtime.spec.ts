@@ -44,6 +44,8 @@ it('executes a newly planned immediate calculation through the durable due outbo
  const worker='worker-'+due.id
  await vi.waitFor(()=>expect(h.tools.has(worker)).toBe(true))
  expect(h.tools.get(worker)?.has('along_calculation_preview')).toBe(false)
+ expect(h.tools.get(worker)?.has('along_web_search')).toBe(false)
+ expect(h.tools.get(worker)?.has('along_web_fetch')).toBe(false)
  expect(await h.runTool(worker,'along_task_context',{})).toMatchObject({task:{task_id:task.id},trigger:{kind:'immediate',actor:'agent',capability:'calculation'}})
  await expect(h.runTool(worker,'along_task_finish',{outcome:'keep',types:[],reason:'口算完成'})).rejects.toThrow('actual persisted tool receipt')
  const input={calculation:{quantities:[{name:'budget',value:'4200',unit:'CNY'},{name:'rent',value:'1350',unit:'CNY'},{name:'living',value:'860',unit:'CNY'}],steps:[{id:'after_rent',op:'subtract',inputs:['budget','rent']},{id:'balance',op:'subtract',inputs:['after_rent','living']}],result_step:'balance'}}

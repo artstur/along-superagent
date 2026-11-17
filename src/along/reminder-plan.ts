@@ -76,7 +76,8 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   }
   if (repeat==='weekly' && delegated && precedingBookingDay(message,quote,action,content,weekday)) return true
   if (!mentionsAction(content,quote,action)) return false
-  const clause=clauses(message).find(value=>value.includes(quote))
+  const clause=clauses(message).find(value=>value.includes(quote)) ?? (repeat==='daily'&&clauses(quote).some(value=>
+    value.includes(action)&&/每日|每天|每晚|每早|每晨|\bevery day\b|\bdaily\b/i.test(value)&&!denial.test(value))?quote:undefined)
   if (!clause || denial.test(clause.split(/提醒|安排|通知|想要|需要/)[0]!)) return false
   if (repeat==='daily') return hasDailyMandate(clause) ||
     /每日|每天|每晚|每早|每晨|\bevery day\b|\bdaily\b/i.test(quote) && !denial.test(clause)

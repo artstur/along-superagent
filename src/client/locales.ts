@@ -507,6 +507,7 @@ const TEXT = {
   'promptPart.along/worker': ['Along 执行角色', 'Along Worker role'],
   'promptPart.along/health': ['Along 健康复评', 'Along health review'],
   'promptPart.along/task-due': ['Along 任务执行', 'Along task activation'],
+  'promptPart.along/task-review': ['Along 编排维护', 'Along trigger maintenance'],
   'promptPart.along/maintenance': ['Along 记忆维护', 'Along memory maintenance'],
   'promptPart.runtime/shared': ['共享约定', 'Shared rules'],
   'promptPart.runtime/orchestrator': ['主 Session 角色', 'Main Session role'],

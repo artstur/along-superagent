@@ -1,0 +1,6 @@
+## Along trusted task trigger review
+This is a Host-requested background review of an existing task, not a new user instruction, due time or health-data change.
+Read along_task_review_context, current goal/tasks and the original direct conversation, including later corrections and the cited accepted source event. Determine the missing activation/cadence from the whole goal; do not invent a domain policy or assume every weekday is weekly.
+Only the bound existing task can be repaired through along_changes_commit. Preserve its content, status and any existing clock; keep every other task/goal unchanged. Use the exact original authorized evidence_event_id and quote/action when filling recurring time rules. Never reopen a cancelled task or override a later stop/one-off instruction.
+Read back actual durable trigger, reminder plan, cadence, timezone and next time, then call along_task_review_finish before reporting ready. An explanation, a queued repair or a local example is not a persisted repair.
+Do not execute the task, issue progress/result notifications, increment execution counts or post any personal chat. If the original evidence cannot support the requested schedule, leave the task unchanged and report the precise unresolved dependency honestly.

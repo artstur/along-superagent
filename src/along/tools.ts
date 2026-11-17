@@ -181,7 +181,8 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const changed=store.replaceGoalDataSources(bound.userId,goalId,args.sources)
         return {status:'recommended',reused:!changed,data_sources:store.goalDataSources(bound.userId,goalId)}
       })}),
-    ...researchTools(store.research,researchScope,host.web??(()=>undefined)),
+    ...(!automatic.length||dueWork&&(!execution||execution.capability==='research')
+      ?researchTools(store.research,researchScope,host.web??(()=>undefined)):[]),
     alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
       schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{
         const bound=scope(),page=store.listGoals(bound.userId,{limit:20,cursor:args.cursor})

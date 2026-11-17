@@ -25,7 +25,7 @@ const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.key
 const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/subscriptions', 'runtime/replies',
   'runtime/dispatch', 'runtime/work', 'runtime/admission', 'runtime/handoff/orchestrator', 'runtime/handoff/worker', 'runtime/environment',
   'runtime/policy', 'runtime/policy/none', 'skill/feishu', 'skill/github',
-  'along/shared', 'along/orchestrator', 'along/worker', 'along/health', 'along/task-due', 'along/maintenance'] as const
+  'along/shared', 'along/orchestrator', 'along/worker', 'along/health', 'along/task-due', 'along/task-review', 'along/maintenance'] as const
 export type PartKey = typeof PART_KEYS[number]
 /** A team's text for a built-in part, and `base`, the key of the built-in text it was edited from. */
 const OverrideSchema = z.object({ text: z.string(),
@@ -55,8 +55,8 @@ let parts: Readonly<Record<PartKey, BuiltInPart>> | undefined
  * system fills in, by the key an override names them by. Built on first use, as the texts it reads are imported in a cycle.
  */
 export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts ??= {
-  ...Object.fromEntries(['shared', 'orchestrator', 'worker', 'health', 'task-due', 'maintenance'].map(name =>
-    [`along/${name}`, { roles: name === 'orchestrator' ? MAIN : name === 'shared' ? BOTH : WORKER, text: promptFile(`along/${name}`) }])) as Record<`along/${'shared'|'orchestrator'|'worker'|'health'|'task-due'|'maintenance'}`, BuiltInPart>,
+  ...Object.fromEntries(['shared', 'orchestrator', 'worker', 'health', 'task-due', 'task-review', 'maintenance'].map(name =>
+    [`along/${name}`, { roles: name === 'orchestrator' ? MAIN : name === 'shared' ? BOTH : WORKER, text: promptFile(`along/${name}`) }])) as Record<`along/${'shared'|'orchestrator'|'worker'|'health'|'task-due'|'task-review'|'maintenance'}`, BuiltInPart>,
   'runtime/shared': { roles: BOTH, text: sharedPrompt }, 'runtime/orchestrator': { roles: MAIN, text: masterPrompt },
   'runtime/worker': { roles: WORKER, text: workerPrompt },
   'runtime/subscriptions': { roles: BOTH, text: `## subscriptions\n${guides.subscriptions}` },

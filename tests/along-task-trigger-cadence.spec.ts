@@ -69,3 +69,8 @@ it('validates the activity identity across a preceding-day clause without requir
  expect(await commit([op('2027-01-07T09:00:00+08:00')])).toMatchObject({status:'applied'})
  expect(await commit([op('2027-01-08T09:00:00+08:00')])).toMatchObject({status:'invalid',reason:'task_scoped_repeat_evidence_required',diagnostic:{op_index:0}})
 })
+it('retains a daily action and its adjacent lead-time reminder without borrowing cadence from an unrelated action',()=>{
+ const quote='每天凌晨2点前入睡，提前半小时提醒我'
+ expect(supportsRecurrence(quote,quote,'入睡','睡前准备并在凌晨2点前入睡','daily',1)).toBe(true)
+ expect(supportsRecurrence('每天散步，明天提醒喝水','每天散步，明天提醒喝水','喝水','喝水','daily',1)).toBe(false)
+})
