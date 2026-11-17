@@ -11,7 +11,7 @@ export interface GoalDataSource extends DataSourceInput { status: 'recommended' 
 
 export const DATA_SOURCE_CATALOG = [
   {provider:'okx',name:'OKX',access:'official_setup',url:'https://www.okx.com/account/my-api',
-    description:'交易、持仓及资金流水的只读 API 设置。当前 Along 仅打开官方设置入口，尚未实现凭证接收、账户读取或 OAuth；打开页面不表示已授权。不要要求用户在聊天里发送密钥。'},
+    description:'交易、持仓及资金流水的只读 API 设置。当前 Along 仅支持从 App 打开官方设置入口；OAuth、凭证接收、账户同步和 App CSV 上传/导入均未实现。打开页面不表示已授权。手动导出 CSV 只能作为未来接入备选，不要让用户现在在 App 上传文件或承诺读取文件；不要要求用户在聊天里发送密钥。'},
   {provider:'apple-health',name:'Apple Health',access:'native_permission',
     description:'在 iPhone 原生授权所选健康类型并共享摘要，仅当此目标需要健康数据时推荐；不共享原始样本。'},
 ] as const
