@@ -80,7 +80,10 @@ it('controlled synthetic mixed inputs (no model) persist the real tool result an
  expect(f.store.getRunRecord(f.ticket.id,assignment.id)?.reportSummary).toContain('125.2')
  expect(f.store.getTask(f.userId,f.task.id)?.status).toBe('done')
  expect(f.store.taskExecution(f.userId,f.task.id).count).toBe(1)
- const outbox=f.store.syncPage(f.userId,0,200).items.filter(i=>(i.payload as {calculation_receipt_id?:string}).calculation_receipt_id)
+ const completeSync=f.store.syncPage(f.userId,0,200).items
+ expect(JSON.stringify(completeSync)).not.toContain('125.2')
+ expect(completeSync.some(i=>i.kind==='message'&&(i.payload as any).presentation==='execution'&&String((i.payload as any).message?.eventId??'').startsWith('out:'+f.ticket.id+':'))).toBe(false)
+ const outbox=completeSync.filter(i=>(i.payload as {calculation_receipt_id?:string}).calculation_receipt_id)
  expect(outbox).toHaveLength(1);expect(JSON.stringify(outbox)).not.toContain('125.2');expect(JSON.stringify(outbox)).not.toContain('1000美元')
 },30000)
 
