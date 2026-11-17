@@ -33,16 +33,17 @@ async function decorated(options:{source?:string;via?:string;master?:boolean;alo
  const ticket={id:'synthetic',mandate:{actor,basis:{via:options.via??'chat'},strength:'explicit'}} as unknown as Ticket
  const ctx=new Context(),agentCtx=new Context(),registered=new Map<string,Skill>()
  let section:Section|undefined
+ const restrict=vi.fn((_input:{allow:string[]})=>()=>{}),guard=vi.fn((_input:unknown)=>()=>{})
  agentCtx.reflect.provide('skills',{register:(s:Skill)=>{registered.set(s.name,s);return()=>registered.delete(s.name)}})
  agentCtx.reflect.provide('systemPrompt',{section:(s:Section)=>{section=s;return()=>{}}})
- agentCtx.reflect.provide('tools',{register:()=>()=>{},get:()=>undefined,restrict:()=>()=>{},guard:()=>()=>{}})
+ agentCtx.reflect.provide('tools',{register:()=>()=>{},get:(name:string)=>({name}),restrict,guard})
  const agent={id:options.master?'master':'worker-synthetic',status:'idle',ctx:agentCtx,session:{snapshotEvents:()=>[],header:{}}} as unknown as Agent
  const host={context:ctx,masterId:'master',lifetime:new AbortController().signal,closing:()=>false,
   store:{tickets:{get:()=>ticket},settings:()=>store.settings(),get:store.get.bind(store),set:store.set.bind(store),keys:store.keys.bind(store)},
   prompts,effects:{handle:()=>{},enqueue:()=>{},idle:()=>Promise.resolve(),pending:()=>false},health:{set:()=>{}},environment:vi.fn(()=>[]),tools:()=>[] } as unknown as SessionsHost
  const sessions=new Sessions(host);cleanups.push(()=>sessions.dispose())
  await sessions['decorate'](agent)
- return {store,prompts,config,agent,registered,section:section!,host}
+ return {store,prompts,config,agent,registered,section:section!,host,restrict,guard}
 }
 
 it('actual Along Worker decoration selects only its business contract and registers capabilities without expanding their bodies',async()=>{
@@ -135,6 +136,13 @@ it('committed fixture is real source assembly, not a copied or historical model 
  expect(fixture).toEqual({kind:'synthetic-source-assembly',...alongPromptProvenance(defaultPrompts(),{role:'worker',via:'task_due'})})
  const sample=readFileSync(new URL('../docs/along/fixtures/worker-task-due.txt',import.meta.url),'utf8')
  expect(sample).toBe(composeAlongPrompt(defaultPrompts(),{role:'worker',via:'task_due'})+'\n')
+})
+it('Along business roles cannot inherit coding tools while generic repository workers retain them',async()=>{
+ const business=await decorated(),repository=await decorated({source:'github'}),router=await decorated({master:true})
+ expect(business.restrict.mock.calls[0]![0].allow.every(name=>name==='skill'||name.startsWith('along_'))).toBe(true)
+ expect(business.restrict.mock.calls[0]![0].allow).not.toContain('bash')
+ expect(repository.restrict.mock.calls[0]![0].allow).toContain('bash')
+ expect(router.restrict.mock.calls[0]![0].allow).toEqual(['skill'])
 })
 
 it('DSH actual assembly keeps the complete Along section over the coding persona while retaining registered tool definitions',async()=>{

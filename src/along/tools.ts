@@ -15,7 +15,7 @@ import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
 import { calculate, CalculationInputSchema } from './calculation.ts'
 import { SourceReadInputSchema } from './source-state.ts'
-import { QUANTITY_SOURCES } from './calculation-evidence.ts'
+import { QUANTITY_SOURCES,QUANTITY_PARAMETERS } from './calculation-evidence.ts'
 import { DATA_SOURCE_CATALOG, DATA_SOURCE_INPUT } from './data-sources.ts'
 import { alongTool } from './tool.ts'
 import type { MemoryService } from './memory/service.ts'
@@ -101,8 +101,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(bound.triggerEventId?{budgetEventId:bound.triggerEventId}:{}),...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
   }
   const automatic=host.healthFollowup?.forTicket(ticketId)?host.healthFollowup.tools(ticketId):[]
+  const dueWork=host.healthFollowup?.forTicket(ticketId)?.due
+  const execution=dueWork&&store.triggers.get(scope().userId,dueWork.taskId)?.definition
   const taskFinish=automatic.find(tool=>tool.name==='along_health_followup')
   return [
+    ...(dueWork?[
     alongTool({name:'along_source_read',description:'Request the authorized current summary for this host-dispatched Agent task. A pending/stale/unavailable result is a durable request: report waiting, do not invent data, finish the task or repeatedly poll. Host retries on the same occurrence; credentials never reach this tool. Only ready returns private scoped data; never send private values into public search.',
       schema:SourceReadInputSchema,execute:async(args)=>{
         scope()
@@ -114,15 +117,16 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
       schema:z.object({}).strict(),execute:async()=>{
         scope()
         const context=host.healthFollowup?.taskContext(ticketId)
-        if(!context)throw new Error('no task execution is bound to this work')
+        if(!context)throw new Error('no task execution is bound to this planning work; persist triggers, read them back, reply and report ready so the Host can dispatch the occurrence separately')
         const detail=store.goalDetail(context.task.userId,context.task.goalId)
         return {task:taskView(context.task),trigger:context.definition?.definition,
           occurrence_id:context.occurrence?.id,execution_key:context.occurrence?.id??context.dispatch.eventId,
           goal:{current_revision:detail.goal.currentRevision,input_version:store.inputVersion(detail.goal.id),title:detail.revision?.title,context:detail.revision?.context},
           observations:context.observed.summaries.map(summaryView)}
       }}),
-    alongTool({name:'along_calculate',description:'Perform bounded exact arithmetic with units; never executable code. An active host-dispatched calculation task persists a scoped receipt for along_task_finish. A direct current user question may calculate without creating a goal, but that preview is not a task execution or completion. Input facts/assumptions must be explained separately from arithmetic correctness.',
-      schema:z.object({calculation:CalculationInputSchema,source_request_id:z.string().min(1).max(128).optional(),quantity_sources:QUANTITY_SOURCES.optional()}).strict(),execute:async(args)=>{
+    ]:[]),
+    ...(execution?.actor==='agent'&&execution.capability==='calculation'?[alongTool({name:'along_calculate',description:'Execute this host-bound calculation occurrence using bounded exact arithmetic with units, persist its scoped receipt for along_task_finish. Input facts/assumptions are separate from arithmetic correctness. This tool is unavailable to planning tickets.',
+      schema:z.object({calculation:CalculationInputSchema,source_request_id:z.string().min(1).max(128).optional(),quantity_sources:QUANTITY_SOURCES.optional(),quantity_parameters:QUANTITY_PARAMETERS.optional()}).strict(),execute:async(args)=>{
         const bound=scope(),d=host.healthFollowup?.forTicket(ticketId)
         if(d?.due) {
           const calcScope=host.healthFollowup!.calculationScope(ticketId)
@@ -131,19 +135,33 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             const sourceDependent=definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated')
             if(sourceDependent&&(!args.source_request_id||!args.quantity_sources))throw new Error('source-dependent calculation requires source_request_id and quantity_sources from an actual fresh task read')
             if((args.source_request_id===undefined)!==(args.quantity_sources===undefined))throw new Error('source request and quantity bindings must be provided together')
-            const bindings=args.source_request_id?store.calculationEvidence.verify(calcScope,args.source_request_id,args.quantity_sources,args.calculation.quantities):undefined
+            if(args.quantity_parameters&&!args.source_request_id)throw new Error('explicit private calculation parameters require the current source read')
+            const bindings=args.source_request_id?store.calculationEvidence.verify(calcScope,args.source_request_id,args.quantity_sources,args.calculation.quantities,args.quantity_parameters):undefined
             const receipt=store.calculations.calculate(calcScope,args.calculation)
             if(bindings)store.calculationEvidence.record(receipt.id,args.source_request_id!,bindings)
             return {receipt_id:receipt.id,result:receipt.calculation.result,input:receipt.calculation.input,trace:receipt.calculation.trace,
-              calculated_at:receipt.calculatedAt,reused:receipt.reused,persisted:true}
+              calculated_at:receipt.calculatedAt,reused:receipt.reused,persisted:true,
+              input_sources:bindings?[...bindings.sources.map(s=>({quantity:s.quantity,kind:'private_field',unit:s.unit})),
+                ...bindings.parameters.map(p=>({quantity:p.quantity,kind:p.kind==='constant'?'named_constant':'user_parameter',unit:p.unit}))]
+                :args.calculation.quantities.map(q=>({quantity:q.name,kind:'supplied_input',unit:q.unit??'1'}))}
           })
         }
+        throw new Error('calculation requires a dispatched calculation occurrence')
+      }})]:[]),
+    ...(!automatic.length?[alongTool({name:'along_calculation_preview',description:'Answer a direct user arithmetic question without a task execution. Returns persisted:false and no receipt, never completes a task. After creating a typed task, finish planning and let its separate occurrence run instead.',
+      schema:z.object({calculation:CalculationInputSchema}).strict(),execute:async(args)=>{
+        const bound=scope()
         const source=bound.triggerEventId&&store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)
         if(!source||source.audience!=='conversation'||source.direction!=='inbound'||source.role!=='user')throw new Error('calculation preview requires a real current user question')
         if(!store.isCurrentChatInput(bound.userId,source.eventId,bound.allowedGoalId))return {status:'conflicted',reason:'conflicted_input'}
+        const queued=bound.allowedGoalId&&store.listTasks(bound.userId,{goalId:bound.allowedGoalId},{limit:200}).items
+          .find(task=>task.status==='open'&&task.trigger?.actor==='agent'&&task.trigger.capability==='calculation'
+            &&Date.parse(task.createdAt)>=Date.parse(source.receivedAt))
+        if(queued)return {status:'queued_for_execution',persisted:false,task_id:queued.id,
+          guidance:'This is the planning ticket, not the dispatched occurrence. The typed calculation is already durable. Read back its trigger, send the direct planning reply, and report ready; the Host will dispatch its execution separately. Do not edit status/content or wait here for its result.'}
         return {...calculate(args.calculation),persisted:false,scope:'conversation_question'}
-      }}),
-    ...(taskFinish?[{...taskFinish,name:'along_task_finish',description:'Finish this host-dispatched task occurrence. For calculation provide the actual along_calculate receipt; for research provide the structured sourced recommendation. This persists a task result and queues its existing notification channel, never proves phone delivery or human action. Read along_task_context first; no personal chat for background work.'}]:[]),
+      }})]:[]),
+    ...(taskFinish&&dueWork?[{...taskFinish,name:'along_task_finish',description:'Finish this host-dispatched task occurrence. For calculation provide the actual along_calculate receipt; for research provide the structured sourced recommendation. This persists a task result and queues its existing notification channel, never proves phone delivery or human action. Read along_task_context first; no personal chat for background work.'}]:[]),
     alongTool({name:'along_data_sources_catalog',
       description:'Read the trusted data-source capability catalog. A recommendation is not authorization. Use only these provider ids; official setup is not OAuth and never means connected.',
       schema:z.object({}).strict(),execute:async()=>{scope();return {sources:DATA_SOURCE_CATALOG}}}),
@@ -322,14 +340,16 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true,requireTaskTrigger:true })
         if (result.status === 'invalid') {
           const guidance:Record<string,string> = {
+            task_completion_requires_executor:'Only the Host-dispatched Agent occurrence can complete this task with actual tool evidence. Stop editing its status/content. Finish the current planning reply/report ready to release the goal; the durable trigger will execute separately.',
+            task_execution_already_settled:'This Agent execution already finished under the same input. Its result belongs in task detail; do not rewrite the stable task or retry a status edit. Reply from the actual result and finish the planning ticket.',
             task_trigger_required:'Every new/replanned task must include its typed trigger. Use immediate for a real Agent operation now, time with a persisted clock/cadence, event with registered owned conditions, or waiting with a real user_input/capability_available resumption. Include actor and supported capability; a task card alone is not an execution plan.',
             trigger_source_not_recommended:'Create/read this goal, read the catalog, and persist the appropriate source recommendation before creating its data-dependent task. The host cannot subscribe to an unimplemented or out-of-goal source.',
             recurring_research_remains_open:'This host-bound review cannot edit or stop the ongoing research task, its wording, time or recurrence. Make no task ChangeSet; deliver this occurrence with along_health_followup outcome:keep and its recommendation. The host renews the existing cadence. A new explicit user chat handles task changes.',
             reminder_plan_required:'Every new task needs reminder_plan in that op. If the action has a time or deadline, choose the next useful future instant as source:agent, repeat:once with explanation. For a genuine missing window use needs_time with one specific question; explicitly declined or untimed work uses off.',
             task_scoped_repeat_evidence_required:'Re-read the explicit user mandate and the existing task/time first. A once plan does not fulfill a clearly requested weekly cadence; report any unresolved cadence accurately. Use the original cadence clause, a specific action shared with the task, and the actual reminder weekday. For an explicit 补上每周 instruction quote the complete command including 补上; retain the existing future task clock if unchanged. Without a reminder verb use source:agent with a truthful explanation, not a forged source:user reminder quote. Do not substitute once for a clearly requested weekly cadence; explain the unresolved part if still unverified.',
-            user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For user source, quote the single original clock + reminder verb + exact task action, and pass that action. If cadence was also rejected, schedule the next occurrence once.',
-            daily_mandate_required:'When daily reminders have not been delegated for this action, schedule the next useful occurrence as source:agent and repeat:once.',
-            weekly_plan_required:'If weekly evidence is incomplete, schedule a concrete next occurrence once, or ask for the essential booking window.',
+            user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For a human reminder use its actual reminder clock/action evidence; an Agent operation may cite the exact user clock and requested operation. A deadline or lead time selected by you stays source:agent. Do not silently replace a requested recurrence with once.',
+            daily_mandate_required:'Re-read the original action and cadence. Do not infer daily from a metric alone or silently replace a requested recurring action with once; persist explicit waiting if essential cadence authority is missing.',
+            weekly_plan_required:'A requested weekly action requires a scheduled weekly plan with its own weekday and authorized evidence. Do not substitute once to pass validation. Ask only for a genuinely essential missing booking window; otherwise infer a reasonable clock as source:agent.',
             reminder_declined:'The user declined reminders. Keep or update the action with reminder_plan:{state:"off",reason:"opt_out"} and omit scheduled_at.',
           }
           const remedy = result.reason && guidance[result.reason]

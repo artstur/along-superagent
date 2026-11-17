@@ -371,7 +371,7 @@ export class HealthFollowup {
   taskContext(ticketId:string) {
     this.assertActive(ticketId)
     const d=this.forTicket(ticketId)
-    if(!d?.due)throw new Error('no task execution is bound to this work')
+    if(!d?.due)throw new Error('no task execution is bound to this planning work; persist triggers, read them back, reply and report ready so the Host can dispatch the occurrence separately')
     if(!d.result&&!this.current(d))throw new Error('task input or trigger was superseded')
     const task=this.host.store.assertTaskOwner(d.userId,d.due.taskId)
     const observed=this.read(ticketId,this.host.store.latestHealthSummaries(d.userId))

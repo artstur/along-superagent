@@ -34,7 +34,7 @@ function setup(domain:'custom'|'health'='custom') {
 it('offers truthful official setup capabilities and registers them in Worker sessions',async()=>{
   const h=setup()
   expect(await h.call('along_data_sources_catalog')).toMatchObject({sources:expect.arrayContaining([
-    expect.objectContaining({provider:'okx',name:'OKX',access:'official_setup',url:'https://www.okx.com/account/my-api'}),
+    expect.objectContaining({provider:'okx',name:'OKX',access:'native_read_only',url:'https://www.okx.com/account/my-api'}),
     expect.objectContaining({provider:'apple-health',access:'native_permission'})
   ])})
   expect(WORK_TOOLS).toContain('along_data_sources_catalog');expect(WORK_TOOLS).toContain('along_data_sources_recommend')

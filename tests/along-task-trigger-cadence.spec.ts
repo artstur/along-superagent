@@ -62,3 +62,10 @@ it('completes only the reported weekly occurrence and retains the next cycle and
 it.each(['周五去广州一趟','仅本周四预约周五瑜伽课','如果每周四预约周五瑜伽课会怎样','不要每周四预约周五瑜伽课'])('does not invent weekly authority for %s',text=>{
  expect(supportsRecurrence(text,text,'瑜伽','周四预约周五瑜伽课','weekly',4)).toBe(false)
 })
+it('validates the activity identity across a preceding-day clause without requiring redundant weekday prose',async()=>{
+ const {plan,trigger,commit}=setup()
+ const op=(at:string)=>({op:'task.create',content:'提前一天预约瑜伽：预约周五的瑜伽课程',scheduled_at:at,repeat:'weekly',trigger,
+  reminder_plan:{...plan,action:'预约瑜伽'}})
+ expect(await commit([op('2027-01-07T09:00:00+08:00')])).toMatchObject({status:'applied'})
+ expect(await commit([op('2027-01-08T09:00:00+08:00')])).toMatchObject({status:'invalid',reason:'task_scoped_repeat_evidence_required',diagnostic:{op_index:0}})
+})

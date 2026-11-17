@@ -42,8 +42,8 @@ export interface CommitScope {
 export type ChangeSetResult =
   | { status: 'applied'; changeset_id: string; goal_revision: number; reused: false }
   | { status: 'applied'; changeset_id: string; reused: true }
-  | { status: 'conflicted'; reason: string }
-  | { status: 'invalid'; reason: string }
+  | { status: 'conflicted'; reason: string; diagnostic?:Record<string,unknown> }
+  | { status: 'invalid'; reason: string; diagnostic?:Record<string,unknown> }
 
 // ---- schema (design §4.4) ---------------------------------------------------------------------------------------------
 
@@ -261,14 +261,14 @@ const triggerMessageText = (store: AlongStore, scope: CommitScope): string | und
 
 function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: CommitScope): ChangeSetResult {
   let goalId: string | undefined
-  const refuse = (status: 'conflicted' | 'invalid', reason: string): ChangeSetResult => {
+  const refuse = (status: 'conflicted' | 'invalid', reason: string,diagnostic?:Record<string,unknown>): ChangeSetResult => {
     // No business rows: the changeset row itself records the status and reason for audit (BC-02-01/02).
     store.saveChangeSet({ id: `cs_${randomToken()}`, userId: scope.userId, goalId, status,
       baseRevision: input.base_revision, inputVersion: input.input_version, idempotencyKey: input.idempotency_key,
       triggerEventId: scope.triggerEventId, workId: scope.workId, ticketId: scope.ticketId,
       assignmentId: scope.assignmentId, reason: input.reason, ops: input.ops,
-      derivedFromChangeset: input.derived_from_changeset, result: { reason } })
-    return { status, reason }
+      derivedFromChangeset: input.derived_from_changeset, result: { reason,...(diagnostic?{diagnostic}:{}) } })
+    return { status, reason,...(diagnostic?{diagnostic}:{}) }
   }
 
   const health = scope.triggerEventId === undefined ? undefined : store.health.get(scope.triggerEventId)
@@ -322,7 +322,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
   type Mandate = NonNullable<ReturnType<AlongStore['health']['daily']>>
   const retained = new Map<ChangeSetOp,Mandate>()
   const evidenceMessages=new Map<ChangeSetOp,typeof userMessage>()
-  for (const op of input.ops) {
+  for (const [opIndex,op] of input.ops.entries()) {
     if (op.op !== 'task.create' && op.op !== 'task.update') continue
     const fields = op.op === 'task.create' ? op : op.fields
     const existing = op.op === 'task.update' ? store.getTask(scope.userId,op.task_id) : undefined
@@ -427,7 +427,10 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
         } else if (!fields.repeat) return refuse('invalid','task_scoped_repeat_evidence_required')
       }
       const error = planError(plan,time,retained.has(op)?'once':repeat,content,userMessage,trigger?.actor==='agent')
-      if (error) return refuse('invalid',error)
+      if (error) return refuse('invalid',error,{op_index:opIndex,field:'reminder_plan',
+        evidence_found:plan.state==='scheduled'&&!!plan.evidence&&!!userMessage?.text.includes(plan.evidence),
+        action_in_evidence:plan.state==='scheduled'&&!!plan.action&&!!plan.evidence?.includes(plan.action),
+        action_in_task:plan.state==='scheduled'&&!!plan.action&&content.includes(plan.action)})
       if (plan.state==='needs_time' && existing?.reminderPlan?.state==='off' && existing.reminderPlan.reason==='opt_out')
         return refuse('invalid','reminder_declined')
     }

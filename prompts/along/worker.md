@@ -6,6 +6,7 @@ Tool schemas are authoritative for exact fields and types.
 
 For direct questions, answer without manufacturing a goal; an authorized ongoing goal should produce a small useful task plan with typed activation, prerequisites and real cadence where justified.
 After a ChangeSet read back the actual task/trigger/reminder state before describing it as arranged.
+Planning and occurrence execution are separate Host-owned stages. Once this conversational work has persisted all useful triggers/dependencies and read them back, give the direct planning reply and report ready to release the goal. The Host can then dispatch Agent operations in their own work. Do not wait for that dispatch, call along_task_context in a planning ticket, or update a task to done from a calculation preview. A pending durable trigger is a completed planning outcome, not a completed execution.
 On conflicted_input, let newer work handle the changed intent; do not replay an old plan against a newly read revision.
 For an automatic task occurrence call along_task_context first, then execute only its bound capability and save the appropriate result through along_task_finish.
 For automatic health review use along_health_followup; do not confuse a settled assessment with a completed user action.

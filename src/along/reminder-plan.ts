@@ -65,11 +65,13 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   const delegated=delegatesPlan(message)
   // An ongoing goal may delegate a habitual activity without spelling “every” before every weekday.
   // Validate the cited activity/offset relationship, rather than assuming any weekday is recurring.
-  if(repeat==='weekly'&&!denial.test(quote)&&!genericAction.test(action)&&quote.includes(action)&&content.includes(action)
+  const activity=action.replace(/^(?:预约|预订|预定)\s*/u,'')
+  if(repeat==='weekly'&&!denial.test(quote)&&!!activity&&!genericAction.test(activity)&&quote.includes(activity)&&content.includes(activity)
     && /保持|长期|持续|生活方式|每(?:个)?周|养成/.test(message)
     && new Set(weekdays(quote)).size>=2&&/前一天(?:需要|要|得|提前|必须|先|记得|帮我|提醒我|去)*(?:预约|预订)/.test(quote)) {
     const booking=/(?:预约|预订)/.exec(content),activityDay=weekday%7+1
-    if(booking&&weekdays(content.slice(0,booking.index)).includes(weekday)
+    const beforeDays=booking?weekdays(content.slice(0,booking.index)):[]
+    if(booking&&(!beforeDays.length||beforeDays.includes(weekday))
       &&weekdays(content.slice(booking.index+booking[0].length)).includes(activityDay)&&weekdays(quote).includes(activityDay))return true
   }
   if (repeat==='weekly' && delegated && precedingBookingDay(message,quote,action,content,weekday)) return true
