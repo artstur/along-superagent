@@ -7,6 +7,7 @@
  * `CommitScope` → `src/along/changeset.ts`) and are assignable to them.
  */
 import type { AlongStore } from './store.ts'
+import { taskReviewChangeRefusal,assertTaskReviewWrite } from './task-repair.ts'
 
 /** Server-bound identity from the Host's pairing session; never taken from a request body. */
 export interface AlongIdentity { userId: string; deviceId: string }
@@ -47,7 +48,7 @@ export interface AlongChangesetModule { commitChangeSet(input: AlongChangeSetInp
  */
 export class AlongService {
   constructor(private readonly store: AlongStore,
-    private readonly modules: { inbox?: AlongInboxModule; changeset?: AlongChangesetModule } = {}) {}
+    private readonly modules: { inbox?: AlongInboxModule; changeset?: AlongChangesetModule; taskReviews?:{requestTaskReview(identity:AlongIdentity,body:unknown):unknown} } = {}) {}
   /** Storage primitives for the loopback API reads and for the injected modules. */
   get alongStore(): AlongStore { return this.store }
   /** Receive an event reliably (transactional Inbox + business rows + delivery queue); implemented by the inbox module. */
@@ -55,9 +56,19 @@ export class AlongService {
     if (!this.modules.inbox) throw new Error('the Along inbox module is not installed')
     return this.modules.inbox.acceptEvent(envelope, identity)
   }
+  requestTaskTriggerReview(identity:AlongIdentity,body:unknown):unknown {
+    if(!this.modules.taskReviews)throw new Error('task trigger review not installed')
+    return this.modules.taskReviews.requestTaskReview(identity,body)
+  }
   /** Validate and auto-commit a ChangeSet (applied / conflicted / invalid); implemented by the changeset module. */
   commitChangeSet(input: AlongChangeSetInput, scope: AlongCommitScope): AlongChangeSetResult {
     if (!this.modules.changeset) throw new Error('the Along changeset module is not installed')
-    return this.modules.changeset.commitChangeSet(input, scope)
+    return this.store.atomic(()=>{
+      const refused=taskReviewChangeRefusal(this.store,input,scope)
+      if(refused)return {status:'invalid',reason:refused}
+      const result=this.modules.changeset!.commitChangeSet(input, scope)
+      if(result.status==='applied')assertTaskReviewWrite(this.store,scope)
+      return result
+    })
   }
 }

@@ -374,6 +374,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/calculation-evidence.ts` | Exact private-quantity bindings to fresh scoped source reads, rechecked before calculation publication |
 | `src/along/source-state.ts` | Monotonic Host-attested source metadata and private task-scoped cache reads with authorization, freshness and replay boundaries |
 | `src/along/task-trigger.ts` | Registered task trigger definitions, generations and durable execution/completion occurrences |
+| `src/along/task-repair.ts` | Private same-task trigger review request, evidence/current-scope checks, narrow ChangeSet boundary and persisted completion postconditions |
 | `src/along/task-activation.ts` | Trusted condition evaluation and activation into the existing persistent due-task dispatch |
 | `src/along/store.ts` | `AlongStore`, the only writer of `along.sqlite`: ownership checks, object and input versions, messages ordered by the server's `seq`, paged goal, task, message and change-set reads, health summaries, Inbox rows, the delivery queue with its lease and failure paths, work links, run records and the sync outbox, all inside `atomic` savepoints; `assertAlongDataIsolation` keeps the business directory outside the worker execution root |
 | `src/along/service.ts` | `AlongService`, the facade the Runtime assembles: the loopback API's single entry, with the inbox and changeset factories injected |
@@ -459,6 +460,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-prompts.spec.ts` | Actual Sessions role selection, on-demand capability registration, isolated overrides, provenance and packaged prompt fixture |
 | `tests/along-source-state.spec.ts` | Source version ordering, scoped private reads, freshness recovery, revocation, negative replay, bounded summaries and restart/rollback |
 | `tests/along-task-trigger-runtime.spec.ts` | Actual Runtime/Engine/tool chain from new goal to immediate calculation, persisted result and idempotent publication |
+| `tests/along-task-trigger-review.spec.ts` | Private bridge maintenance admission, same-goal evidence, immutable task fields, durable postconditions, schema-12 migration and stale scope refusal |
+| `tests/along-task-trigger-review-runtime.spec.ts` | Real Runtime registered review Worker, exact tool boundary, same-Ticket retry and restart recovery without chat, notifications or execution counts |
 | `tests/along-task-trigger-cadence.spec.ts` | Continuing goal cadence, prior-evidence repair, two-week occurrence completion and non-recurring counterexamples |
 | `tests/along-task-activation.spec.ts` | Input changes, temporary capability/permission loss and restart/cancellation recovery through persistent task occurrences |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
