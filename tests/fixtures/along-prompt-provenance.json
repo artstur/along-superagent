@@ -27,7 +27,7 @@
     },
     {
       "name": "dsh-superagent-along-task",
-      "sha256": "bc39ebc7021ede8e9a3584d84101975f1204157cdc3dc433a5214f0b6a516aeb"
+      "sha256": "45ccc69799d305c0bee92c835d171452dca1696a17c4855d6d63fc044d5a7183"
     },
     {
       "name": "dsh-superagent-along-research",
@@ -39,7 +39,7 @@
     },
     {
       "name": "dsh-superagent-along-scheduling",
-      "sha256": "720e14c84ba161507d4744c244fca0aa6b5d161c046adb5f68d1ed5407dc7957"
+      "sha256": "c0b635e3c28656d93ffe28635751140f32bfdd8add21863b229fb12b053c969b"
     },
     {
       "name": "dsh-superagent-along-calculation",
