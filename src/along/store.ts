@@ -21,6 +21,9 @@ import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 import { recommendedSources, type DataSourceInput, type GoalDataSource } from './data-sources.ts'
 import { taskExecution, type TaskExecutionSummary } from './task-execution.ts'
+import { TaskTriggerStore, type TaskTriggerView } from './task-trigger.ts'
+import { CalculationStore } from './calculation-store.ts'
+import { SourceStateStore } from './source-state.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
 export interface Page<T> { items: T[]; nextCursor?: string }
@@ -40,6 +43,7 @@ export interface TaskRow {
   id: string; goalId: string; userId: string; status: 'open' | 'done' | 'cancelled'; content: string
   scheduledAt?: string; reminderPlan?: ReminderPlan; previousDailyOccurrence?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
   execution?: TaskExecutionSummary
+  trigger?: TaskTriggerView
 }
 export interface TaskRevisionRow {
   taskId: string; revision: number; userId: string; goalId: string; content: string; status: 'open' | 'done' | 'cancelled'
@@ -193,6 +197,9 @@ export class AlongStore {
   readonly maintenance: MaintenanceStore
   readonly health: HealthStore
   readonly research: ResearchStore
+  readonly triggers: TaskTriggerStore
+  readonly calculations: CalculationStore
+  readonly sources: SourceStateStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -209,6 +216,9 @@ export class AlongStore {
       this.maintenance = new MaintenanceStore(this.db, work => this.atomic(work))
       this.health = new HealthStore(this.db)
       this.research = new ResearchStore(this.db)
+      this.triggers = new TaskTriggerStore(this.db)
+      this.calculations = new CalculationStore(this.db)
+    this.sources = new SourceStateStore(this.db)
     } catch (error) {
       this.db.close()
       throw error
@@ -268,7 +278,8 @@ export class AlongStore {
       reminderPlan: this.health.reminderPlan(this.text(row.id)),
       previousDailyOccurrence: this.health.previousDailyOccurrence(this.text(row.id), this.int(row.current_revision)),
       completedFeedbackEventId: this.opt(row.completed_feedback_event_id), currentRevision: this.int(row.current_revision),
-      createdAt: this.text(row.created_at), updatedAt: this.text(row.updated_at) }
+      createdAt: this.text(row.created_at), updatedAt: this.text(row.updated_at),
+      ...(this.triggers.view(this.text(row.user_id),this.text(row.id)) ? {trigger:this.triggers.view(this.text(row.user_id),this.text(row.id))} : {}) }
   }
   private messageRow(row: Record<string, SQLInputValue>): MessageRow {
     return { id: this.text(row.id), userId: this.text(row.user_id), eventId: this.text(row.event_id),
@@ -490,6 +501,8 @@ export class AlongStore {
         this.health.setDaily(input.taskId)
         this.health.savePlan(input.taskId,undefined)
       }
+      this.triggers.carry({id:task.id,userId:task.userId,goalId:task.goalId,currentRevision:revision,status,content,
+        ...(scheduledAt?{scheduledAt}:{}),createdAt:task.createdAt})
       return revision
     })
   }

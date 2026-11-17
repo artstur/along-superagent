@@ -254,11 +254,12 @@ it('renews the same weekly research task across repeated ticks and restart, emit
  let h=await startRuntime(undefined,{dir})
  try{
   let store=h.runtime.along!.service.alongStore;store.assertUser(userId,deviceId)
+  vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
   const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({goalId:goal.id,userId,title:'持续周末运动',status:'active'});store.ensureInputVersion(userId,goal.id)
   const event='weekly_research_mandate',text='每周五19:00根据天气安排周末徒步'
   expect(h.runtime.along!.service.acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text}},{userId,deviceId})).toMatchObject({status:'accepted'})
   const setup=alongTools({service:h.runtime.along!.service,scopeFor:()=>({userId,allowedGoalId:goal.id,triggerEventId:event})},'setup_weekly').find(t=>t.name==='along_changes_commit')!
-  const create={idempotency_key:'weekly_setup',base_revision:1,input_version:store.inputVersion(goal.id),reason:'按真实合成委托安排周期',ops:[{op:'task.create',content:'周五根据天气安排周末徒步',scheduled_at:'2027-01-08T11:00:00Z',repeat:'weekly',reminder_plan:{state:'scheduled',source:'agent',explanation:'每周五为周末核查资料',evidence:text,action:'安排周末徒步'}}]}
+  const create={idempotency_key:'weekly_setup',base_revision:1,input_version:store.inputVersion(goal.id),reason:'按真实合成委托安排周期',ops:[{op:'task.create',trigger:{kind:'time',actor:'agent',capability:'research'},content:'周五根据天气安排周末徒步',scheduled_at:'2027-01-08T11:00:00Z',repeat:'weekly',reminder_plan:{state:'scheduled',source:'agent',explanation:'每周五为周末核查资料',evidence:text,action:'安排周末徒步'}}]}
   const created=await setup.execute(setup.schema.parse(create),new AbortController().signal);expect(created).toEqual({status:'applied',changeset_id:expect.any(String),goal_revision:expect.any(Number),reused:false})
   const task=store.goalDetail(userId,goal.id).tasks[0]!
   const count=()=>store.syncPage(userId,0,200).items.filter(i=>(i.payload as any).recommendation)
@@ -288,6 +289,7 @@ it('renews the same weekly research task across repeated ticks and restart, emit
   }
   await review('2027-01-08T11:00:00Z','2027-01-15T11:00:00.000Z',1)
   await h.stop();h=await startRuntime(undefined,{dir});store=h.runtime.along!.service.alongStore
+  vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
   for(let n=0;n<3;n++)h.runtime.along!.healthFollowup.tick()
   await h.runtime.idle();expect(count()).toHaveLength(1)
   expect(h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='task_due')).toHaveLength(1)

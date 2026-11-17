@@ -20,6 +20,7 @@
 import { isResearchTaskContent } from './recommendation.ts'
 import { z } from 'zod'
 import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, type PlanInput, type Repeat } from './reminder-plan.ts'
+import { TASK_TRIGGER_SCHEMA, type TaskTriggerInput } from './task-trigger.ts'
 import { hasDailyMandate } from './task-schedule.ts'
 import { randomToken, type AlongStore, type ChangeSetRow, type ChangeSetSave, type GoalRevisionRow, type TaskRow } from './store.ts'
 
@@ -34,6 +35,7 @@ export interface CommitScope {
   workId?: string
   triggerEventId?: string
   requireReminderPlan?: boolean
+  requireTaskTrigger?: boolean
 }
 
 /** Only applied / conflicted / invalid exist — no pending adoption (D3). Worker-facing fields per design §4.4. */
@@ -83,10 +85,10 @@ export const ALONG_OPS_SCHEMA = z.array(z.discriminatedUnion('op', [
   z.object({ op: z.literal('goal.update'), fields: z.object({
     title: ALONG_TITLE_SCHEMA.optional(), metric: ALONG_METRIC_SCHEMA.optional(), context: ALONG_CONTEXT_SCHEMA.optional() }).strict() }).strict(),
   z.object({ op: z.literal('goal.archive') }).strict(),
-  z.object({ op: z.literal('task.create'), reminder_plan: PLAN.optional(), repeat: z.enum(['once','daily','weekly']).optional(), content: ALONG_CONTENT_SCHEMA, scheduled_at: ALONG_ISO_SCHEMA.optional(),
+  z.object({ op: z.literal('task.create'), trigger:TASK_TRIGGER_SCHEMA.optional(), reminder_plan: PLAN.optional(), repeat: z.enum(['once','daily','weekly']).optional(), content: ALONG_CONTENT_SCHEMA, scheduled_at: ALONG_ISO_SCHEMA.optional(),
     task_client_id: ALONG_ID_SCHEMA.optional() }).strict(),
   z.object({ op: z.literal('task.update'), task_id: ALONG_ID_SCHEMA, base_revision: ALONG_BASE_REVISION_SCHEMA,
-    fields: z.object({ reminder_plan: z.union([PLAN,z.literal('keep')]).optional(), repeat: z.enum(['once','daily','weekly']).optional(), content: ALONG_CONTENT_SCHEMA.optional(), scheduled_at: ALONG_ISO_SCHEMA.nullable().optional(),
+    fields: z.object({ trigger:z.union([TASK_TRIGGER_SCHEMA,z.literal('keep')]).optional(), reminder_plan: z.union([PLAN,z.literal('keep')]).optional(), repeat: z.enum(['once','daily','weekly']).optional(), content: ALONG_CONTENT_SCHEMA.optional(), scheduled_at: ALONG_ISO_SCHEMA.nullable().optional(),
       status: z.enum(['open', 'done', 'cancelled']).optional() }).strict() }).strict(),
   z.object({ op: z.literal('task.cancel'), task_id: ALONG_ID_SCHEMA, base_revision: ALONG_BASE_REVISION_SCHEMA }).strict(),
 ])).min(1)
@@ -319,14 +321,68 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
   const reminderNotes: string[] = []
   type Mandate = NonNullable<ReturnType<AlongStore['health']['daily']>>
   const retained = new Map<ChangeSetOp,Mandate>()
+  const evidenceMessages=new Map<ChangeSetOp,typeof userMessage>()
   for (const op of input.ops) {
     if (op.op !== 'task.create' && op.op !== 'task.update') continue
     const fields = op.op === 'task.create' ? op : op.fields
     const existing = op.op === 'task.update' ? store.getTask(scope.userId,op.task_id) : undefined
     const plan = fields.reminder_plan
+    let userMessage=message?.role==='user'&&message.direction==='inbound'&&message.audience==='conversation'?message:undefined
+    if(plan&&plan!=='keep'&&plan.state==='scheduled'&&plan.evidence_event_id) {
+      const source=store.getMessage(scope.userId,`msg:${scope.userId}:${plan.evidence_event_id}`)
+      const inbox=source&&store.findInboxEvent(scope.userId,source.eventId)
+      if(!source||source.audience!=='conversation'||source.role!=='user'||source.direction!=='inbound'||inbox?.status!=='accepted'
+        ||inbox.eventType!=='along.user_message'||!goalId||!store.messageLinkedToGoal(source.id,goalId))return refuse('invalid','invalid_schedule_evidence')
+      const action=fields.content??existing?.content??''
+      const later:typeof source[]=[]
+      let beforeSeq:number|undefined
+      for(;;) {
+        const page=store.messagesByGoal(scope.userId,goalId,{limit:200,beforeSeq})
+        later.push(...page.items.filter(m=>m.seq>source.seq&&m.role==='user'&&m.direction==='inbound'&&m.audience==='conversation'))
+        const first=page.items[0]
+        if(!first||first.seq<=source.seq||page.items.length<200)break
+        beforeSeq=first.seq
+      }
+      if(later.some(m=>declinesReminder(m.text,action)||singleOccurrence(m.text,action,plan.action??action)))return refuse('invalid','superseded_schedule_evidence')
+      if(!message&&existing&&fields.scheduled_at&&existing.scheduledAt&&Date.parse(fields.scheduled_at)!==Date.parse(existing.scheduledAt)
+        &&source.seq<(later.at(-1)?.seq??source.seq))return refuse('invalid','superseded_schedule_evidence')
+      userMessage=source
+    }
+    evidenceMessages.set(op,userMessage)
     const changesTiming = fields.scheduled_at !== undefined || fields.repeat !== undefined
     const reopening = op.op === 'task.update' && op.fields.status === 'open' && existing?.status !== 'open'
-    if (!plan && scope.requireReminderPlan && (op.op === 'task.create' || reopening || userMessage && (changesTiming || fields.content !== undefined)))
+    const priorTrigger=existing&&store.triggers.get(scope.userId,existing.id)
+    if(scope.requireTaskTrigger&&(op.op==='task.create'||priorTrigger&&(reopening||changesTiming||fields.content!==undefined))&&fields.trigger===undefined)
+      return refuse('invalid','task_trigger_required')
+    if(fields.trigger==='keep'&&(!priorTrigger||reopening||fields.content!==undefined&&fields.content!==existing?.content))return refuse('invalid','cannot_keep_task_trigger')
+    const trigger=fields.trigger==='keep'?priorTrigger?.definition:fields.trigger??priorTrigger?.definition
+    if(trigger) {
+      if(trigger.kind==='time') {
+        const time=fields.scheduled_at===undefined?existing?.scheduledAt:fields.scheduled_at
+        if(!time)return refuse('invalid','time_trigger_requires_schedule')
+      } else if(fields.scheduled_at!==undefined&&fields.scheduled_at!==null)return refuse('invalid','non_time_trigger_has_model_clock')
+      if((trigger.kind==='immediate'||trigger.kind==='event'||trigger.kind==='waiting')&&fields.repeat&&fields.repeat!=='once')
+        return refuse('invalid','clock_repeat_requires_time_trigger')
+      for(const condition of trigger.conditions??[]) {
+        if(condition.kind==='source_ready'||condition.kind==='source_updated') {
+          if(!goalId||!store.goalDataSources(scope.userId,goalId).some(s=>s.provider===condition.provider))return refuse('invalid','trigger_source_not_recommended')
+        } else if(condition.kind==='health_available') {
+          if(domain!=='health'&&(!goalId||!store.goalDataSources(scope.userId,goalId).some(s=>s.provider==='apple-health')))return refuse('invalid','trigger_source_not_recommended')
+        } else {
+          const prerequisite=store.getTask(scope.userId,condition.task_id)
+          if(!prerequisite||prerequisite.goalId!==goalId||prerequisite.id===existing?.id)return refuse('invalid','invalid_task_trigger_dependency')
+          const reaches=(taskId:string,visited=new Set<string>()):boolean=>{
+            if(taskId===existing?.id)return true
+            if(visited.has(taskId))return false
+            visited.add(taskId)
+            const d=store.triggers.get(scope.userId,taskId)?.definition
+            return !!d?.conditions?.some(c=>c.kind==='task_completed'&&reaches(c.task_id,visited))
+          }
+          if(existing&&reaches(prerequisite.id))return refuse('invalid','task_trigger_dependency_cycle')
+        }
+      }
+    }
+    if (!plan && scope.requireReminderPlan && (!trigger||trigger.kind==='time') && (op.op === 'task.create' || reopening || changesTiming || userMessage && fields.content !== undefined))
       return refuse('invalid','reminder_plan_required')
     if (plan === 'keep') {
       const mandate = existing && store.health.daily(existing.id)
@@ -365,7 +421,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
           retained.set(op,prior)
         } else if (!fields.repeat) return refuse('invalid','task_scoped_repeat_evidence_required')
       }
-      const error = planError(plan,time,retained.has(op)?'once':repeat,content,userMessage)
+      const error = planError(plan,time,retained.has(op)?'once':repeat,content,userMessage,trigger?.actor==='agent')
       if (error) return refuse('invalid',error)
       if (plan.state==='needs_time' && existing?.reminderPlan?.state==='off' && existing.reminderPlan.reason==='opt_out')
         return refuse('invalid','reminder_declined')
@@ -491,7 +547,7 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       }
     }
   }
-  function applyPlan(task:TaskRow, plan:PlanInput, repeat:Repeat, time:string|undefined, prior?:Mandate):void {
+  function applyPlan(task:TaskRow, plan:PlanInput, repeat:Repeat, time:string|undefined, prior?:Mandate, userMessage:typeof message=message):void {
     if (prior) repeat=prior.weekday?'weekly':'daily'
     const weekday=repeat==='weekly' && time && userMessage?.timezone ? localWeekday(time,userMessage.timezone) : undefined
     const next=publicPlan(plan,repeat,weekday)
@@ -525,21 +581,23 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       const task = store.insertTask({ goalId: goalId!, userId: scope.userId, content: op.content, scheduledAt: op.scheduled_at })
       const revision = store.appendTaskRevision({ taskId: task.id, userId: scope.userId, content: op.content,
         scheduledAt: op.scheduled_at, basisChangeset: changesetId, originEventId })
-      if (op.reminder_plan) applyPlan(task,op.reminder_plan,op.repeat??'once',op.scheduled_at)
+      if (op.reminder_plan) applyPlan(task,op.reminder_plan,op.repeat??'once',op.scheduled_at,undefined,evidenceMessages.get(op))
       else if (op.repeat === 'once') store.health.setDaily(task.id)
       else if (op.repeat === 'daily' && message) store.health.setDaily(task.id, {
         eventId: message.eventId, zone: message.timezone!, wallTime: op.scheduled_at! })
+      if(op.trigger)store.triggers.put(store.assertTaskOwner(scope.userId,task.id),op.trigger,input.input_version)
       touchedTasks.push({ task_id: task.id, revision, status: 'open',
         ...(op.task_client_id !== undefined ? { task_client_id: op.task_client_id } : {}) })
     } else if (op.op === 'task.update') {
       const prior = store.assertTaskOwner(scope.userId, op.task_id)
       const plan = op.fields.reminder_plan
+      const nonTime=op.fields.trigger&&op.fields.trigger!=='keep'&&op.fields.trigger.kind!=='time'
       const inactive = plan && plan !== 'keep' && plan.state !== 'scheduled'
       const revision = store.appendTaskRevision({ taskId: op.task_id, userId: scope.userId, content: op.fields.content,
-        status: op.fields.status, scheduledAt: inactive ? null : op.fields.scheduled_at, basisChangeset: changesetId, originEventId })
+        status: op.fields.status, scheduledAt: inactive||nonTime ? null : op.fields.scheduled_at, basisChangeset: changesetId, originEventId })
       const task = store.assertTaskOwner(scope.userId, op.task_id), status = task.status
       if (status==='open') {
-        if (plan && plan !== 'keep') applyPlan(prior,plan,op.fields.repeat??'once',task.scheduledAt,retained.get(op))
+        if (plan && plan !== 'keep') applyPlan(prior,plan,op.fields.repeat??'once',task.scheduledAt,retained.get(op),evidenceMessages.get(op))
         else if (!task.scheduledAt || op.fields.repeat === 'once') store.health.setDaily(task.id)
         else if (op.fields.repeat === 'daily' && message) store.health.setDaily(task.id, {
           eventId: message.eventId, zone: message.timezone!, wallTime: task.scheduledAt })
@@ -552,6 +610,8 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
           else store.health.savePlan(task.id,undefined)
         }
       }
+      if(op.fields.trigger&&op.fields.trigger!=='keep')store.triggers.put(task,op.fields.trigger,input.input_version)
+      if(plan&&plan!=='keep'&&plan.state==='off'&&plan.reason==='opt_out')store.triggers.cancel(scope.userId,task.id)
       touchedTasks.push({ task_id: op.task_id, revision, status })
     } else if (op.op === 'task.cancel') {
       const revision = store.appendTaskRevision({ taskId: op.task_id, userId: scope.userId, status: 'cancelled',

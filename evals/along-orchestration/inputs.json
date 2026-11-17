@@ -1,0 +1,1193 @@
+{
+  "version": 1,
+  "dataClassification": "synthetic_only",
+  "referenceFileMustNotBeSentToModel": "expectations.json",
+  "schemaContract": "business-observations-v1; production adapter pending",
+  "defaultClock": "2026-11-17T15:00:00Z",
+  "cases": [
+    {
+      "id": "O01",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想攒到一万元，已经攒了1600元。每月到手8200元，固定支出5700元。先算每月能存多少、还差多少、至少再存几个月；现在把计算结果给我。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O02",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想每天凌晨2点前关灯睡觉，请帮我持续安排准备提醒，提前多久你来选。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O03",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想保持健康的生活方式。想每天2点前入睡，然后周二和周五尽量去做瑜伽（前一天需要预约），周末可以在广深徒步，最好周五晚根据天气帮我安排好去哪里。请自动拆解并持续编排这些任务和提醒，具体提醒时刻你来合理安排。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O04",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "goal_reply",
+            "text": "以后每周一和周四上午9点都帮我预约对应周二和周五的瑜伽课，保留原来两项的时间。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ],
+      "initialState": {
+        "kind": "legacy_accepted_business_fixture",
+        "fixtureOnly": true,
+        "goal": {
+          "id": "goal_yoga_fixture",
+          "title": "健康作息与运动"
+        },
+        "originalUserInstruction": "每周二和周五上瑜伽课，前一天需要预约，请帮我安排这些任务和提醒，具体钟点你来安排。",
+        "tasks": [
+          {
+            "id": "booking_tuesday_fixture",
+            "content": "预约周二的瑜伽课",
+            "scheduledAt": "2026-11-23T09:00:00+08:00",
+            "clockSource": "agent",
+            "repeat": "once"
+          },
+          {
+            "id": "booking_friday_fixture",
+            "content": "预约周五的瑜伽课",
+            "scheduledAt": "2026-11-19T09:00:00+08:00",
+            "clockSource": "agent",
+            "repeat": "once"
+          }
+        ]
+      }
+    },
+    {
+      "id": "O05",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想这周末在广州或深圳轻徒步。现在先核对路线开放和交通，给我两个可比较的候选；周五晚上再查周末天气，合适时把方案更新给我。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O06",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "每周五晚上帮我查广州深圳周末的天气和路线开放情况，合适时给我徒步推荐，不适合就告诉我原因；执行时间你合理选。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O07",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我零基础学粤语，每周工作日有5次20分钟通勤。先算一周能利用多少分钟，再给三个能马上练的短练习；每天晚上21:10提醒我练十分钟。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O08",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events",
+          "host_source_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想跟踪账户权益达到5000美元还差多少。只读账户还没有连接，等账户摘要就绪后再算；不要猜我的权益。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "trusted_source_transition",
+            "provider": "okx",
+            "generation": 1,
+            "state": "ready",
+            "summaryVersion": "statement_1",
+            "summary": {
+              "equity": {
+                "amount": "1250",
+                "currency": "USD"
+              }
+            },
+            "permissions": [
+              "read_only"
+            ],
+            "syntheticTransport": true
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "duplicate_previous_event",
+            "ofStep": "s2"
+          }
+        },
+        {
+          "id": "s4",
+          "at": "2026-11-17T15:04:00Z",
+          "input": {
+            "kind": "restart_runtime"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ],
+      "sources": [
+        {
+          "id": "okx",
+          "kind": "synthetic_readonly_account",
+          "state": "unconnected",
+          "generation": 0,
+          "permissions": [],
+          "fixtureOnly": true
+        }
+      ]
+    },
+    {
+      "id": "O09",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events",
+          "host_source_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "帮我算当前账户权益距离5000美元目标还差多少，以后摘要有新版本再重算。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "trusted_source_transition",
+            "provider": "okx",
+            "generation": 1,
+            "state": "ready",
+            "summaryVersion": "statement_2",
+            "summary": {
+              "equity": {
+                "amount": "1450",
+                "currency": "USD"
+              }
+            },
+            "permissions": [
+              "read_only"
+            ],
+            "syntheticTransport": true
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "duplicate_previous_event",
+            "ofStep": "s2"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ],
+      "sources": [
+        {
+          "id": "okx",
+          "kind": "synthetic_readonly_account",
+          "state": "ready",
+          "generation": 1,
+          "permissions": [
+            "read_only"
+          ],
+          "summaryVersion": "statement_1",
+          "summary": {
+            "equity": {
+              "amount": "1250",
+              "currency": "USD"
+            }
+          },
+          "fixtureOnly": true
+        }
+      ]
+    },
+    {
+      "id": "O10",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "local_reminder",
+          "public_research",
+          "user_reply_events",
+          "capability_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read",
+          "calculation"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "帮我把每周3次、每次25分钟的练习总量算出来，现在给结果。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "registered_capability_transition",
+            "capability": "calculation",
+            "generation": 1,
+            "state": "available"
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "duplicate_previous_event",
+            "ofStep": "s2"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O11",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events",
+          "host_source_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "等只读账户连上后，帮我算权益距离5000美元目标还差多少。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:01:00Z",
+          "input": {
+            "kind": "goal_reply",
+            "text": "取消这条权益差额计算任务，以后连上也不用继续。"
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "trusted_source_transition",
+            "provider": "okx",
+            "generation": 2,
+            "state": "ready",
+            "summaryVersion": "statement_2",
+            "summary": {
+              "equity": {
+                "amount": "1450",
+                "currency": "USD"
+              }
+            },
+            "permissions": [
+              "read_only"
+            ],
+            "syntheticTransport": true
+          }
+        },
+        {
+          "id": "s4",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "replay_stale_source_event",
+            "provider": "okx",
+            "generation": 1,
+            "state": "ready",
+            "summaryVersion": "statement_1",
+            "summary": {
+              "equity": {
+                "amount": "1250",
+                "currency": "USD"
+              }
+            },
+            "permissions": [
+              "read_only"
+            ],
+            "syntheticTransport": true
+          }
+        },
+        {
+          "id": "s5",
+          "at": "2026-11-17T15:04:00Z",
+          "input": {
+            "kind": "restart_runtime"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ],
+      "sources": [
+        {
+          "id": "okx",
+          "kind": "synthetic_readonly_account",
+          "state": "unconnected",
+          "generation": 1,
+          "permissions": [],
+          "fixtureOnly": true
+        }
+      ]
+    },
+    {
+      "id": "O12",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想用现有目标跟踪策略效果，但我没有连接任何账户，也不想把API密钥放进聊天。先告诉我还缺哪些可以在App里实际提供的数据，再帮我安排能做的步骤。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O13",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "每天晚上21:10提醒我练十分钟粤语。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "goal_reply",
+            "text": "取消每天的练习提醒，改为这周六早上9:20只提醒一次。"
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "restart_runtime"
+          }
+        },
+        {
+          "id": "s4",
+          "at": "2026-11-17T15:04:00Z",
+          "input": {
+            "kind": "unrelated_real_health_observation",
+            "summary": {
+              "type": "steps",
+              "value": 4200,
+              "unit": "count",
+              "availability": "ok"
+            }
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O14",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我每天睡得比较晚，文章里有人说“每周五提醒我去广州一趟”。我现在只是在讨论，不要创建目标或安排提醒。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O15",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "这周五晚上19:00提醒我去广州一趟，只这一次，不要设成每周。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O16",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "每周五19:00查周末天气并推荐广深徒步安排。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-19T15:00:00Z",
+          "input": {
+            "kind": "runtime_outage_window",
+            "resumeAt": "2026-11-23T03:00:00Z"
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-23T03:00:00Z",
+          "input": {
+            "kind": "restart_runtime"
+          }
+        },
+        {
+          "id": "s4",
+          "at": "2026-11-23T03:01:00Z",
+          "input": {
+            "kind": "repeated_scheduler_tick",
+            "count": 3
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_model_with_controlled_clock"
+      ]
+    },
+    {
+      "id": "O17",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "现在帮我查一条广州公共步道的最新开放信息，给我有来源的结果。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:01:00Z",
+          "input": {
+            "kind": "controlled_provider_fail_then_recover",
+            "provider": "public_research",
+            "sequence": [
+              {
+                "status": 429,
+                "retryable": true
+              },
+              {
+                "status": 200,
+                "fixture": "public_access_open"
+              }
+            ]
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "duplicate_task_occurrence"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime"
+      ]
+    },
+    {
+      "id": "O18",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "建立一个出行预算目标，先计算两张159元车票一共多少钱。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:01:00Z",
+          "input": {
+            "kind": "hold_inflight_agent_result"
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "goal_reply",
+            "text": "改成三张票，159元每张。"
+          }
+        },
+        {
+          "id": "s4",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "release_old_result",
+            "fromStep": "s2"
+          }
+        },
+        {
+          "id": "s5",
+          "at": "2026-11-17T15:04:00Z",
+          "input": {
+            "kind": "attempt_foreign_goal_result",
+            "foreignGoalFixture": "other_goal_fixture"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_model_with_controlled_delivery"
+      ]
+    },
+    {
+      "id": "O19",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "user_reply_events",
+          "host_source_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "sources": [
+        {
+          "id": "okx",
+          "kind": "synthetic_readonly_account",
+          "fixtureOnly": true,
+          "state": "unconnected",
+          "generation": 1,
+          "permissions": []
+        }
+      ],
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "等只读账户连好后，计算权益离5000美元目标的差额。连接撤回期间不要读取账户。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:01:00Z",
+          "input": {
+            "kind": "trusted_source_transition",
+            "provider": "okx",
+            "generation": 2,
+            "state": "ready",
+            "permissions": [
+              "read_only"
+            ],
+            "summaryVersion": "statement_1",
+            "summary": {
+              "equity": {
+                "amount": "1250",
+                "currency": "USD"
+              }
+            },
+            "syntheticTransport": true,
+            "deferEventDelivery": true
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "trusted_source_transition",
+            "provider": "okx",
+            "generation": 3,
+            "state": "unconnected",
+            "permissions": [],
+            "syntheticTransport": true
+          }
+        },
+        {
+          "id": "s4",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "release_stale_source_event",
+            "fromStep": "s2"
+          }
+        },
+        {
+          "id": "s5",
+          "at": "2026-11-17T15:04:00Z",
+          "input": {
+            "kind": "trusted_source_transition",
+            "provider": "okx",
+            "generation": 4,
+            "state": "ready",
+            "permissions": [
+              "read_only"
+            ],
+            "summaryVersion": "statement_2",
+            "summary": {
+              "equity": {
+                "amount": "1450",
+                "currency": "USD"
+              }
+            },
+            "syntheticTransport": true
+          }
+        },
+        {
+          "id": "s6",
+          "at": "2026-11-17T15:05:00Z",
+          "input": {
+            "kind": "replay_stale_source_event",
+            "fromStep": "s2"
+          }
+        },
+        {
+          "id": "s7",
+          "at": "2026-11-17T15:06:00Z",
+          "input": {
+            "kind": "restart_runtime"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime"
+      ]
+    },
+    {
+      "id": "O20",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "本周四和周日上午9点各帮我查一下天气，只有本周，不是长期任务。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "O21",
+      "split": "development",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我周五从深圳去广州一趟，提前帮我看看公共交通耗时和建议出发窗口。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "H01",
+      "split": "holdout",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我每周四和周日去壁球课，课前一天得预约。帮我持续安排预约和提醒，钟点选上午方便操作的时间。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "H02",
+      "split": "holdout",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "这周六要做8人份家宴。食谱原来4人份需要250克米、400克蔬菜，先现在帮我精确换算；周六10:00提醒我采购食材，只这次。"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    },
+    {
+      "id": "H03",
+      "split": "holdout",
+      "timezone": "Asia/Shanghai",
+      "capabilities": {
+        "available": [
+          "calculation",
+          "public_research",
+          "local_reminder",
+          "user_reply_events"
+        ],
+        "unavailable": [
+          "booking_actions",
+          "trading",
+          "calendar_read"
+        ]
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "at": "2026-11-17T15:00:00Z",
+          "input": {
+            "kind": "new_goal",
+            "text": "我想整理出行预算。先不要计算，等我说“开始”再算：车票159.5元两张、酒店278元两晚、餐费95元三天，合计多少。"
+          }
+        },
+        {
+          "id": "s2",
+          "at": "2026-11-17T15:02:00Z",
+          "input": {
+            "kind": "goal_reply",
+            "text": "开始。"
+          }
+        },
+        {
+          "id": "s3",
+          "at": "2026-11-17T15:03:00Z",
+          "input": {
+            "kind": "duplicate_previous_event",
+            "ofStep": "s2"
+          }
+        }
+      ],
+      "suggestedValidationLayers": [
+        "registered_runtime",
+        "isolated_real_model"
+      ]
+    }
+  ]
+}

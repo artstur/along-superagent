@@ -5,11 +5,12 @@ import { isResearchTaskContent } from './recommendation.ts'
 
 export interface TaskExecutionRecord {
   id: string
-  kind: 'research' | 'completed'
+  kind: 'research' | 'calculation' | 'completed'
   executedAt: string
-  outcome: 'researched' | 'completed'
+  outcome: 'researched' | 'calculated' | 'completed'
   summary?: string
   recommendationEventId?: string
+  calculationReceiptId?: string
 }
 export interface TaskExecutionSummary { version: 1; count: number; records: TaskExecutionRecord[] }
 
@@ -35,6 +36,25 @@ export function taskExecution(db: DatabaseSync, userId: string, task: { id: stri
     records.set(key, { id: stableId(userId, task.goalId, task.id, key), ...record })
   }
 
+  // A calculator preview or an abandoned tool call is not an execution. Publication must match the
+  // actual finished dispatch, occurrence, revision and receipt; model retries share its execution key.
+  for(const row of all(`SELECT c.id AS calculation_id,c.execution_key,c.calculation,c.calculated_at,d.event_id,m.id AS message_id FROM task_calculation c
+    JOIN health_dispatch d ON d.user_id=c.user_id AND d.goal_id=c.goal_id AND d.input_version=c.input_version
+    JOIN task_review r ON r.event_id=d.event_id AND r.task_id=c.task_id AND r.revision=c.task_revision
+    JOIN task_trigger_occurrence x ON x.id=c.execution_key AND x.dispatch_event_id=d.event_id AND x.user_id=c.user_id AND x.task_id=c.task_id
+    JOIN sync_outbox o ON o.user_id=c.user_id AND o.goal_id=c.goal_id AND o.task_id=c.task_id AND o.kind='message'
+    JOIN message m ON m.id=o.message_id AND m.user_id=c.user_id AND m.event_id='followup_'||d.event_id
+    WHERE c.user_id=? AND c.goal_id=? AND c.task_id=? AND json_valid(d.result) AND json_valid(o.payload)
+      AND json_extract(d.result,'$.calculation_receipt')=c.id AND json_extract(d.result,'$.outcome')<>'ask'
+      AND json_extract(o.payload,'$.calculation_receipt_id')=c.id AND x.state='settled'
+    ORDER BY o.seq`,userId,task.goalId,task.id)) {
+    if(development(String(row.event_id))||development('',String(row.message_id)))continue
+    const result=object(parsed(row.calculation)?.result)
+    if(typeof result?.value!=='string'||typeof result.unit!=='string')continue
+    add('occurrence:'+String(row.execution_key),{kind:'calculation',outcome:'calculated',executedAt:String(row.calculated_at),
+      calculationReceiptId:String(row.calculation_id),summary:`计算结果：${result.value}${result.unit==='1'?'':' '+result.unit}`})
+  }
+
   // A completion is a recorded user fact that actually changed the state, not an Agent status edit or
   // a second differently keyed feedback while the task was already done.
   for (const row of all(`SELECT r.origin_event_id,e.payload,e.received_at,e.goal_id FROM task_revision r
@@ -47,6 +67,14 @@ export function taskExecution(db: DatabaseSync, userId: string, task: { id: stri
     const payload = parsed(row.payload), eventId = String(row.origin_event_id)
     if (payload?.task_id !== task.id || (row.goal_id !== null && row.goal_id !== task.goalId) || development(eventId)) continue
     add('event:' + eventId, { kind: 'completed', outcome: 'completed', executedAt: String(row.received_at), summary: '已收到任务完成反馈' })
+  }
+  for(const row of all(`SELECT x.id,x.completion_event_id,x.completed_at,e.payload FROM task_trigger_occurrence x
+    JOIN event_inbox e ON e.user_id=x.user_id AND e.event_id=x.completion_event_id
+    WHERE x.user_id=? AND x.goal_id=? AND x.task_id=? AND e.status='accepted'
+      AND e.event_type='along.message' AND e.kind='task.completed' ORDER BY x.completed_at`,userId,task.goalId,task.id)) {
+    const eventId=String(row.completion_event_id)
+    if(development(eventId)||parsed(row.payload)?.task_id!==task.id)continue
+    add('event:'+eventId,{kind:'completed',outcome:'completed',executedAt:String(row.completed_at),summary:'已收到本次任务完成反馈'})
   }
 
   {

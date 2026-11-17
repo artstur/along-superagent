@@ -87,7 +87,7 @@ it('persists an observation and answer without a goal, then applies explicit int
   expect(await h.runTool(action,'along_conversation_read',{})).toMatchObject({messages:expect.arrayContaining([{seq:1,event_id:'b_observation',role:'user',text:'最近睡得不好',at:expect.any(String)}])})
   expect(await h.runTool(action,'along_changes_commit',{idempotency_key:'b_create',base_revision:0,input_version:1,reason:'根据你的意图建立睡眠目标',ops:[
     {op:'goal.create',domain:'custom',title:'改善睡眠',context:['先减少睡前刷手机']},
-    {op:'task.create',content:'今晚睡前把手机放到床外',reminder_plan:{state:'scheduled',source:'agent',explanation:'给睡前准备留出时间。'},scheduled_at:new Date(Date.now()+3600_000).toISOString()},
+    {op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content:'今晚睡前把手机放到床外',reminder_plan:{state:'scheduled',source:'agent',explanation:'给睡前准备留出时间。'},scheduled_at:new Date(Date.now()+3600_000).toISOString()},
   ]})).toMatchObject({status:'applied'})
   const goal=store.listGoals(USER).items[0]!
   expect(await h.runTool(action,'along_data_sources_catalog',{})).toMatchObject({sources:expect.any(Array)})

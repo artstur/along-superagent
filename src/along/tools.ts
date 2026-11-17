@@ -13,6 +13,8 @@ import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText,
 import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
+import { calculate, CalculationInputSchema } from './calculation.ts'
+import { SourceReadInputSchema } from './source-state.ts'
 import { DATA_SOURCE_CATALOG, DATA_SOURCE_INPUT } from './data-sources.ts'
 import { alongTool } from './tool.ts'
 import type { MemoryService } from './memory/service.ts'
@@ -50,7 +52,8 @@ export interface AlongToolsHost {
 const HEALTH_TYPES = ['steps', 'workout', 'active_energy', 'weight', 'resting_heart_rate', 'wrist_temperature', 'sleep'] as const
 
 const taskView = (task: TaskRow) => ({ task_id: task.id, status: task.status, revision: task.currentRevision,
-  content: task.content, scheduled_at: task.scheduledAt, reminder_plan:task.reminderPlan, goal_id: task.goalId })
+  content: task.content, scheduled_at: task.scheduledAt, reminder_plan:task.reminderPlan, goal_id: task.goalId,
+  ...(task.trigger?{trigger:task.trigger}:{}) })
 
 const revisionView = (revision: GoalRevisionRow) => ({ revision: revision.revision, title: revision.title,
   metric: revision.metric, context: revision.context, status: revision.status, basis_changeset: revision.basisChangeset,
@@ -90,12 +93,50 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if(!bound.allowedGoalId)throw new Error('research requires a bound existing goal')
     if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
     const due=host.healthFollowup?.forTicket(ticketId)?.due
+    if(due)host.healthFollowup!.taskContext(ticketId)
     const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
     const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
     const original=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)?.text:undefined
     return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(bound.triggerEventId?{budgetEventId:bound.triggerEventId}:{}),...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
   }
+  const automatic=host.healthFollowup?.forTicket(ticketId)?host.healthFollowup.tools(ticketId):[]
+  const taskFinish=automatic.find(tool=>tool.name==='along_health_followup')
   return [
+    alongTool({name:'along_source_read',description:'Request the authorized current summary for this host-dispatched Agent task. A pending/stale/unavailable result is a durable request: report waiting, do not invent data, finish the task or repeatedly poll. Host retries on the same occurrence; credentials never reach this tool. Only ready returns private scoped data; never send private values into public search.',
+      schema:SourceReadInputSchema,execute:async(args)=>{
+        scope()
+        if(!host.healthFollowup)throw new Error('task execution unavailable')
+        const bound=host.healthFollowup.sourceScope(ticketId)
+        return store.sources.createRead(bound,args)
+      }}),
+    alongTool({name:'along_task_context',description:'Read the actual single task occurrence dispatched by the host, its trigger/executor/capability and current revisions. This also records that you read its evaluated context. It is not a claim that the human acted. No model-selected identities or task ids.',
+      schema:z.object({}).strict(),execute:async()=>{
+        scope()
+        const context=host.healthFollowup?.taskContext(ticketId)
+        if(!context)throw new Error('no task execution is bound to this work')
+        const detail=store.goalDetail(context.task.userId,context.task.goalId)
+        return {task:taskView(context.task),trigger:context.definition?.definition,
+          occurrence_id:context.occurrence?.id,execution_key:context.occurrence?.id??context.dispatch.eventId,
+          goal:{current_revision:detail.goal.currentRevision,input_version:store.inputVersion(detail.goal.id),title:detail.revision?.title,context:detail.revision?.context},
+          observations:context.observed.summaries.map(summaryView)}
+      }}),
+    alongTool({name:'along_calculate',description:'Perform bounded exact arithmetic with units; never executable code. An active host-dispatched calculation task persists a scoped receipt for along_task_finish. A direct current user question may calculate without creating a goal, but that preview is not a task execution or completion. Input facts/assumptions must be explained separately from arithmetic correctness.',
+      schema:z.object({calculation:CalculationInputSchema}).strict(),execute:async(args)=>{
+        const bound=scope(),d=host.healthFollowup?.forTicket(ticketId)
+        if(d?.due) {
+          const calcScope=host.healthFollowup!.calculationScope(ticketId)
+          return store.atomic(()=>{
+            const receipt=store.calculations.calculate(calcScope,args.calculation)
+            return {receipt_id:receipt.id,result:receipt.calculation.result,input:receipt.calculation.input,trace:receipt.calculation.trace,
+              calculated_at:receipt.calculatedAt,reused:receipt.reused,persisted:true}
+          })
+        }
+        const source=bound.triggerEventId&&store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)
+        if(!source||source.audience!=='conversation'||source.direction!=='inbound'||source.role!=='user')throw new Error('calculation preview requires a real current user question')
+        if(!store.isCurrentChatInput(bound.userId,source.eventId,bound.allowedGoalId))return {status:'conflicted',reason:'conflicted_input'}
+        return {...calculate(args.calculation),persisted:false,scope:'conversation_question'}
+      }}),
+    ...(taskFinish?[{...taskFinish,name:'along_task_finish',description:'Finish this host-dispatched task occurrence. For calculation provide the actual along_calculate receipt; for research provide the structured sourced recommendation. This persists a task result and queues its existing notification channel, never proves phone delivery or human action. Read along_task_context first; no personal chat for background work.'}]:[]),
     alongTool({name:'along_data_sources_catalog',
       description:'Read the trusted data-source capability catalog. A recommendation is not authorization. Use only these provider ids; official setup is not OAuth and never means connected.',
       schema:z.object({}).strict(),execute:async()=>{scope();return {sources:DATA_SOURCE_CATALOG}}}),
@@ -122,7 +163,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         return {goals:page.items.map(goal=>{const detail=store.goalDetail(bound.userId,goal.id);return {
           goal_id:goal.id,status:goal.status,title:detail.revision?.title,context:detail.revision?.context,tasks:detail.tasks.map(taskView)}}),next_cursor:page.nextCursor}
       }}),
-    ...(host.healthFollowup?.forTicket(ticketId) ? host.healthFollowup.tools(ticketId) : []),
+    ...automatic,
     ...(host.memory ? memoryTools(host.memory, () => {
       const bound = scope()
       return { userId: bound.userId, goalId: bound.allowedGoalId }
@@ -271,9 +312,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         }
         const ops = ALONG_OPS_SCHEMA.parse(args.ops.map(op => op.op === 'goal.create' && op.domain === 'custom' ? { ...op, metric: null } : op))
         const result = host.service.commitChangeSet(
-          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true })
+          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true,requireTaskTrigger:true })
         if (result.status === 'invalid') {
           const guidance:Record<string,string> = {
+            task_trigger_required:'Every new/replanned task must include its typed trigger. Use immediate for a real Agent operation now, time with a persisted clock/cadence, event with registered owned conditions, or waiting with a real user_input/capability_available resumption. Include actor and supported capability; a task card alone is not an execution plan.',
+            trigger_source_not_recommended:'Create/read this goal, read the catalog, and persist the appropriate source recommendation before creating its data-dependent task. The host cannot subscribe to an unimplemented or out-of-goal source.',
             recurring_research_remains_open:'This host-bound review cannot edit or stop the ongoing research task, its wording, time or recurrence. Make no task ChangeSet; deliver this occurrence with along_health_followup outcome:keep and its recommendation. The host renews the existing cadence. A new explicit user chat handles task changes.',
             reminder_plan_required:'Every new task needs reminder_plan in that op. If the action has a time or deadline, choose the next useful future instant as source:agent, repeat:once with explanation. For a genuine missing window use needs_time with one specific question; explicitly declined or untimed work uses off.',
             task_scoped_repeat_evidence_required:'Re-read the explicit user mandate and the existing task/time first. A once plan does not fulfill a clearly requested weekly cadence; report any unresolved cadence accurately. Use the original cadence clause, a specific action shared with the task, and the actual reminder weekday. For an explicit 补上每周 instruction quote the complete command including 补上; retain the existing future task clock if unchanged. Without a reminder verb use source:agent with a truthful explanation, not a forged source:user reminder quote. Do not substitute once for a clearly requested weekly cadence; explain the unresolved part if still unverified.',

@@ -7,6 +7,7 @@ export const PLAN = z.discriminatedUnion('state', [
   z.object({ state:z.literal('scheduled'), source:z.enum(['agent','user']).describe('Only agent or user. Never manual, explicit or system.'), explanation:explanation.describe('Required plain-language reason. Mentioning weekly here does not set recurrence; set fields.repeat separately.'),
     evidence:z.string().trim().min(2).max(300).optional().describe('Exact text from this user message for a user-specified clock.'),
     action:z.string().trim().min(2).max(100).optional().describe('User-specified clock or recurring: identifying task action appearing in both the quoted clause and task content.'),
+    evidence_event_id:z.string().min(1).max(96).optional().describe('Optional original accepted user instruction already linked to this goal. Background repair may cite it; it grants no new user message or permission.'),
   }).strict(),
   z.object({ state:z.literal('needs_time'), question:explanation }).strict(),
   z.object({ state:z.literal('off'), reason:z.enum(['opt_out','untimed']) }).strict(),
@@ -62,12 +63,21 @@ export function singleOccurrence(message: string, content: string, action: strin
 export function supportsRecurrence(message:string,quote:string,action:string,content:string,repeat:Repeat,weekday:number):boolean {
   if (!message.includes(quote) || declinesReminder(message,content) || singleOccurrence(message,content,action)) return false
   const delegated=delegatesPlan(message)
+  // An ongoing goal may delegate a habitual activity without spelling “every” before every weekday.
+  // Validate the cited activity/offset relationship, rather than assuming any weekday is recurring.
+  if(repeat==='weekly'&&!denial.test(quote)&&!genericAction.test(action)&&quote.includes(action)&&content.includes(action)
+    && /保持|长期|持续|生活方式|每(?:个)?周|养成/.test(message)
+    && new Set(weekdays(quote)).size>=2&&/前一天(?:需要|要|得|提前|必须|先|记得|帮我|提醒我|去)*(?:预约|预订)/.test(quote)) {
+    const booking=/(?:预约|预订)/.exec(content),activityDay=weekday%7+1
+    if(booking&&weekdays(content.slice(0,booking.index)).includes(weekday)
+      &&weekdays(content.slice(booking.index+booking[0].length)).includes(activityDay)&&weekdays(quote).includes(activityDay))return true
+  }
   if (repeat==='weekly' && delegated && precedingBookingDay(message,quote,action,content,weekday)) return true
   if (!mentionsAction(content,quote,action)) return false
   const clause=clauses(message).find(value=>value.includes(quote))
   if (!clause || denial.test(clause.split(/提醒|安排|通知|想要|需要/)[0]!)) return false
   if (repeat==='daily') return hasDailyMandate(clause) ||
-    delegated && /每日|每天|每晚|每早|每晨|\bevery day\b|\bdaily\b/i.test(quote) && !denial.test(clause)
+    /每日|每天|每晚|每早|每晨|\bevery day\b|\bdaily\b/i.test(quote) && !denial.test(clause)
   const actionStart=clause.indexOf(action)
   // A short activity name can occur after the activity's own weekday. Bound the mandate
   // at the booking verb so that date never becomes a reminder-day authorization.
@@ -81,7 +91,7 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
   const addition = /^(?:请)?补上每(?:个)?(?:周|星期|礼拜)/u.test(quote)
     && /(?:^|[:：])(?:请)?补上每(?:个)?(?:周|星期|礼拜)/u.test(clause)
     && !/比如|例如|示例|举例|他说|她说|提到|引用|听说/u.test(clause)
-  if (!delegated && !addition && !/提醒|通知|安排|预约|预订|叫我|remind|schedule|book/i.test(clause)) return false
+  if (!delegated && !addition && !/提醒|通知|安排|预约|预订|叫我|帮我.*(?:搜索|研究|核查|计算|分析|推荐)|remind|schedule|book/i.test(clause)) return false
   // A cadence directly qualified by weekdays (every Monday / 每周一和周四) takes
   // precedence over later dates qualifying the activity, including postposed bookings.
   const cadence=/(?:每(?:个)?(?:周|星期|礼拜)|每逢(?:周|星期))([一二三四五六日天](?:\s*(?:和|及|与|、|&|\/)\s*(?:(?:周|星期|礼拜))?[一二三四五六日天])*)/u.exec(prefix)
@@ -98,9 +108,10 @@ function number(text:string):number {
   const [a,b]=text.split('十')
   return b===undefined ? n(text) : (a?n(a):1)*10+(b?n(b):0)
 }
-function clockInQuote(quote:string,time:string,zone:string,action:string):boolean {
+function clockInQuote(quote:string,time:string,zone:string,action:string,agentExecution=false):boolean {
   const directlyReminds = (matched: RegExpMatchArray) => {
     const after = quote.slice(matched.index!+matched[0].length)
+    if(agentExecution&&after.trimStart().replace(/^(?:(?:请|麻烦|你|帮我|为我|替我)\s*)+/u,'').startsWith(action))return true
     const instruction = /^\s*(?:整|钟|的时候)?\s*(?:请|要|记得)?(?:提醒|叫|通知)(?:一下)?(?:我|本人)?(?:去|要|把|先)?/u.exec(after)
     if (instruction) return after.slice(instruction[0].length).startsWith(action)
     return /\bremind me (?:at|on)\s*$/i.test(quote.slice(0,matched.index!+1)) &&
@@ -109,7 +120,7 @@ function clockInQuote(quote:string,time:string,zone:string,action:string):boolea
   const fields=new Intl.DateTimeFormat('en-GB',{timeZone:zone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(time))
   const [h,m]=fields.split(':').map(Number)
   const clocks=quote.match(/\d{1,2}[:：]\d{2}|[零一二两三四五六七八九十\d]+[点时]/g)??[]
-  if (clocks.length!==1 || (quote.match(/提醒|叫我|通知|闹钟|remind|alert|notif/gi)??[]).length!==1) return false
+  if (clocks.length!==1 || !agentExecution&&(quote.match(/提醒|叫我|通知|闹钟|remind|alert|notif/gi)??[]).length!==1) return false
   for (const r of quote.matchAll(/(?:^|[^\d])(\d{1,2})[:：](\d{2})(?!\d)/g)) if (Number(r[1])===h && Number(r[2])===m && directlyReminds(r)) return true
   for (const r of quote.matchAll(/(凌晨|早上|上午|中午|下午|傍晚|晚上|晚间|晚)?\s*([零一二两三四五六七八九十\d]+)[点时](?:([零一二两三四五六七八九十\d]+)分|(半))?/g)) {
     let hour=number(r[2]!)
@@ -135,15 +146,15 @@ function sameSpecifiedDay(quote:string,action:string,time:string,message:Message
   const selectedDays=weekdays(qualifier)
   return !selectedDays.length || selectedDays.includes(localWeekday(time,zone))
 }
-export function planError(plan:PlanInput,time:string|null|undefined,repeat:Repeat,content:string,message:MessageRow|undefined):string|undefined {
+export function planError(plan:PlanInput,time:string|null|undefined,repeat:Repeat,content:string,message:MessageRow|undefined,agentExecution=false):string|undefined {
   if (plan.state!=='scheduled') return time || repeat!=='once' ? 'inactive_plan_has_schedule' : undefined
   if (!message?.timezone || !time || !z.iso.datetime({offset:true}).safeParse(time).success ||
     !Number.isFinite(Date.parse(time)) || Date.parse(time)<=Date.now()) return 'future_reminder_and_user_timezone_required'
   try {localWeekday(time,message.timezone)} catch {return 'invalid_timezone'}
   const quote=plan.evidence
   if (plan.source==='user' && (!quote || !message.text.includes(quote) || /[，,。；;!?！？\n]/.test(quote) ||
-    !plan.action || !quote.includes(plan.action) || !content.includes(plan.action) || /^(?:提醒|安排|预约|通知|完成|进行)$/.test(plan.action) || !/提醒|叫我|通知|闹钟|remind|alert|notif/i.test(quote) ||
-    /[点时](?:前|之前|以前)|\d[:：]\d\d\s*(?:前|之前|以前)|deadline|due by/i.test(quote) || !clockInQuote(quote,time,message.timezone,plan.action) || !sameSpecifiedDay(quote,plan.action,time,message))) return 'user_clock_evidence_required'
+    !plan.action || !quote.includes(plan.action) || !content.includes(plan.action) || /^(?:提醒|安排|预约|通知|完成|进行)$/.test(plan.action) || !agentExecution&&!/提醒|叫我|通知|闹钟|remind|alert|notif/i.test(quote) ||
+    /[点时](?:前|之前|以前)|\d[:：]\d\d\s*(?:前|之前|以前)|deadline|due by/i.test(quote) || !clockInQuote(quote,time,message.timezone,plan.action,agentExecution) || !sameSpecifiedDay(quote,plan.action,time,message))) return 'user_clock_evidence_required'
   if (repeat!=='once' && (!quote || !plan.action || !supportsRecurrence(message.text,quote,plan.action,content,repeat,localWeekday(time,message.timezone)))) return 'task_scoped_repeat_evidence_required'
   return undefined
 }

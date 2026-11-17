@@ -26,7 +26,7 @@ export interface AlongInboxModule { acceptEvent(envelope: AlongEventEnvelope, id
 /** Host-bound commit scope; the model cannot specify any of these fields (design §4.4, BC-07-04). */
 export interface AlongCommitScope {
   userId: string; allowedGoalId?: string
-  ticketId?: string; assignmentId?: string; workId?: string; triggerEventId?: string; requireReminderPlan?: boolean
+  ticketId?: string; assignmentId?: string; workId?: string; triggerEventId?: string; requireReminderPlan?: boolean; requireTaskTrigger?:boolean
 }
 /** Structural shape of a ChangeSet submission (design §4.4); the validated original arrives from the changeset module. */
 export interface AlongChangeSetInput {

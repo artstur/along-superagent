@@ -15,6 +15,8 @@ import { HEALTH_SUMMARY_TYPES } from './envelope.ts'
 import { supportsRecurrence } from './reminder-plan.ts'
 import { hasDailyMandate, nextDailyTime } from './task-schedule.ts'
 import { alongTool } from './tool.ts'
+import { TaskActivation, type ActivationHost } from './task-activation.ts'
+import type { CalculationScope } from './calculation-store.ts'
 
 const thresholds: Record<string, number> = {
   steps: 500,
@@ -95,10 +97,15 @@ interface HealthHost {
   settings(): Settings
   paused(): boolean
   closing(): boolean
+  available?:ActivationHost['available']
+  source?:ActivationHost['source']
 }
 /** Owns health change admission, per-goal serialization and host-bound completion evidence. */
 export class HealthFollowup {
-  constructor(private readonly host: HealthHost) {}
+  readonly activation:TaskActivation
+  constructor(private readonly host: HealthHost) {
+    this.activation=new TaskActivation({store:host.store,available:host.available,source:host.source,allowed:userId=>this.allowed(userId),currentHealth:healthSummaryIsCurrent})
+  }
   private allowed(userId: string, settings = this.host.settings()): boolean {
     return (
       settings.eval.mode === 'auto' &&
@@ -133,6 +140,7 @@ export class HealthFollowup {
   private current(d: HealthDispatch): boolean {
     const store = this.host.store
     if (d.inputVersion !== store.inputVersion(d.goalId)) return false
+    if(!this.activation.current(d))return false
     if (!d.due) return true
     const task = store.getTask(d.userId, d.due.taskId)
     if (!task || store.getGoal(d.userId, d.goalId)?.status !== 'active') return false
@@ -196,8 +204,11 @@ export class HealthFollowup {
     if (this.host.closing() || this.host.paused()) return
     const { store, repo } = this.host
     const now = new Date().toISOString()
+    store.atomic(()=>this.activation.prepare(now))
     for (const { userId, goalId, due } of store.health.recentUnnotifiedTasks(now)) {
       if (!this.allowed(userId)) continue
+      const task=store.getTask(userId,due.taskId)
+      if(!task||!this.activation.allowDue(task)||!this.activation.notifyBefore(task))continue
       store.atomic(() => {
         if (!store.health.claimDueNotice(due.taskId, due.dueAt)) return
         const eventId = 'reminder_' + createHash('sha256')
@@ -277,8 +288,14 @@ export class HealthFollowup {
     for (const { userId, goalId, due } of store.health.dueTasks(now)) {
       const version = store.inputVersion(goalId)
       if (!this.allowed(userId) || busy(goalId, version)) continue
+      const task=store.getTask(userId,due.taskId)
+      if(!task||!this.activation.allowDue(task))continue
       const snapshot = this.dueSummaries(userId, goalId, due.dueAt)
-      const d = store.atomic(() => store.health.dispatchDue(userId, goalId, version, due, snapshot))
+      const d = store.atomic(() => {
+        const dispatched=store.health.dispatchDue(userId, goalId, version, due, snapshot)
+        this.activation.bind(dispatched)
+        return dispatched
+      })
       this.host.engine().receive(this.trigger(d))
     }
     for (const userId of store.health.users()) {
@@ -350,6 +367,31 @@ export class HealthFollowup {
     )
       throw new Error('health capability unavailable')
   }
+  /** Host-owned context for a single automatic task. A UI timestamp or model-selected id grants no execution scope. */
+  taskContext(ticketId:string) {
+    this.assertActive(ticketId)
+    const d=this.forTicket(ticketId)
+    if(!d?.due)throw new Error('no task execution is bound to this work')
+    if(!d.result&&!this.current(d))throw new Error('task input or trigger was superseded')
+    const task=this.host.store.assertTaskOwner(d.userId,d.due.taskId)
+    const observed=this.read(ticketId,this.host.store.latestHealthSummaries(d.userId))
+    return {task,dispatch:d,definition:this.activation.definition(d),occurrence:this.activation.occurrence(d),observed}
+  }
+  /** Scope consumed by the deterministic journal, never selected or widened by the model. */
+  calculationScope(ticketId:string):CalculationScope {
+    const {task,dispatch,definition,occurrence}=this.taskContext(ticketId)
+    if(definition?.definition.actor!=='agent'||definition.definition.capability!=='calculation'||dispatch.result)
+      throw new Error('calculation requires an active host-bound calculation task')
+    return {userId:dispatch.userId,goalId:dispatch.goalId,taskId:task.id,taskRevision:dispatch.due!.revision,
+      taskContent:this.host.store.taskRevisionContent(dispatch.userId,task.id,dispatch.due!.revision)!,
+      inputVersion:dispatch.inputVersion,ticketId,executionKey:occurrence?.id??dispatch.eventId}
+  }
+  sourceScope(ticketId:string) {
+    const {task,dispatch,definition,occurrence}=this.taskContext(ticketId)
+    if(definition?.definition.actor!=='agent'||dispatch.result||!occurrence)throw new Error('source reads require an active host-bound Agent task')
+    return {userId:dispatch.userId,goalId:dispatch.goalId,taskId:task.id,taskRevision:dispatch.due!.revision,
+      inputVersion:dispatch.inputVersion,ticketId,executionKey:occurrence.id}
+  }
   read(ticketId: string, summaries: HealthSummaryRow[]) {
     const d = this.forTicket(ticketId)
     const mandate=d?.due?this.host.store.health.daily(d.due.taskId):undefined
@@ -410,7 +452,8 @@ export class HealthFollowup {
             types: z.array(z.enum(HEALTH_SUMMARY_TYPES)).max(7),
             reason: z.string().trim().min(1).max(800),
             text: z.string().trim().min(1).max(1200).optional(),
-            recommendation: RECOMMENDATION_INPUT.optional().describe('Due research task only: structured result grounded in this ticket’s actual web source ids and exact quotes. Read the research skill.')
+            recommendation: RECOMMENDATION_INPUT.optional().describe('Due research task only: structured result grounded in this ticket’s actual web source ids and exact quotes. Read the research skill.'),
+            calculation_receipt:z.string().min(1).max(96).optional().describe('Calculation task only: the receipt_id returned by the registered along_calculate tool in this exact occurrence.')
           })
           .strict(),
         execute: async (args) =>
@@ -428,23 +471,44 @@ export class HealthFollowup {
             if(args.recommendation&&(!d.due||!args.text))throw new Error('recommendation requires a bound due task and user-facing text')
             if (!this.current(d))
               return { status: 'conflicted', reason: 'conflicted_input' }
+            const definition=this.activation.definition(d)?.definition
+            const calculation=args.calculation_receipt?store.calculations.get(this.calculationScope(ticketId),args.calculation_receipt):undefined
+            if(args.calculation_receipt&&!calculation)throw new Error('calculation receipt is not bound to this task occurrence')
+            if(definition?.actor==='agent'&&args.outcome!=='ask') {
+              if(definition.capability==='calculation'&&!calculation)throw new Error('calculation task requires its actual persisted tool receipt')
+              if(definition.capability==='research'&&!args.recommendation)throw new Error('research task requires a structured sourced result')
+              if(definition.capability==='reminder'&&!args.text)throw new Error('reminder execution requires its user-facing notification text')
+            }
             const link = store.getWorkLink(ticketId),
               applied = link && store.changeSetsByWork(link.workId).some((c) => c.status === 'applied')
             if ((args.outcome === 'update') !== !!applied) throw new Error('outcome must match applied changes')
             if (args.outcome === 'ask' && !args.text) throw new Error('ask requires a concrete question')
             const dailyEvidence = args.renew_daily_from_event ?? (d.due && store.health.daily(d.due.taskId)?.evidence)
             if (dailyEvidence) this.renewDaily(d, dailyEvidence, !args.renew_daily_from_event)
-            const currentTask=d.due?store.getTask(d.userId,d.due.taskId):undefined
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
-            const notice=args.outcome==='ask'?undefined:structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
+            const resultText=calculation?`计算结果：${calculation.calculation.result.value}${calculation.calculation.result.unit==='1'?'':` ${calculation.calculation.result.unit}`}`:args.text
             const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)
+            this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':structured?'researched':'notification_queued')
+            if(definition?.actor==='agent'&&args.outcome==='ask') {
+              const task=store.assertTaskOwner(d.userId,d.due!.taskId)
+              store.triggers.put(task,{kind:'waiting',actor:'agent',capability:definition.capability,conditions:definition.conditions,
+                resume:'user_input',reason:args.text!.slice(0,240)},d.inputVersion)
+            }
+            if(definition?.actor==='agent'&&(calculation||structured)&&args.outcome!=='ask'
+              &&!(definition.kind==='event'&&definition.repeat==='on_change')&&!store.health.daily(d.due!.taskId)) {
+              const task=store.assertTaskOwner(d.userId,d.due!.taskId)
+              const revision=store.appendTaskRevision({taskId:task.id,userId:d.userId,status:'done',originEventId:d.eventId})
+              store.appendSync({userId:d.userId,goalId:d.goalId,taskId:task.id,kind:'task_updated',payload:{task_id:task.id,goal_id:d.goalId,revision,status:'done'}})
+            }
+            const currentTask=d.due?store.getTask(d.userId,d.due.taskId):undefined
+            const notice=args.outcome==='ask'?undefined:structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
             if(priorSources!==JSON.stringify(store.goalDataSources(d.userId,d.goalId))) {
               store.appendSync({userId:d.userId,goalId:d.goalId,kind:'goal_updated',payload:{}})
             }
-            if ((args.outcome !== 'keep'||structured) && args.text) {
+            if ((args.outcome !== 'keep'||structured||calculation||definition?.actor==='agent'&&definition.capability==='reminder') && resultText) {
               const eventId = `followup_${d.eventId}`,
                 message = store.appendMessage({
                   userId: d.userId,
@@ -452,7 +516,7 @@ export class HealthFollowup {
                   role: 'assistant',
                   direction: 'outbound',
                   audience: 'background',
-                  text: recommendationText(structured,args.text)
+                  text: recommendationText(structured,resultText)
                 })
               store.linkMessageToGoals(message.id, [d.goalId], 'derived')
               store.appendSync({
@@ -462,6 +526,7 @@ export class HealthFollowup {
                 taskId: d.due?.taskId,
                 messageId: message.id,
                 payload: { message_id: message.id, text: message.text, ...(d.due?{task_execution_revision:d.due.revision}:{}), ...(structured?{recommendation:structured}:{}),
+                  ...(calculation?{calculation_receipt_id:calculation.id}:{}),
                   ...(notice?{notification: {
                   event_id: eventId, kind:notice, revision: currentTask?.currentRevision ?? d.inputVersion
                 }}:{}) }
