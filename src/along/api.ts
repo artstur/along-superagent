@@ -194,7 +194,7 @@ async function route(host: AlongApiHost, identity: AlongIdentity, method: string
   if(method==='POST'&&(path==='source-events'||path==='source-read-results')) {
     const input=await body()
     if(claimsIdentity(input))throw new AlongApiError(400,'identity_in_body')
-    const receipt=path==='source-events'?store.sources.acceptEvent(identity,input):store.sources.acceptReadResult(identity,input)
+    const receipt=path==='source-events'?service.acceptSourceEvent(identity,input):store.sources.acceptReadResult(identity,input)
     return {status:receipt.status==='conflict'?409:receipt.status==='rejected'?400:200,body:receipt}
   }
   if(method==='GET'&&path==='source-reads') {

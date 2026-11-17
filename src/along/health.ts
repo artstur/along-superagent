@@ -1,4 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
+import { reconcileSourceGoalReviews,sourceReviewCurrent,sourceReviewContext,finishSourceReview,SOURCE_REVIEW_FINISH } from './source-goal-review.ts'
 import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -121,6 +122,10 @@ export class HealthFollowup {
     return requestTaskReview(this.host.store,identity,body)
   }
   private trigger(d: HealthDispatch): Trigger {
+    if(d.sourceReview)return {id:`along:${d.userId}:${d.eventId}`,source:'along',actor:{source:'along',id:d.userId},human:false,at:d.createdAt,
+      threads:[{source:'along',id:`goal/${d.goalId}/source-review/${d.eventId}`}],
+      text:'Real source capability became ready for an existing goal with legacy human tasks. Read along_source_review_context and all original goal/conversation/task pages. Review minimum useful next steps against actual coverage. Preserve old human meaning/status/clock and unrelated typed tasks; never relabel old tasks as calculations. Every open legacy task needs a persisted user trigger: preserve its existing clock as time, otherwise waiting with a real reason and resume condition. Create a separate registered Agent task only when genuinely useful, or record specific need_data. This is metadata-only background planning, never private data read, account performance evidence, user chat, notification or execution. Finish with along_source_review_finish before reporting ready.',
+      meta:{event_type:'along.source_ready_review',goal_id:d.goalId,health_dispatch:d.eventId,provider:d.sourceReview.provider,generation:d.sourceReview.generation,revision:d.sourceReview.revision}}
     if(d.repair)return {id:`along:${d.userId}:${d.eventId}`,source:'along',actor:{source:'along',id:d.userId},human:false,at:d.createdAt,
       threads:[{source:'along',id:`goal/${d.goalId}/task-trigger-review/${d.eventId}`}],
       text:'Inspect only the bound task trigger and cadence against the current goal and real accepted conversation evidence. This is private host maintenance, not a new user message, clock or health observation. Read along_task_review_context, use the existing scoped ChangeSet writer, and call along_task_review_finish only after durable read-back. Preserve original content, status and existing clock. No chat, notifications, calculations, research execution or other task edits.',
@@ -150,6 +155,7 @@ export class HealthFollowup {
   }
   private current(d: HealthDispatch): boolean {
     const store = this.host.store
+    if(d.sourceReview)return sourceReviewCurrent(store,d)
     if(d.repair)return taskReviewCurrent(store,d)
     if (d.inputVersion !== store.inputVersion(d.goalId)) return false
     if(!this.activation.current(d))return false
@@ -164,7 +170,7 @@ export class HealthFollowup {
     return {
       ...base,
       gate: (t, thread, tickets) => {
-        if (t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (t.meta.event_type !== 'along.health_summary_updated' || t.meta.health_dispatch === undefined))
+        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (t.meta.event_type !== 'along.health_summary_updated' || t.meta.health_dispatch === undefined))
           return base.gate(t, thread, tickets)
         const d = this.bound(t),
           g = d && this.host.store.getGoal(d.userId, d.goalId)
@@ -172,17 +178,17 @@ export class HealthFollowup {
           ? {
               admissible: true,
               strength: 'explicit',
-              basis: { via: d.repair?'task_trigger_review':d.due ? 'task_due' : 'health', source: 'along', scope: t.meta, eventId: d.eventId, goalId: d.goalId }
+              basis: { via: d.sourceReview?'source_review':d.repair?'task_trigger_review':d.due ? 'task_due' : 'health', source: 'along', scope: t.meta, eventId: d.eventId, goalId: d.goalId }
             }
           : { admissible: false, reason: 'untrusted_health_followup' }
       },
       revalidate: (m) => {
-        if (m.basis.via !== 'task_trigger_review'&&m.basis.via !== 'health' && m.basis.via !== 'task_due') return base.revalidate(m)
+        if (m.basis.via !== 'source_review'&&m.basis.via !== 'task_trigger_review'&&m.basis.via !== 'health' && m.basis.via !== 'task_due') return base.revalidate(m)
         const d = this.host.store.health.get(m.basis.eventId)
         return (
           !!d &&
           d.goalId === m.basis.goalId && (m.basis.via === 'task_due') === !!d.due &&
-          (m.basis.via==='task_trigger_review')===!!d.repair&&(!d.repair||this.current(d))&&
+          (m.basis.via==='task_trigger_review')===!!d.repair&&(m.basis.via==='source_review')===!!d.sourceReview&&(!(d.repair||d.sourceReview)||this.current(d))&&
           m.actor.source === 'along' &&
           m.actor.id === d.userId &&
           this.allowed(d.userId, settings) &&
@@ -199,11 +205,11 @@ export class HealthFollowup {
     this.host.engine().decide(t.id, {
       evalId: candidate.evalId,
       kind: 'accept',
-      title: d.repair?'任务触发修复':d.due ? '到期任务复查' : '健康变化跟进',
-      name: d.repair?'task-trigger-review':d.due ? 'scheduled-task-review' : 'health-followup',
-      scope: d.repair?'Inspect and repair only this existing task trigger/plan through validated ChangeSets; preserve goal, other tasks, content, status and existing clock. Read original evidence and finish with persisted postconditions. No user chat or execution notification.':d.due ? 'Review the single bound due task under the current user mandate. Never change the goal.' :
+      title: d.sourceReview?'来源就绪后续评':d.repair?'任务触发修复':d.due ? '到期任务复查' : '健康变化跟进',
+      name: d.sourceReview?'source-goal-review':d.repair?'task-trigger-review':d.due ? 'scheduled-task-review' : 'health-followup',
+      scope: d.sourceReview?'Review this goal against current accepted source capability metadata. Preserve original human tasks and unrelated typed fields; create only useful separate typed Agent steps or honest need_data. Never read private data, change goals, post chat or execute tasks in this review.':d.repair?'Inspect and repair only this existing task trigger/plan through validated ChangeSets; preserve goal, other tasks, content, status and existing clock. Read original evidence and finish with persisted postconditions. No user chat or execution notification.':d.due ? 'Review the single bound due task under the current user mandate. Never change the goal.' :
         'Evaluate the bound existing goal against current aggregate health data; update user tasks through validated Along tools or keep. Never create, rewrite or archive the goal.',
-      reason: d.repair?'Persisted private task-trigger maintenance request with real same-goal user evidence':d.due ? 'Host-verified scheduled task for an allowed paired user' : 'Host-verified health change for an allowed paired user',
+      reason: d.sourceReview?'Host-verified first-ready capability bootstrap for an existing goal':d.repair?'Persisted private task-trigger maintenance request with real same-goal user evidence':d.due ? 'Host-verified scheduled task for an allowed paired user' : 'Host-verified health change for an allowed paired user',
       note: t.text
     })
     return true
@@ -211,13 +217,13 @@ export class HealthFollowup {
   forTicket(ticketId: string): HealthDispatch | undefined {
     const ticket = this.host.repo.tickets.get(ticketId),
       t = ticket && this.host.repo.triggers.get(ticket.origin.triggerId)
-    return (ticket?.mandate.basis.via==='task_trigger_review'||ticket?.mandate.basis.via === 'health' || ticket?.mandate.basis.via === 'task_due') && t ? this.bound(t) : undefined
+    return (ticket?.mandate.basis.via==='source_review'||ticket?.mandate.basis.via==='task_trigger_review'||ticket?.mandate.basis.via === 'health' || ticket?.mandate.basis.via === 'task_due') && t ? this.bound(t) : undefined
   }
   tick(): void {
     if (this.host.closing() || this.host.paused()) return
     const { store, repo } = this.host
     const now = new Date().toISOString()
-    store.atomic(()=>this.activation.prepare(now))
+    store.atomic(()=>{this.activation.prepare(now);reconcileSourceGoalReviews(store)})
     for (const { userId, goalId, due } of store.health.recentUnnotifiedTasks(now)) {
       if (!this.allowed(userId)) continue
       const task=store.getTask(userId,due.taskId)
@@ -251,9 +257,9 @@ export class HealthFollowup {
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
-      if ((d.due||d.repair) && !this.current(d)) {
+      if ((d.due||d.repair||d.sourceReview) && !this.current(d)) {
         if (ticket && !ticket.ended && latestAssignment(ticket) && latestAssignment(ticket)!.state !== 'ended') this.host.engine().report(ticket.id, { state: 'dropped', summary: 'Superseded scheduled task.' })
-        if(d.repair)store.health.retireRepair(d.eventId);else store.health.retireDue(d.eventId)
+        if(d.sourceReview)store.health.retireSourceReview(d.eventId);else if(d.repair)store.health.retireRepair(d.eventId);else store.health.retireDue(d.eventId)
         continue
       }
       if (ticket) {
@@ -276,6 +282,15 @@ export class HealthFollowup {
         continue
       } // Never reopen an ended/stopped ticket; a subsequent changed input gets a new dispatch.
       if (store.getGoal(d.userId, d.goalId)?.status !== 'active') continue
+      // A source fact is persisted immediately, but its review waits for an already-running goal Worker.
+      if(d.sourceReview&&store.workLinksForGoal(d.goalId).some(link=>{
+        const other=repo.tickets.get(link.ticketId)
+        if(!other||other.ended)return false
+        const review=this.forTicket(other.id)
+        if(review)return !review.result&&this.current(review)
+        const assignment=latestAssignment(other),report=assignment?.report
+        return !report||!['waiting','blocked','failed'].includes(report.state)||!!(assignment?.deliveredAt&&assignment.deliveredAt>report.at)
+      }))continue
       const t = this.trigger(d),
         saved = repo.triggers.get(t.id)
       this.host.engine().receive(t)
@@ -373,7 +388,7 @@ export class HealthFollowup {
     if (
       !ticket ||
       ticket.ended ||
-      d.repair&&!this.current(d)||
+      (d.repair||d.sourceReview)&&!this.current(d)||
       !this.allowed(d.userId) ||
       this.host.paused() ||
       this.host.closing() ||
@@ -418,6 +433,7 @@ export class HealthFollowup {
   }
   assertReport(ticketId: string, state: string): void {
     const d = this.forTicket(ticketId)
+    if(d?.sourceReview&&state==='ready'&&(!d.result||!this.current(d)))throw new Error('source review not complete: read the bound context and persist an honest review outcome first')
     if(d?.repair&&state==='ready'&&(!d.result||d.result.outcome==='ask'||!this.current(d)))throw new Error('task trigger review not complete: persist and verify the actual bound trigger/plan first')
     if (
       d &&
@@ -456,6 +472,10 @@ export class HealthFollowup {
       payload: { task_id: task.id, goal_id: d.goalId, status: task.status, revision } })
   }
   tools(ticketId: string) {
+    if(this.forTicket(ticketId)?.sourceReview)return [
+      alongTool({name:'along_source_review_context',description:'Read this existing goal, original tasks/conversation and accepted source capability coverage. Follow remaining conversation/task pages. Ready metadata is not private data. Only the declared legacy trigger fields or useful separate Agent tasks may change; no chat, execution or source write.',schema:z.object({}).strict(),execute:async()=>{this.assertActive(ticketId);const d=this.forTicket(ticketId);if(!d?.sourceReview)throw new Error('source review unavailable');return this.host.store.atomic(()=>sourceReviewContext(this.host.store,d))}}),
+      alongTool({name:'along_source_review_finish',description:'Seal this background planning review with keep/revise/need_data after current-state read-back. need_data names missing facts/capabilities and settles only this review, never the actual goal/task. No health baseline, message, notification or execution count is written.',schema:SOURCE_REVIEW_FINISH,execute:async args=>{this.assertActive(ticketId);const d=this.forTicket(ticketId);if(!d?.sourceReview)throw new Error('source review unavailable');return this.host.store.atomic(()=>finishSourceReview(this.host.store,d,args))}}),
+    ]
     if(this.forTicket(ticketId)?.repair)return [
       alongTool({name:'along_task_review_context',description:'Read the current bound goal, task, original accepted user evidence and conversation for this private background repair. This is not a new user input, due occurrence or health observation. Existing content, status and scheduled clock are immutable. The returned scope grants only this task trigger/plan repair.',schema:z.object({}).strict(),execute:async()=>{this.assertActive(ticketId);const d=this.forTicket(ticketId);if(!d?.repair)throw new TaskReviewError('task_review_unavailable');return this.host.store.atomic(()=>taskReviewContext(this.host.store,d))}}),
       alongTool({name:'along_task_review_finish',description:'Finish the private trigger/plan repair only after actual validated ChangeSet persistence and read-back. Supply the exact expected trigger and cadence to verify them. Waiting is not ready. This tool never creates chat, notifications, execution history or health baselines.',schema:TASK_REVIEW_FINISH,execute:async args=>{this.assertActive(ticketId);const d=this.forTicket(ticketId);if(!d?.repair)throw new TaskReviewError('task_review_unavailable');return this.host.store.atomic(()=>finishTaskReview(this.host.store,d,args))}}),

@@ -3,6 +3,7 @@ import {mkdtempSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {DatabaseSync} from 'node:sqlite'
+import {ALONG_SCHEMA_VERSION} from '../src/along/schema.ts'
 import {AlongStore} from '../src/along/store.ts'
 import {AlongService} from '../src/along/service.ts'
 import {createInbox} from '../src/along/inbox.ts'
@@ -99,7 +100,7 @@ it('migrates schema 11 to 12 transactionally while preserving all original goals
  const old=new DatabaseSync(f.path);old.exec('DROP TABLE task_trigger_review');old.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run();old.close()
  const reopened=new AlongStore(f.path);stores.push(reopened);expect(reopened.goalDetail(f.userId,f.goal.id)).toEqual(before)
  expect(requestTaskReview(reopened,f.identity,f.input)).toMatchObject({status:'pending'})
- const probe=new DatabaseSync(f.path);expect(probe.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('12');probe.close()
+ const probe=new DatabaseSync(f.path);expect(probe.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe(String(ALONG_SCHEMA_VERSION));probe.close()
 })
 
 it('retains old pairing invalidation while a legitimately new bound device receives a distinct review',()=>{
