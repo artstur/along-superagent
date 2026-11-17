@@ -121,7 +121,8 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
     const due=host.healthFollowup?.forTicket(ticketId)?.due
     const link=store.getWorkLink(ticketId)
-    if(!due&&link&&store.changeSetsByWork(link.workId).some(change=>change.status==='applied'&&change.ops.some(raw=>{
+    if(!due&&link&&store.changeSetsByWork(link.workId).some(change=>change.status==='applied'&&Array.isArray(change.ops)&&change.ops.some((raw:unknown)=>{
+      if(!raw||typeof raw!=='object')return false
       const op=raw as {op?:string;trigger?:{actor?:string;capability?:string}}
       return op.op==='task.create'&&op.trigger?.actor==='agent'&&op.trigger.capability==='research'
     })))throw new Error('Research execution is already queued by this planning work. Read back its durable task, give the planning reply and report ready; the Host dispatches a separate occurrence with its own sources/results. Do not execute or impersonate that occurrence here.')
