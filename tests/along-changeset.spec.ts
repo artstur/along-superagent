@@ -406,7 +406,8 @@ describe('Along tools: host-bound reads and the single write channel', () => {
     for (const name of ['along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_changes_commit']) {
       expect(WORK_TOOLS).toContain(name)
     }
-    expect(WORK_TOOLS).toHaveLength(41)
+    expect(WORK_TOOLS).toHaveLength(45)
+    expect(WORK_TOOLS).toEqual(expect.arrayContaining(['along_source_review_context','along_source_review_finish','along_task_update','along_task_cancel']))
     expect(WORK_TOOLS).toEqual(expect.arrayContaining(['along_memory_search', 'along_memory_forget', 'along_web_search', 'along_web_fetch']))
     expect(withAlong).toContain('along_chat_reply')
   })
