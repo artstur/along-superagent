@@ -453,6 +453,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
 | `tests/along-task-execution.spec.ts` | Task execution evidence, legal source reuse, occurrence deduplication, development isolation, completion transitions, ownership and bounded history |
+| `tests/along-calculation-registered.spec.ts` | Controlled synthetic Runtime/Engine/Sessions registered-tool and authenticated API proof for mixed inputs, scope/schema refusal, freshness and one execution; no real model/network/device |
 | `tests/along-calculation-evidence.spec.ts` | Fresh private fields, explicit user/standard parameters, unit/literal provenance and receipt publication boundaries |
 | `tests/along-calculation.spec.ts` | Exact arithmetic, units, rounding, bounded invalid input, receipt ownership, replay, caller rollback and restart durability |
 | `tests/along-prompts.spec.ts` | Actual Sessions role selection, on-demand capability registration, isolated overrides, provenance and packaged prompt fixture |
