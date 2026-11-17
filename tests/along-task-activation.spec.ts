@@ -60,6 +60,8 @@ it('resumes an actually unavailable executor after restart, but keeps source-con
  const f=fixture()
  f.store.triggers.put(f.store.assertTaskOwner(f.userId,f.task.id),{kind:'waiting',actor:'agent',capability:'research',resume:'capability_available',reason:'研究工具暂不可用'},1)
  new TaskActivation({store:f.store,available:()=>false}).prepare()
+ // A different wait must not erase the independently persisted missing-capability observation.
+ new TaskActivation({store:f.store,available:()=>true,allowed:()=>false}).prepare()
  f.store.close();stores.splice(stores.indexOf(f.store),1)
  const store=new AlongStore(f.path);stores.push(store)
  new TaskActivation({store,available:()=>true}).prepare()

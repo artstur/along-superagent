@@ -33,6 +33,10 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  14:db=>{
+    if(!db.prepare('PRAGMA table_info(task_trigger)').all().some(row=>row.name==='capability_missing'))
+      db.exec('ALTER TABLE task_trigger ADD COLUMN capability_missing INTEGER NOT NULL DEFAULT 0')
+  },
   12:db=>db.exec(TASK_TRIGGER_REVIEW_DDL),
   11:db=>db.exec(CALCULATION_EVIDENCE_DDL),
   10: db => { db.exec(TASK_TRIGGER_DDL); db.exec(CALCULATION_SCHEMA); db.exec(SOURCE_STATE_SCHEMA) },

@@ -33,7 +33,7 @@ export type TriggerState = 'pending'|'scheduled'|'waiting'|'running'|'settled'|'
 export interface TriggerTask { id:string;userId:string;goalId:string;currentRevision:number;status:string;content:string;scheduledAt?:string;createdAt:string }
 export interface TriggerRow {
   taskId:string;userId:string;goalId:string;taskRevision:number;generation:number;inputVersion:number;
-  definition:TaskTriggerInput;state:TriggerState;reason?:string;lastKey?:string;updatedAt:string
+  definition:TaskTriggerInput;state:TriggerState;reason?:string;lastKey?:string;updatedAt:string;capabilityMissing:boolean
 }
 export interface TriggerOccurrence {
   id:string;userId:string;goalId:string;taskId:string;generation:number;taskRevision:number;inputVersion:number;
@@ -48,7 +48,7 @@ export const TASK_TRIGGER_DDL = `
 CREATE TABLE IF NOT EXISTS task_trigger (
  task_id TEXT PRIMARY KEY REFERENCES user_task(id),user_id TEXT NOT NULL,goal_id TEXT NOT NULL,
  task_revision INTEGER NOT NULL,generation INTEGER NOT NULL,input_version INTEGER NOT NULL,
- definition TEXT NOT NULL,state TEXT NOT NULL,reason TEXT,last_key TEXT,updated_at TEXT NOT NULL
+ definition TEXT NOT NULL,state TEXT NOT NULL,reason TEXT,last_key TEXT,updated_at TEXT NOT NULL,capability_missing INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS task_trigger_goal ON task_trigger(user_id,goal_id,state);
 CREATE TABLE IF NOT EXISTS task_trigger_occurrence (
@@ -63,7 +63,7 @@ CREATE INDEX IF NOT EXISTS trigger_occurrence_task ON task_trigger_occurrence(us
 const hash = (parts:unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0,40)
 const parse = (row:Record<string,unknown>):TriggerRow => ({taskId:String(row.task_id),userId:String(row.user_id),goalId:String(row.goal_id),
   taskRevision:Number(row.task_revision),generation:Number(row.generation),inputVersion:Number(row.input_version),
-  definition:JSON.parse(String(row.definition)) as TaskTriggerInput,state:row.state as TriggerState,
+  definition:JSON.parse(String(row.definition)) as TaskTriggerInput,state:row.state as TriggerState,capabilityMissing:row.capability_missing===1,
   ...(row.reason==null?{}:{reason:String(row.reason)}),...(row.last_key==null?{}:{lastKey:String(row.last_key)}),updatedAt:String(row.updated_at)})
 const occurrence = (r:Record<string,unknown>):TriggerOccurrence => ({id:String(r.id),userId:String(r.user_id),goalId:String(r.goal_id),taskId:String(r.task_id),
   generation:Number(r.generation),taskRevision:Number(r.task_revision),inputVersion:Number(r.input_version),key:String(r.occurrence_key),
@@ -87,7 +87,7 @@ export class TaskTriggerStore {
     const state:TriggerState=task.status!=='open'?'cancelled':definition.kind==='time'?'scheduled':definition.kind==='immediate'?'pending':'waiting'
     this.db.prepare(`INSERT INTO task_trigger(task_id,user_id,goal_id,task_revision,generation,input_version,definition,state,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET task_revision=excluded.task_revision,generation=excluded.generation,
-      input_version=excluded.input_version,definition=excluded.definition,state=excluded.state,reason=NULL,last_key=NULL,updated_at=excluded.updated_at`)
+      input_version=excluded.input_version,definition=excluded.definition,state=excluded.state,reason=NULL,last_key=NULL,capability_missing=0,updated_at=excluded.updated_at`)
       .run(task.id,task.userId,task.goalId,task.currentRevision,(prior?.generation??0)+1,inputVersion,JSON.stringify(definition),state,this.now())
     return this.get(task.userId,task.id)!
   }
@@ -105,6 +105,10 @@ export class TaskTriggerStore {
   setState(row:TriggerRow,state:TriggerState,reason?:string):void {
     this.db.prepare('UPDATE task_trigger SET state=?,reason=?,updated_at=? WHERE task_id=? AND user_id=? AND generation=?')
       .run(state,reason??null,this.now(),row.taskId,row.userId,row.generation)
+  }
+  observeMissingCapability(row:TriggerRow):void {
+    this.db.prepare('UPDATE task_trigger SET capability_missing=1 WHERE task_id=? AND user_id=? AND generation=?')
+      .run(row.taskId,row.userId,row.generation)
   }
   cancel(userId:string,taskId:string):void {
     this.db.prepare("UPDATE task_trigger SET state='cancelled',updated_at=? WHERE user_id=? AND task_id=?").run(this.now(),userId,taskId)

@@ -16,9 +16,6 @@ export interface ActivationHost {
 }
 interface ConditionResult {ready:boolean;token:string;reason?:string}
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,32)
-// This durable Host-written marker records a genuinely missing executor capability. A planner's
-// vague waiting label is never sufficient to release work merely because arithmetic is installed.
-const CAPABILITY_WAIT_REASON='等待执行能力恢复'
 
 /** Reads trusted conditions, persists one logical occurrence and lets HealthFollowup dispatch it normally. */
 export class TaskActivation {
@@ -69,12 +66,13 @@ export class TaskActivation {
         store.triggers.setState(row,'waiting','等待你的完成反馈');continue
       }
       if(this.host.available&&!this.host.available(d.capability)) {
-        store.triggers.setState(row,'waiting',CAPABILITY_WAIT_REASON);continue
+        store.triggers.observeMissingCapability(row)
+        store.triggers.setState(row,'waiting','等待执行能力恢复');continue
       }
       const condition=this.conditions(row)
       if(!condition.ready) {store.triggers.setState(row,'waiting',condition.reason);continue}
       if(d.kind==='waiting'&&d.actor==='user') {store.triggers.setState(row,'waiting',d.reason);continue}
-      if(d.kind==='waiting'&&d.resume==='capability_available'&&!d.conditions?.length&&row.reason!==CAPABILITY_WAIT_REASON) {
+      if(d.kind==='waiting'&&d.resume==='capability_available'&&!d.conditions?.length&&!row.capabilityMissing) {
         store.triggers.setState(row,'waiting',d.reason);continue
       }
       if(d.kind==='waiting'&&d.resume==='user_input'&&store.inputVersion(row.goalId)<=row.inputVersion) {
