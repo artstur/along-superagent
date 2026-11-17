@@ -138,7 +138,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
   const taskFinish=automatic.find(tool=>tool.name==='along_health_followup')
   const tools:Tool[] = [
     ...(dueWork?[
-    alongTool({name:'along_source_read',description:'Request the authorized current summary for this host-dispatched Agent task. A pending/stale/unavailable result is a durable request: report waiting, do not invent data, finish the task or repeatedly poll. Host retries on the same occurrence; credentials never reach this tool. Only ready returns private scoped data; never send private values into public search.',
+    alongTool({name:'along_source_read',description:'Request the authorized current summary for this host-dispatched Agent task. A pending/stale/unavailable result is a durable request: report state:progress with the concrete waiting reason and end this attempt for Host retry. There is no report state named waiting; do not invent data, finish the task or repeatedly poll. Host retries on the same occurrence; credentials never reach this tool. Only ready returns private scoped data; never send private values into public search.',
       schema:SourceReadInputSchema,execute:async(args)=>{
         scope()
         if(!host.healthFollowup)throw new Error('task execution unavailable')
