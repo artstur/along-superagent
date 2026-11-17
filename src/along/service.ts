@@ -7,6 +7,9 @@
  * `CommitScope` → `src/along/changeset.ts`) and are assignable to them.
  */
 import type { AlongStore } from './store.ts'
+import { ensureSourceGoalReview,sourceReviewChangeRefusal,assertSourceReviewWrite } from './source-goal-review.ts'
+import { SourceEventSchema } from './source-state.ts'
+import { taskReviewChangeRefusal,assertTaskReviewWrite } from './task-repair.ts'
 
 /** Server-bound identity from the Host's pairing session; never taken from a request body. */
 export interface AlongIdentity { userId: string; deviceId: string }
@@ -26,7 +29,7 @@ export interface AlongInboxModule { acceptEvent(envelope: AlongEventEnvelope, id
 /** Host-bound commit scope; the model cannot specify any of these fields (design §4.4, BC-07-04). */
 export interface AlongCommitScope {
   userId: string; allowedGoalId?: string
-  ticketId?: string; assignmentId?: string; workId?: string; triggerEventId?: string; requireReminderPlan?: boolean
+  ticketId?: string; assignmentId?: string; workId?: string; triggerEventId?: string; requireReminderPlan?: boolean; requireTaskTrigger?:boolean
 }
 /** Structural shape of a ChangeSet submission (design §4.4); the validated original arrives from the changeset module. */
 export interface AlongChangeSetInput {
@@ -47,7 +50,7 @@ export interface AlongChangesetModule { commitChangeSet(input: AlongChangeSetInp
  */
 export class AlongService {
   constructor(private readonly store: AlongStore,
-    private readonly modules: { inbox?: AlongInboxModule; changeset?: AlongChangesetModule } = {}) {}
+    private readonly modules: { inbox?: AlongInboxModule; changeset?: AlongChangesetModule; taskReviews?:{requestTaskReview(identity:AlongIdentity,body:unknown):unknown} } = {}) {}
   /** Storage primitives for the loopback API reads and for the injected modules. */
   get alongStore(): AlongStore { return this.store }
   /** Receive an event reliably (transactional Inbox + business rows + delivery queue); implemented by the inbox module. */
@@ -55,9 +58,27 @@ export class AlongService {
     if (!this.modules.inbox) throw new Error('the Along inbox module is not installed')
     return this.modules.inbox.acceptEvent(envelope, identity)
   }
+  /** Commit the real capability fact and its bounded legacy-goal continuation before acknowledging either. */
+  acceptSourceEvent(identity:AlongIdentity,body:unknown) {
+    return this.store.atomic(()=>{
+      const input=SourceEventSchema.parse(body),receipt=this.store.sources.acceptEvent(identity,input)
+      if(receipt.status==='accepted')ensureSourceGoalReview(this.store,identity,input.goal_id)
+      return receipt
+    })
+  }
+  requestTaskTriggerReview(identity:AlongIdentity,body:unknown):unknown {
+    if(!this.modules.taskReviews)throw new Error('task trigger review not installed')
+    return this.modules.taskReviews.requestTaskReview(identity,body)
+  }
   /** Validate and auto-commit a ChangeSet (applied / conflicted / invalid); implemented by the changeset module. */
   commitChangeSet(input: AlongChangeSetInput, scope: AlongCommitScope): AlongChangeSetResult {
     if (!this.modules.changeset) throw new Error('the Along changeset module is not installed')
-    return this.modules.changeset.commitChangeSet(input, scope)
+    return this.store.atomic(()=>{
+      const refused=taskReviewChangeRefusal(this.store,input,scope)??sourceReviewChangeRefusal(this.store,input,scope)
+      if(refused)return {status:'invalid',reason:refused}
+      const result=this.modules.changeset!.commitChangeSet(input, scope)
+      if(result.status==='applied'){assertTaskReviewWrite(this.store,scope);assertSourceReviewWrite(this.store,scope)}
+      return result
+    })
   }
 }

@@ -21,6 +21,10 @@ import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
 import { recommendedSources, type DataSourceInput, type GoalDataSource } from './data-sources.ts'
 import { taskExecution, type TaskExecutionSummary } from './task-execution.ts'
+import { TaskTriggerStore, type TaskTriggerView } from './task-trigger.ts'
+import { CalculationStore } from './calculation-store.ts'
+import { SourceStateStore } from './source-state.ts'
+import { CalculationEvidenceStore } from './calculation-evidence.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
 export interface Page<T> { items: T[]; nextCursor?: string }
@@ -40,6 +44,7 @@ export interface TaskRow {
   id: string; goalId: string; userId: string; status: 'open' | 'done' | 'cancelled'; content: string
   scheduledAt?: string; reminderPlan?: ReminderPlan; previousDailyOccurrence?: string; completedFeedbackEventId?: string; currentRevision: number; createdAt: string; updatedAt: string
   execution?: TaskExecutionSummary
+  trigger?: TaskTriggerView
 }
 export interface TaskRevisionRow {
   taskId: string; revision: number; userId: string; goalId: string; content: string; status: 'open' | 'done' | 'cancelled'
@@ -193,6 +198,10 @@ export class AlongStore {
   readonly maintenance: MaintenanceStore
   readonly health: HealthStore
   readonly research: ResearchStore
+  readonly triggers: TaskTriggerStore
+  readonly calculations: CalculationStore
+  readonly sources: SourceStateStore
+  readonly calculationEvidence:CalculationEvidenceStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -209,6 +218,10 @@ export class AlongStore {
       this.maintenance = new MaintenanceStore(this.db, work => this.atomic(work))
       this.health = new HealthStore(this.db)
       this.research = new ResearchStore(this.db)
+      this.triggers = new TaskTriggerStore(this.db)
+      this.calculations = new CalculationStore(this.db)
+      this.sources = new SourceStateStore(this.db)
+      this.calculationEvidence=new CalculationEvidenceStore(this.db,this.sources)
     } catch (error) {
       this.db.close()
       throw error
@@ -268,7 +281,8 @@ export class AlongStore {
       reminderPlan: this.health.reminderPlan(this.text(row.id)),
       previousDailyOccurrence: this.health.previousDailyOccurrence(this.text(row.id), this.int(row.current_revision)),
       completedFeedbackEventId: this.opt(row.completed_feedback_event_id), currentRevision: this.int(row.current_revision),
-      createdAt: this.text(row.created_at), updatedAt: this.text(row.updated_at) }
+      createdAt: this.text(row.created_at), updatedAt: this.text(row.updated_at),
+      ...(this.triggers.view(this.text(row.user_id),this.text(row.id)) ? {trigger:this.triggers.view(this.text(row.user_id),this.text(row.id))} : {}) }
   }
   private messageRow(row: Record<string, SQLInputValue>): MessageRow {
     return { id: this.text(row.id), userId: this.text(row.user_id), eventId: this.text(row.event_id),
@@ -490,6 +504,8 @@ export class AlongStore {
         this.health.setDaily(input.taskId)
         this.health.savePlan(input.taskId,undefined)
       }
+      this.triggers.carry({id:task.id,userId:task.userId,goalId:task.goalId,currentRevision:revision,status,content,
+        ...(scheduledAt?{scheduledAt}:{}),createdAt:task.createdAt})
       return revision
     })
   }
@@ -984,7 +1000,9 @@ export class AlongStore {
   }
   /** Open (in-flight) work rows of one goal — routing reference only; the hard guarantee stays the version check. */
   workLinksForGoal(goalId: string): WorkLinkRow[] {
-    return this.all('SELECT * FROM work_link WHERE goal_id = ? AND ended_at IS NULL ORDER BY created_at', goalId).map(row => this.workLinkRow(row))
+    return this.all(`SELECT w.* FROM work_link w WHERE w.ended_at IS NULL AND (w.goal_id=? OR w.goal_id IS NULL AND EXISTS (
+      SELECT 1 FROM changeset c WHERE c.work_id=w.work_id AND c.goal_id=? AND c.status='applied')) ORDER BY w.created_at`,goalId,goalId)
+      .map(row => ({...this.workLinkRow(row),goalId}))
   }
   /** Marks the ticket's row ended (clears the in-flight marker); `ticket.ended` owns this call. */
   markWorkLinkEnded(ticketId: string, at: string): void {

@@ -19,3 +19,5 @@ For pending/stale/unavailable private reads, do not call along_task_finish or us
 
 
 When using private values in `along_calculate`, retain this ready read's actual request_id as source_request_id and provide quantity_sources literal data paths for every private quantity. Values, units, observation window and coverage must match the actual data; a scalar alone is not proof of its meaning. Read the calculation skill for supported constants and current schema. Host may reject a stale read again at task finish; do not recover by removing source bindings.
+
+For a known source dependency, persist trigger.kind:event with its registered source_ready/health_available condition, even while disconnected. Do not use an unconditioned waiting:capability_available because the calculator/research executor already exists; that wait concerns an actually missing executor, not source data. The Host evaluates already-ready conditions for new tasks.

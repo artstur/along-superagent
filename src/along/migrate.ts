@@ -7,9 +7,14 @@ import type { DatabaseSync } from 'node:sqlite'
 import { ALONG_DDL, ALONG_OLDEST_SCHEMA, ALONG_SCHEMA_VERSION } from './schema.ts'
 import { RESEARCH_DDL } from './research-store.ts'
 import { MEMORY_DDL } from './memory/schema.ts'
-import { HEALTH_DDL, TASK_SCHEDULE_DDL } from './health-schema.ts'
+import { HEALTH_DDL, TASK_SCHEDULE_DDL, TASK_TRIGGER_REVIEW_DDL } from './health-schema.ts'
 import { MAINTENANCE_DDL } from './maintenance-schema.ts'
 import { DATA_SOURCE_DDL } from './data-sources.ts'
+import { TASK_TRIGGER_DDL } from './task-trigger.ts'
+import { CALCULATION_SCHEMA } from './calculation-store.ts'
+import { SOURCE_STATE_SCHEMA } from './source-state.ts'
+import { SOURCE_GOAL_REVIEW_DDL } from './source-goal-review.ts'
+import { CALCULATION_EVIDENCE_DDL } from './calculation-evidence.ts'
 
 /** Raised when `along.sqlite` cannot be opened or migrated; the caller must abort startup. */
 export class AlongSchemaError extends Error {}
@@ -29,6 +34,14 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  14:db=>{
+    if(!db.prepare('PRAGMA table_info(task_trigger)').all().some(row=>row.name==='capability_missing'))
+      db.exec('ALTER TABLE task_trigger ADD COLUMN capability_missing INTEGER NOT NULL DEFAULT 0')
+  },
+  13:db=>db.exec(SOURCE_GOAL_REVIEW_DDL),
+  12:db=>db.exec(TASK_TRIGGER_REVIEW_DDL),
+  11:db=>db.exec(CALCULATION_EVIDENCE_DDL),
+  10: db => { db.exec(TASK_TRIGGER_DDL); db.exec(CALCULATION_SCHEMA); db.exec(SOURCE_STATE_SCHEMA) },
   9: db => { db.exec(DATA_SOURCE_DDL) },
   8: db => {
     const columns = new Set(db.prepare('PRAGMA table_info(message)').all().map(row => row.name))

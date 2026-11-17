@@ -371,7 +371,13 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/research-store.ts`, `recommendation.ts`, `web-research.ts` | Host-scoped durable public web evidence, validated recommendation protocol and bounded Harness web service adapters |
 | `src/along/calculation.ts` | Bounded exact decimal arithmetic, dimensional units, explicit conversion and reproducible calculation traces without executable expressions |
 | `src/along/calculation-store.ts` | Host-bound, transaction-sharing calculation receipts with execution-time task context and deterministic replay identities |
+| `src/along/calculation-result.ts` | Deterministic publication of computed public outputs; private calculation shows only its final result, never raw inputs or model arithmetic claims |
+| `src/along/calculation-evidence.ts` | Exact private-quantity bindings to fresh scoped source reads, rechecked before calculation publication |
 | `src/along/source-state.ts` | Monotonic Host-attested source metadata and private task-scoped cache reads with authorization, freshness and replay boundaries |
+| `src/along/task-trigger.ts` | Registered task trigger definitions, generations and durable execution/completion occurrences |
+| `src/along/source-goal-review.ts` | First-ready metadata-only legacy goal continuation, immutable human fields, bounded new Agent work and persisted trigger postconditions |
+| `src/along/task-repair.ts` | Private same-task trigger review request, evidence/current-scope checks, narrow ChangeSet boundary and persisted completion postconditions |
+| `src/along/task-activation.ts` | Trusted condition evaluation and activation into the existing persistent due-task dispatch |
 | `src/along/store.ts` | `AlongStore`, the only writer of `along.sqlite`: ownership checks, object and input versions, messages ordered by the server's `seq`, paged goal, task, message and change-set reads, health summaries, Inbox rows, the delivery queue with its lease and failure paths, work links, run records and the sync outbox, all inside `atomic` savepoints; `assertAlongDataIsolation` keeps the business directory outside the worker execution root |
 | `src/along/service.ts` | `AlongService`, the facade the Runtime assembles: the loopback API's single entry, with the inbox and changeset factories injected |
 | `src/along/legacy-import.ts` | `importLegacy`, the stable-ID idempotent import of the phone's old export (`g_health`/`g_finance`/`g_custom`, messages renumbered in export order) with a counts-and-hashes report |
@@ -448,11 +454,21 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-data-sources.spec.ts` | Per-goal source recommendations, host-bound writes, migration, persistence, replay and semantic health relevance |
 | `tests/along-weekly-completion.spec.ts` | Registered ready refusal before a real weekly update, update/recommendation ordering and original task/time preservation |
 | `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
+| `tests/along-single-task-mutations.spec.ts` | Real registered single-task update/cancel, numeric versions, original IDs/clock changes, stale scope and human completion guards |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |
 | `tests/along-task-execution.spec.ts` | Task execution evidence, legal source reuse, occurrence deduplication, development isolation, completion transitions, ownership and bounded history |
+| `tests/along-calculation-registered.spec.ts` | Controlled synthetic Runtime/Engine/Sessions registered-tool and authenticated API proof for mixed inputs, scope/schema refusal, freshness and one execution; no real model/network/device |
+| `tests/along-calculation-result.spec.ts` | Complete computed public result projection and suppression of private intermediate/input amounts |
+| `tests/along-calculation-evidence.spec.ts` | Fresh private fields, explicit user/standard parameters, unit/literal provenance and receipt publication boundaries |
 | `tests/along-calculation.spec.ts` | Exact arithmetic, units, rounding, bounded invalid input, receipt ownership, replay, caller rollback and restart durability |
 | `tests/along-prompts.spec.ts` | Actual Sessions role selection, on-demand capability registration, isolated overrides, provenance and packaged prompt fixture |
+| `tests/along-source-goal-review.spec.ts` | Controlled synthetic actual Runtime/API/Worker/read/calculation lifecycle, durable restart/retry, atomic acceptance and legacy/typed field preservation |
 | `tests/along-source-state.spec.ts` | Source version ordering, scoped private reads, freshness recovery, revocation, negative replay, bounded summaries and restart/rollback |
+| `tests/along-task-trigger-runtime.spec.ts` | Actual Runtime/Engine/tool chain from new goal to immediate calculation, persisted result and idempotent publication |
+| `tests/along-task-trigger-review.spec.ts` | Private bridge maintenance admission, same-goal evidence, immutable task fields, durable postconditions, schema-12 migration and stale scope refusal |
+| `tests/along-task-trigger-review-runtime.spec.ts` | Real Runtime registered review Worker, exact tool boundary, same-Ticket retry and restart recovery without chat, notifications or execution counts |
+| `tests/along-task-trigger-cadence.spec.ts` | Continuing goal cadence, prior-evidence repair, two-week occurrence completion and non-recurring counterexamples |
+| `tests/along-task-activation.spec.ts` | Input changes, temporary capability/permission loss and restart/cancellation recovery through persistent task occurrences |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |

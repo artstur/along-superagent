@@ -1,10 +1,16 @@
+import type { SourceGoalReview,SourceGoalReviewRequest } from './source-goal-review.ts'
 import type { ReminderPlan } from './reminder-plan.ts'
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 import type { HealthSummaryRow } from './store.ts'
 
 export interface DueTask { taskId: string; revision: number; dueAt: string }
+export interface TaskRepairReview {
+  taskId:string;revision:number;evidenceEventId:string;deviceId:string;originalScheduledAt?:string;originalContent:string;reason:string;retired:boolean;contextReadAt?:string
+}
 export interface HealthDispatch {
+  sourceReview?:SourceGoalReview
+  repair?:TaskRepairReview
   due?: DueTask
   eventId: string
   userId: string
@@ -18,6 +24,59 @@ export interface HealthDispatch {
 /** AlongStore-owned persistence sharing the business transaction and database lifetime. */
 export class HealthStore {
   constructor(private readonly db: DatabaseSync) {}
+  private sourceReviewSchema():boolean {return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_goal_review'").get()}
+  currentSourceEventId(userId:string,goalId:string):string|undefined {const row=this.db.prepare("SELECT event_id FROM source_state_current WHERE user_id=? AND goal_id=? AND provider='okx'").get(userId,goalId);return row?String(row.event_id):undefined}
+  /** Only metadata is scanned; private source read data never enters the dispatch outbox. */
+  legacyReadySources():{userId:string;deviceId:string;goalId:string}[] {
+    if(!this.sourceReviewSchema())return []
+    return this.db.prepare(`SELECT s.user_id,s.goal_id,u.device_id FROM source_state_current s
+      JOIN goal g ON g.id=s.goal_id AND g.user_id=s.user_id JOIN user u ON u.id=s.user_id
+      WHERE s.provider='okx' AND s.state='ready' AND g.status='active' AND EXISTS (
+        SELECT 1 FROM user_task t WHERE t.user_id=s.user_id AND t.goal_id=s.goal_id AND t.status='open'
+        AND NOT EXISTS (SELECT 1 FROM task_trigger x WHERE x.task_id=t.id))`).all()
+      .map(row=>({userId:String(row.user_id),deviceId:String(row.device_id),goalId:String(row.goal_id)}))
+  }
+  /** One completed review per capability generation, not one Worker for every price revision. */
+  requestSourceReview(input:SourceGoalReviewRequest):{dispatch:HealthDispatch;reused:boolean} {
+    if(!this.sourceReviewSchema())throw new Error('source goal review not installed')
+    const prior=this.db.prepare(`SELECT d.event_id FROM health_dispatch d JOIN source_goal_review r ON r.event_id=d.event_id
+      WHERE d.user_id=? AND d.goal_id=? AND r.provider=? AND r.generation=? AND r.device_id=? AND r.retired=0
+      AND (d.result IS NOT NULL OR d.input_version=?) ORDER BY (d.result IS NOT NULL) DESC,d.created_at LIMIT 1`)
+      .get(input.userId,input.goalId,input.provider,input.generation,input.deviceId,input.inputVersion)
+    if(prior)return {dispatch:this.get(String(prior.event_id))!,reused:true}
+    const eventId='source_review_'+createHash('sha256').update(JSON.stringify([input.userId,input.deviceId,input.goalId,input.provider,
+      input.generation,input.revision,input.reference,input.sourceEventId,input.inputVersion,input.legacyTasks.map(t=>[t.taskId,t.revision])])).digest('hex').slice(0,40)
+    const existing=this.get(eventId)
+    if(existing)return {dispatch:existing,reused:true}
+    this.db.prepare('INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at) VALUES(?,?,?,?,?,?)')
+      .run(eventId,input.userId,input.goalId,input.inputVersion,'[]',new Date().toISOString())
+    this.db.prepare(`INSERT INTO source_goal_review(event_id,provider,source_event_id,generation,revision,reference,device_id,legacy_tasks,original_task_ids)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(eventId,input.provider,input.sourceEventId,input.generation,input.revision,input.reference,input.deviceId,
+        JSON.stringify(input.legacyTasks),JSON.stringify(input.originalTaskIds))
+    return {dispatch:this.get(eventId)!,reused:false}
+  }
+  readSourceReviewContext(eventId:string):void {this.read(eventId,[]);this.db.prepare('UPDATE source_goal_review SET context_read_at=? WHERE event_id=? AND retired=0').run(new Date().toISOString(),eventId)}
+  retireSourceReview(eventId:string):void {if(this.sourceReviewSchema())this.db.prepare('UPDATE source_goal_review SET retired=1 WHERE event_id=?').run(eventId)}
+  private repairSchema():boolean {return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_trigger_review'").get()}
+  pairingMatches(userId:string,deviceId:string):boolean {return this.db.prepare('SELECT device_id FROM user WHERE id=?').get(userId)?.device_id===deviceId}
+  requestTaskReview(input:{userId:string;deviceId:string;goalId:string;taskId:string;revision:number;inputVersion:number;evidenceEventId:string;scheduledAt?:string;content:string;reason:string}):{dispatch:HealthDispatch;reused:boolean} {
+    if(!this.repairSchema())throw new Error('task trigger review not installed')
+    const prior=this.db.prepare(`SELECT d.event_id,r.task_revision FROM health_dispatch d JOIN task_trigger_review r ON r.event_id=d.event_id
+      WHERE d.user_id=? AND r.task_id=? AND d.input_version=? AND r.evidence_event_id=? AND r.device_id=? ORDER BY d.created_at DESC LIMIT 1`)
+      .get(input.userId,input.taskId,input.inputVersion,input.evidenceEventId,input.deviceId)
+    const origin=this.db.prepare('SELECT origin_event_id FROM task_revision WHERE task_id=? AND revision=?').get(input.taskId,input.revision)?.origin_event_id
+    if(prior&&(Number(prior.task_revision)===input.revision||origin===prior.event_id))return {dispatch:this.get(String(prior.event_id))!,reused:true}
+    const eventId='repair_'+createHash('sha256').update(JSON.stringify([input.userId,input.deviceId,input.goalId,input.taskId,input.revision,input.inputVersion,input.evidenceEventId])).digest('hex').slice(0,40)
+    const existing=this.get(eventId)
+    if(existing)return {dispatch:existing,reused:true}
+    this.db.prepare('INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING')
+      .run(eventId,input.userId,input.goalId,input.inputVersion,'[]',new Date().toISOString())
+    this.db.prepare(`INSERT INTO task_trigger_review(event_id,task_id,task_revision,input_version,evidence_event_id,device_id,original_scheduled_at,original_content,reason)
+      VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`).run(eventId,input.taskId,input.revision,input.inputVersion,input.evidenceEventId,input.deviceId,input.scheduledAt??null,input.content,input.reason)
+    return {dispatch:this.get(eventId)!,reused:false}
+  }
+  readRepairContext(eventId:string):void {this.read(eventId,[]);this.db.prepare('UPDATE task_trigger_review SET context_read_at=? WHERE event_id=? AND retired=0').run(new Date().toISOString(),eventId)}
+  retireRepair(eventId:string):void {if(this.repairSchema())this.db.prepare('UPDATE task_trigger_review SET retired=1 WHERE event_id=?').run(eventId)}
   state(
     goalId: string
   ): { inputVersion: number; types: string[]; baseline: HealthSummaryRow[]; seenTypes: string[] } | undefined {
@@ -26,7 +85,7 @@ export class HealthStore {
       row &&
       this.db
         .prepare(
-          'SELECT snapshot FROM health_dispatch WHERE goal_id=? AND input_version=? AND result IS NOT NULL AND NOT EXISTS (SELECT 1 FROM task_review r WHERE r.event_id=health_dispatch.event_id) ORDER BY created_at DESC,event_id DESC LIMIT 1'
+          `SELECT snapshot FROM health_dispatch WHERE goal_id=? AND input_version=? AND result IS NOT NULL AND NOT EXISTS (SELECT 1 FROM task_review r WHERE r.event_id=health_dispatch.event_id) ${this.repairSchema()?'AND NOT EXISTS (SELECT 1 FROM task_trigger_review r WHERE r.event_id=health_dispatch.event_id)':''} ${this.sourceReviewSchema()?'AND NOT EXISTS (SELECT 1 FROM source_goal_review r WHERE r.event_id=health_dispatch.event_id)':''} ORDER BY created_at DESC,event_id DESC LIMIT 1`
         )
         .get(goalId, Number(row.input_version))
     return row
@@ -43,8 +102,14 @@ export class HealthStore {
   get(eventId: string): HealthDispatch | undefined {
     const r = this.db.prepare('SELECT * FROM health_dispatch WHERE event_id=?').get(eventId)
     const due = r && this.db.prepare('SELECT * FROM task_review WHERE event_id=?').get(eventId)
+    const source=r&&this.sourceReviewSchema()?this.db.prepare('SELECT * FROM source_goal_review WHERE event_id=?').get(eventId):undefined
+    const repair=r&&this.repairSchema()?this.db.prepare('SELECT * FROM task_trigger_review WHERE event_id=?').get(eventId):undefined
     return r
       ? {
+          ...(source?{sourceReview:{provider:'okx' as const,sourceEventId:String(source.source_event_id),generation:Number(source.generation),revision:Number(source.revision),reference:String(source.reference),deviceId:String(source.device_id),
+            legacyTasks:JSON.parse(String(source.legacy_tasks)),originalTaskIds:JSON.parse(String(source.original_task_ids)),retired:source.retired===1,...(source.context_read_at==null?{}:{contextReadAt:String(source.context_read_at)})}}:{}),
+          ...(repair?{repair:{taskId:String(repair.task_id),revision:Number(repair.task_revision),evidenceEventId:String(repair.evidence_event_id),deviceId:String(repair.device_id),
+            ...(repair.original_scheduled_at==null?{}:{originalScheduledAt:String(repair.original_scheduled_at)}),originalContent:String(repair.original_content),reason:String(repair.reason),retired:repair.retired===1,...(repair.context_read_at==null?{}:{contextReadAt:String(repair.context_read_at)})}}:{}),
           ...(due ? { due: { taskId: String(due.task_id), revision: Number(due.revision), dueAt: String(due.due_at) } } : {}),
           eventId: String(r.event_id),
           userId: String(r.user_id),
@@ -152,7 +217,7 @@ export class HealthStore {
   }
   pending(): HealthDispatch[] {
     return this.db
-      .prepare('SELECT d.event_id FROM health_dispatch d LEFT JOIN task_review r ON r.event_id=d.event_id WHERE d.result IS NULL AND COALESCE(r.retired,0)=0 ORDER BY d.created_at,d.event_id')
+      .prepare(`SELECT d.event_id FROM health_dispatch d LEFT JOIN task_review r ON r.event_id=d.event_id WHERE d.result IS NULL AND COALESCE(r.retired,0)=0 ${this.repairSchema()?'AND NOT EXISTS (SELECT 1 FROM task_trigger_review x WHERE x.event_id=d.event_id AND x.retired=1)':''} ${this.sourceReviewSchema()?'AND NOT EXISTS (SELECT 1 FROM source_goal_review x WHERE x.event_id=d.event_id AND x.retired=1)':''} ORDER BY d.created_at,d.event_id`)
       .all()
       .map((r) => this.get(String(r.event_id))!)
   }
@@ -163,7 +228,7 @@ export class HealthStore {
   }
   finish(d: HealthDispatch, result: NonNullable<HealthDispatch['result']>): void {
     this.db.prepare('UPDATE health_dispatch SET result=? WHERE event_id=?').run(JSON.stringify(result), d.eventId)
-    if (d.due) return // A clock tick never advances the health-change baseline.
+    if (d.due||d.repair||d.sourceReview) return // Neither clocks nor maintenance reviews advance the observation baseline.
     this.db
       .prepare(
         `INSERT INTO health_followup(goal_id,user_id,input_version,types,baseline,reason,updated_at) VALUES(?,?,?,?,?,?,?)

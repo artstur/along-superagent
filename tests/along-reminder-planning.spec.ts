@@ -18,7 +18,7 @@ const user='u_abc12345',device='d_abc12345', timezone='Asia/Shanghai'
 const first='2027-01-04T02:00:00.000Z' // Monday 10:00 in Shanghai
 const explanation='提前准备，保留确认时间。'
 const agent={state:'scheduled',source:'agent',explanation}
-const once=(content:string,at:string)=>({op:'task.create',content,scheduled_at:at,reminder_plan:agent})
+const once=(content:string,at:string)=>({op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content,scheduled_at:at,reminder_plan:agent})
 const off={state:'off',reason:'opt_out'}
 const dirs:string[]=[]
 const stores:AlongStore[]=[]
@@ -48,11 +48,11 @@ it('requires a decision at the normal Worker entry, sends Agent arrangements and
   now()
   const {store,say,commit,goal,api}=fixture()
   say('周二和周五上课，前一天要预约。每天凌晨2点前入睡。某场次只能在开放预约后申请。')
-  expect(await commit([{op:'task.create',content:'周一预约'}])).toMatchObject({status:'invalid',reason:'reminder_plan_required'})
+  expect(await commit([{op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content:'周一预约'}])).toMatchObject({status:'invalid',reason:'time_trigger_requires_schedule'})
   const question='这个场次的预约几点开放？'
   const ops=[once('周一预约周二课程',first),once('周四预约周五课程','2027-01-07T02:00:00.000Z'),
-    once('睡前放下手机','2027-01-03T17:30:00.000Z'),{op:'task.create',content:'预约特殊场次',reminder_plan:{state:'needs_time',question}},
-    {op:'task.create',content:'了解不同课程',reminder_plan:{state:'off',reason:'untimed'}}]
+    once('睡前放下手机','2027-01-03T17:30:00.000Z'),{op:'task.create',content:'预约特殊场次',trigger:{kind:'waiting',actor:'user',capability:'reminder',resume:'user_input',reason:question},reminder_plan:{state:'needs_time',question}},
+    {op:'task.create',content:'了解不同课程',trigger:{kind:'waiting',actor:'user',capability:'reminder',resume:'user_input',reason:'等待用户选择课程'},reminder_plan:{state:'off',reason:'untimed'}}]
   expect(await commit(ops,'one')).toMatchObject({status:'applied',reused:false})
   expect(await commit(ops,'one')).toMatchObject({status:'applied',reused:true})
   const detail=await api('goals/'+goal.id)
@@ -71,19 +71,19 @@ it('requires a decision at the normal Worker entry, sends Agent arrangements and
   const task=store.goalDetail(user,goal.id).tasks.find(t=>t.scheduledAt===first)!
   say('把预约稍微推迟')
   const op=(fields:unknown)=>({op:'task.update',task_id:task.id,base_revision:store.currentRevision('task',task.id),fields})
-  expect(await commit([op({scheduled_at:'2027-01-04T02:30:00Z',reminder_plan:agent})])).toMatchObject({status:'applied'})
+  expect(await commit([op({trigger:'keep',scheduled_at:'2027-01-04T02:30:00Z',reminder_plan:agent})])).toMatchObject({status:'applied'})
   say('取消提醒')
   expect(await commit([op({reminder_plan:off})])).toMatchObject({status:'applied'})
   expect(JSON.parse(JSON.stringify(store.getTask(user,task.id)))).not.toHaveProperty('scheduledAt')
   expect(store.getTask(user,task.id)?.reminderPlan).toEqual(off)
   say('调整一下任务描述')
-  expect(await commit([op({scheduled_at:first,reminder_plan:agent})])).toMatchObject({status:'invalid',reason:'reminder_declined'})
+  expect(await commit([op({trigger:'keep',scheduled_at:first,reminder_plan:agent})])).toMatchObject({status:'invalid',reason:'reminder_declined'})
   expect(store.health.recentUnnotifiedTasks(first).map(r=>r.due.taskId)).not.toContain(task.id)
 })
 it('requires task-linked original words for an exact clock and recurring action, and separates a deadline and a booking day',async()=>{
   now();const {say,commit}=fixture()
   async function submit(text:string,content:string,quote:string,action:string,at=first,repeat='once'){
-    say(text);return commit([{op:'task.create',content,scheduled_at:at,repeat,reminder_plan:{state:'scheduled',source:'user',explanation,evidence:quote,action}}])
+    say(text);return commit([{op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content,scheduled_at:at,repeat,reminder_plan:{state:'scheduled',source:'user',explanation,evidence:quote,action}}])
   }
   for(const [text,content,quote,action,at] of [
     ['每天凌晨2点前入睡','入睡','每天凌晨2点前入睡','入睡','2027-01-03T18:00:00Z'],
@@ -109,7 +109,7 @@ it('binds an overall delegation to each named action and its own day, including 
   const daily='每天凌晨2点前要收拾完画具'
   say('我想'+booking+'。'+daily+'。请帮我安排任务和提醒，具体提醒时刻你来安排。')
   const create=(content:string,at:string,repeat:string,evidence:string,action:string)=>({
-    op:'task.create',content,scheduled_at:at,repeat,reminder_plan:{...agent,evidence,action}})
+    op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content,scheduled_at:at,repeat,reminder_plan:{...agent,evidence,action}})
   const monday=create('预约周二陶艺课',first,'weekly',booking,'预约陶艺课')
   const thursday=create('预约周五陶艺课','2027-01-07T02:00:00Z','weekly',booking,'陶艺课')
   const cleanup=create('收拾画具','2027-01-03T17:30:00Z','daily',daily,'收拾画具')
@@ -125,7 +125,7 @@ it('binds an overall delegation to each named action and its own day, including 
   const booked=tasks.find(t=>t.content===monday.content)!
   say('请将预约的提醒推迟半小时')
   expect(await commit([{op:'task.update',task_id:booked.id,base_revision:booked.currentRevision,fields:{
-    scheduled_at:'2027-01-04T02:30:00.000Z',reminder_plan:agent}}])).toMatchObject({status:'applied'})
+    trigger:'keep',scheduled_at:'2027-01-04T02:30:00.000Z',reminder_plan:agent}}])).toMatchObject({status:'applied'})
   expect(store.getTask(user,booked.id)?.reminderPlan).toMatchObject({repeat:'weekly',weekday:1,timezone,wallTime:'2027-01-04T02:30:00.000Z'})
   expect(store.health.daily(booked.id)?.evidence).toBe('e_1')
   say('我想'+booking+'。请帮我安排任务和提醒。这次只提醒一次。')
@@ -175,7 +175,7 @@ it.each([
     const worker='worker-'+(decision.ticket as {ticket_id:string}).ticket_id
     await h.runtime.idle()
     expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'schedule',base_revision:1,input_version:store.inputVersion(goal.id),reason:'按行动日排程',ops:[{
-      op:'task.create',content:action,scheduled_at:at,repeat,reminder_plan:{...agent,evidence:quote,action}}]})).toMatchObject({status:'applied'})
+      op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content:action,scheduled_at:at,repeat,reminder_plan:{...agent,evidence:quote,action}}]})).toMatchObject({status:'applied'})
     await h.runTool(worker,'orchestrator_report',{state:'ready',summary:'安排已保存。'})
     vi.setSystemTime(Date.parse(at)+1000)
     await h.runtime.pump();await h.runtime.idle()
@@ -207,7 +207,7 @@ it('keeps the booking weekday separate from the activity weekday when the Worker
   now();const {say,commit}=fixture()
   const text='每周一提醒我预约周二陶艺课'
   say(text)
-  const op=(at:string,action='陶艺课')=>({op:'task.create',content:'预约周二陶艺课',scheduled_at:at,repeat:'weekly',
+  const op=(at:string,action='陶艺课')=>({op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content:'预约周二陶艺课',scheduled_at:at,repeat:'weekly',
     reminder_plan:{...agent,evidence:text,action}})
   expect(await commit([op('2027-01-05T02:00:00Z')])).toMatchObject({status:'invalid',reason:'task_scoped_repeat_evidence_required'})
   expect(await commit([op(first)])).toMatchObject({status:'applied'})
@@ -234,7 +234,7 @@ it('keeps explicit cadence weekdays when a booking action follows the activity n
     ['每周一为周二陶艺课预约','为周二陶艺课预约'],
   ]) {
     say(text!)
-    const op=(at:string)=>({op:'task.create',content,scheduled_at:at,repeat:'weekly',reminder_plan:{...agent,evidence:text,action:'陶艺课'}})
+    const op=(at:string)=>({op:'task.create',trigger:{kind:'time',actor:'user',capability:'reminder'},content,scheduled_at:at,repeat:'weekly',reminder_plan:{...agent,evidence:text,action:'陶艺课'}})
     expect(await commit([op('2027-01-05T02:00:00Z')])).toMatchObject({status:'invalid',reason:'task_scoped_repeat_evidence_required'})
     expect(await commit([op(first)])).toMatchObject({status:'applied'})
   }

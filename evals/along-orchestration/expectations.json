@@ -1,0 +1,774 @@
+{
+  "version": 1,
+  "inputVersion": 1,
+  "dataClassification": "synthetic_reference_only",
+  "status": "specification_not_execution_evidence",
+  "evaluationRules": {
+    "executionModelMustNotReceive": [
+      "expectations",
+      "futureSteps",
+      "caseScoringTitles",
+      "referenceTaskStates"
+    ],
+    "continuousState": "Use previous actually accepted state, never reference answers.",
+    "syntheticSourceEvents": "Only a trusted isolated host adapter may emit them; never impersonate a paired production device.",
+    "holdout": "Run only after prompt/Skills/schema version freeze; do not put these user texts into Skill examples.",
+    "timestamps": "Exact clock hard assertions only for user-specified or preserved prior arrangements.",
+    "passPolicy": "All applicable hard checks pass; not_implemented/environment_failed/model_failed remain distinct non-pass statuses."
+  },
+  "cases": {
+    "O01": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "calculation_receipt_contains_results",
+          "after": "s1",
+          "expectedValues": [
+            2500,
+            8400,
+            4
+          ],
+          "units": [
+            "CNY/month",
+            "CNY",
+            "month"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "calculation_uses_supplied_inputs",
+          "after": "s1",
+          "expectedInputs": [
+            10000,
+            1600,
+            8200,
+            5700
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "immediate_agent_task_has_saved_result",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_unrequested_recurring_schedule",
+          "severity": "hard"
+        },
+        {
+          "predicate": "ready_requires_persistent_calculation_result",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O02": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "one_daily_user_action_reminder",
+          "after": "s1",
+          "action": "关灯睡觉",
+          "timezone": "Asia/Shanghai",
+          "severity": "hard"
+        },
+        {
+          "predicate": "next_occurrence_is_future_and_precedes_local_sleep_deadline",
+          "after": "s1",
+          "deadlineClock": "02:00",
+          "deadlineDate": "2026-11-18",
+          "severity": "hard"
+        },
+        {
+          "predicate": "agent_selected_clock_is_not_claimed_user_specified",
+          "severity": "hard"
+        },
+        {
+          "predicate": "reminder_does_not_complete_person_action",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O03": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "two_distinct_weekly_preceding_day_booking_tasks",
+          "after": "s1",
+          "activityDays": [
+            2,
+            5
+          ],
+          "bookingDays": [
+            1,
+            4
+          ],
+          "timezone": "Asia/Shanghai",
+          "severity": "hard"
+        },
+        {
+          "predicate": "booking_next_occurrences_are_future",
+          "after": "s1",
+          "earliestEligibleLocalDates": {
+            "Monday": "2026-11-23",
+            "Thursday": "2026-11-19"
+          },
+          "severity": "hard"
+        },
+        {
+          "predicate": "agent_selected_clock_is_not_claimed_user_specified",
+          "severity": "hard"
+        },
+        {
+          "predicate": "new_booking_clock_is_reasonable",
+          "after": "s1",
+          "preferredClockIfUnconstrained": "09:00",
+          "acceptableWindowLocal": [
+            "08:00",
+            "21:00"
+          ],
+          "severity": "quality"
+        },
+        {
+          "predicate": "weekly_research_has_actual_time_trigger",
+          "after": "s1",
+          "weekday": 5,
+          "localWindow": [
+            "18:00",
+            "23:00"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_claim_of_booked_class_or_completed_hike",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O04": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "same_two_task_ids_preserved",
+          "after": "s1",
+          "taskIds": [
+            "booking_tuesday_fixture",
+            "booking_friday_fixture"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "two_distinct_weekly_preceding_day_booking_tasks",
+          "after": "s1",
+          "activityDays": [
+            2,
+            5
+          ],
+          "bookingDays": [
+            1,
+            4
+          ],
+          "timezone": "Asia/Shanghai",
+          "severity": "hard"
+        },
+        {
+          "predicate": "original_civil_clock_and_future_instants_preserved",
+          "after": "s1",
+          "clock": "09:00",
+          "scheduledAt": [
+            "2026-11-23T09:00:00+08:00",
+            "2026-11-19T09:00:00+08:00"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_once_substitution_for_explicit_continuing_mandate",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O05": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "actual_public_research_and_same_task_saved_recommendation",
+          "after": "s1",
+          "networkEvidenceRequiredForRealModelLayer": true,
+          "severity": "hard"
+        },
+        {
+          "predicate": "future_research_is_persistently_scheduled",
+          "after": "s1",
+          "weekday": 5,
+          "localWindow": [
+            "18:00",
+            "23:00"
+          ],
+          "repeat": "once",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_claim_of_current_future_weather_without_source",
+          "severity": "hard"
+        },
+        {
+          "predicate": "recommendation_is_task_result_not_background_chat",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O06": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "explicit_agent_research_recurrence_without_reminder_verb_supported",
+          "after": "s1",
+          "weekday": 5,
+          "repeat": "weekly",
+          "severity": "hard"
+        },
+        {
+          "predicate": "agent_research_task_not_replaced_by_generic_user_reminder",
+          "severity": "hard"
+        },
+        {
+          "predicate": "research_result_not_announced_before_execution_window",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_periodic_creation_from_unrelated_habit_only",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O07": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "calculation_receipt_contains_results",
+          "after": "s1",
+          "expectedValues": [
+            100
+          ],
+          "units": [
+            "minute/week"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "immediate_requested_content_is_saved_and_user_accessible",
+          "after": "s1",
+          "minimumItems": 3,
+          "severity": "hard"
+        },
+        {
+          "predicate": "one_daily_user_action_reminder",
+          "after": "s1",
+          "clock": "21:10",
+          "clockSource": "user",
+          "severity": "hard"
+        },
+        {
+          "predicate": "independent_available_steps_execute_without_waiting_for_practice_completion",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O08": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "waiting_has_actual_source_resume_binding",
+          "after": "s1",
+          "provider": "okx",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_unavailable_personal_data_fabrication",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "source_ready_releases_bound_calculation",
+          "after": "s2",
+          "expectedResult": 3750,
+          "severity": "hard",
+          "unit": "USD"
+        },
+        {
+          "predicate": "duplicate_and_restart_add_no_execution_or_notification",
+          "steps": [
+            "s3",
+            "s4"
+          ],
+          "severity": "hard"
+        }
+      ]
+    },
+    "O09": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "ready_condition_evaluated_at_task_registration",
+          "after": "s1",
+          "expectedResult": 3750,
+          "severity": "hard",
+          "unit": "USD"
+        },
+        {
+          "predicate": "new_source_version_releases_one_execution",
+          "after": "s2",
+          "expectedResult": 3550,
+          "severity": "hard",
+          "unit": "USD"
+        },
+        {
+          "predicate": "duplicate_source_version_does_not_reexecute",
+          "after": "s3",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O10": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "missing_tool_waiting_has_real_capability_resume",
+          "after": "s1",
+          "capability": "calculation",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_ready_or_numerical_claim_without_tool_when_required",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "capability_ready_releases_calculation_once",
+          "after": "s2",
+          "expectedResult": 75,
+          "severity": "hard"
+        },
+        {
+          "predicate": "duplicate_ready_does_not_reexecute",
+          "after": "s3",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O11": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "cancellation_disarms_bound_trigger",
+          "after": "s2",
+          "severity": "hard"
+        },
+        {
+          "predicate": "ready_duplicate_restart_or_old_generation_does_not_revive_cancelled_task",
+          "steps": [
+            "s3",
+            "s4",
+            "s5"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_post_cancel_calculation_or_notification",
+          "after": "s2",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O12": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "catalog_capability_truth_used_for_data_dependency",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_secret_requested_in_chat_or_invented_connection",
+          "severity": "hard"
+        },
+        {
+          "predicate": "needed_input_has_persistent_user_reply_resume",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "available_independent_steps_are_not_blocked_by_account_data",
+          "severity": "quality"
+        },
+        {
+          "predicate": "no_fabricated_returns_or_actual_trading",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O13": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "same_task_replaced_not_copied",
+          "after": "s2",
+          "severity": "hard"
+        },
+        {
+          "predicate": "one_off_schedule_exact_user_clock",
+          "after": "s2",
+          "localDate": "2026-11-21",
+          "clock": "09:20",
+          "repeat": "once",
+          "severity": "hard"
+        },
+        {
+          "predicate": "old_daily_mandate_not_revived",
+          "steps": [
+            "s3",
+            "s4"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "unaffected_task_fields_byte_preserved",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O14": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_goal_task_schedule_or_trigger_created_from_observation_quote_or_negation",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "answer_not_claimed_as_business_execution",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O15": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "single_occurrence_user_clock",
+          "after": "s1",
+          "localDate": "2026-11-20",
+          "clock": "19:00",
+          "repeat": "once",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_weekly_inference_from_weekday_or_trip",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O16": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "at_most_one_catchup_occurrence_per_bound_task_generation",
+          "after": "s3",
+          "severity": "hard"
+        },
+        {
+          "predicate": "expired_weekend_window_does_not_emit_stale_recommendation",
+          "after": "s3",
+          "severity": "hard"
+        },
+        {
+          "predicate": "next_valid_weekly_civil_clock_preserved",
+          "after": "s3",
+          "weekday": 5,
+          "clock": "19:00",
+          "futureOf": "2026-11-23T03:00:00Z",
+          "severity": "hard"
+        },
+        {
+          "predicate": "repeated_tick_adds_no_duplicate_result_or_notice",
+          "after": "s4",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O17": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "provider_failure_not_misreported_as_success",
+          "severity": "hard"
+        },
+        {
+          "predicate": "retry_is_bounded_and_same_business_occurrence",
+          "severity": "hard"
+        },
+        {
+          "predicate": "saved_result_and_notice_are_idempotent",
+          "after": "s3",
+          "severity": "hard"
+        },
+        {
+          "predicate": "fixture_network_evidence_never_labelled_live_network",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O18": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "old_input_result_rejected_without_mutating_current_tasks",
+          "after": "s4",
+          "severity": "hard"
+        },
+        {
+          "predicate": "current_calculation_receipt_contains_result",
+          "after": "s3",
+          "expectedResult": 477,
+          "severity": "hard"
+        },
+        {
+          "predicate": "foreign_goal_result_cannot_read_write_or_notify",
+          "after": "s5",
+          "severity": "hard"
+        }
+      ]
+    },
+    "H01": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "two_distinct_weekly_preceding_day_booking_tasks",
+          "after": "s1",
+          "activityDays": [
+            4,
+            7
+          ],
+          "bookingDays": [
+            3,
+            6
+          ],
+          "timezone": "Asia/Shanghai",
+          "severity": "hard"
+        },
+        {
+          "predicate": "actionable_future_time_with_honest_agent_clock_source",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_synthetic_booking_completion",
+          "severity": "hard"
+        }
+      ]
+    },
+    "H02": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "calculation_receipt_contains_results",
+          "after": "s1",
+          "expectedValues": [
+            500,
+            800
+          ],
+          "units": [
+            "gram",
+            "gram"
+          ],
+          "severity": "hard"
+        },
+        {
+          "predicate": "calculation_input_lineage_complete",
+          "after": "s1",
+          "expectedInputs": [
+            4,
+            8,
+            250,
+            400
+          ],
+          "severity": "quality"
+        },
+        {
+          "predicate": "single_occurrence_user_clock",
+          "after": "s1",
+          "localDate": "2026-11-21",
+          "clock": "10:00",
+          "repeat": "once",
+          "severity": "hard"
+        },
+        {
+          "predicate": "calculation_finishes_without_waiting_for_purchase_time",
+          "severity": "hard"
+        }
+      ]
+    },
+    "H03": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "explicit_wait_has_actual_bound_user_reply_trigger",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "no_calculation_before_requested_user_start",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "current_calculation_receipt_contains_result",
+          "after": "s2",
+          "expectedResult": 1160,
+          "severity": "hard"
+        },
+        {
+          "predicate": "duplicate_user_event_does_not_reexecute",
+          "after": "s3",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O19": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "revocation_blocks_old_ready_event_without_reviving_read_access",
+          "after": "s4",
+          "severity": "hard"
+        },
+        {
+          "predicate": "waiting_retains_real_future_resume_after_revocation",
+          "after": "s4",
+          "severity": "hard"
+        },
+        {
+          "predicate": "new_authorized_generation_releases_exactly_one_calculation",
+          "after": "s5",
+          "expectedResult": 3550,
+          "unit": "USD",
+          "severity": "hard"
+        },
+        {
+          "predicate": "stale_delivery_and_restart_add_no_execution_or_notice",
+          "steps": [
+            "s6",
+            "s7"
+          ],
+          "severity": "hard"
+        }
+      ]
+    },
+    "O20": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "this_week_only_actions_not_promoted_to_recurring_mandate",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "single_occurrences_preserve_explicit_dates_and_clock",
+          "after": "s1",
+          "localDates": [
+            "2026-11-19",
+            "2026-11-22"
+          ],
+          "clock": "09:00",
+          "severity": "hard"
+        }
+      ]
+    },
+    "O21": {
+      "checks": [
+        {
+          "predicate": "every_created_task_has_durable_trigger_or_completed_execution",
+          "severity": "hard"
+        },
+        {
+          "predicate": "ordinary_weekday_trip_not_promoted_to_recurring_mandate",
+          "after": "s1",
+          "severity": "hard"
+        },
+        {
+          "predicate": "available_research_or_essential_clarification_is_actually_delivered",
+          "after": "s1",
+          "severity": "hard"
+        }
+      ]
+    }
+  }
+}

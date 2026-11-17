@@ -31,7 +31,7 @@ it('recovers observed revision/source/explanation failures without executing or 
  const badVersions=structuredClone(valid) as any;badVersions.ops[0].base_revision='1'
  const before={task:store.getTask(userId,task.id),changes:store.changeSetsByGoal(userId,goal.id),sync:store.workspaceSync(userId,0,200)}
  const invalid=await run('along_changes_commit',badVersions)
- expect(invalid).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:[{path:'ops.0.base_revision',message:expect.stringContaining('number')}],guidance:expect.stringContaining('JSON integers')})
+ expect(invalid).toMatchObject({current_versions:{base_revision:1,input_version:store.inputVersion(goal.id),tasks:[{task_id:task.id,base_revision:1}]},status:'invalid',reason:'invalid_arguments',issues:[{path:'ops.0.base_revision',message:expect.stringContaining('number')}],guidance:expect.stringContaining('JSON integers')})
  const badPlan=structuredClone(valid) as any;badPlan.ops[0].fields.reminder_plan={state:'scheduled',source:'manual'}
  expect(await run('along_changes_commit',badPlan)).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:expect.arrayContaining([{path:'ops.0.fields.reminder_plan.source',message:expect.any(String)},{path:'ops.0.fields.reminder_plan.explanation',message:expect.any(String)}]),guidance:expect.stringContaining('scheduled plans require explanation')})
  expect({task:store.getTask(userId,task.id),changes:store.changeSetsByGoal(userId,goal.id),sync:store.workspaceSync(userId,0,200)}).toEqual(before)
@@ -82,7 +82,7 @@ it('delivers Along schema recovery through actual session registration and leave
   const decision=await h.route({kind:'accept',trigger_id:trigger,title:'合成研究',worktree_name:'schema-worker',acknowledgement:'收到。'})
   const worker='worker-'+(decision.ticket as {ticket_id:string}).ticket_id;await h.runtime.idle()
   const before=store.workspaceSync(user,0,200)
-  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'bad',base_revision:'1',input_version:1,reason:'合成',ops:[]})).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:expect.arrayContaining([{path:'base_revision',message:expect.any(String)}]),structure_example:{ops:[{base_revision:1}]}})
+  expect(await h.runTool(worker,'along_changes_commit',{idempotency_key:'bad',base_revision:'1',input_version:1,reason:'合成',ops:[]})).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:expect.arrayContaining([{path:'base_revision',message:expect.any(String)}]),required_types:{task_base_revision:expect.stringContaining('JSON integer')}})
   expect(store.workspaceSync(user,0,200)).toEqual(before)
   await expect(h.runTool(h.runtime.masterId,'orchestrator_prompts_save',{})).rejects.toThrow()
   const parameters=(h.tools.get(worker)!.get('along_changes_commit') as any).parameters

@@ -24,6 +24,8 @@ import { SettingsConflict, type Settings } from '../app/settings.ts'
 import { UserError } from '../core/index.ts'
 import type { AlongEventEnvelope, AlongEventReceipt, AlongIdentity, AlongService } from './service.ts'
 import { OwnershipError } from './store.ts'
+import { TaskReviewError } from './task-repair.ts'
+import { SourceStateError } from './source-state.ts'
 
 /** What the Runtime assembly hands this API: the business service (503 until assembled), the bridge token read
  * from `alongBridgeTokenFile`, and the Settings facade used to add the paired user to `sources.along.allowed`. */
@@ -184,6 +186,21 @@ async function route(host: AlongApiHost, identity: AlongIdentity, method: string
   const service = host.along
   if (service === undefined) throw new AlongApiError(503, 'along_source_not_ready')
   const store = service.alongStore
+  if(method==='POST'&&path==='maintenance/task-trigger-reviews') {
+    const input=await body()
+    if(claimsIdentity(input))throw new AlongApiError(400,'identity_in_body')
+    return ok(service.requestTaskTriggerReview(identity,input))
+  }
+  if(method==='POST'&&(path==='source-events'||path==='source-read-results')) {
+    const input=await body()
+    if(claimsIdentity(input))throw new AlongApiError(400,'identity_in_body')
+    const receipt=path==='source-events'?service.acceptSourceEvent(identity,input):store.sources.acceptReadResult(identity,input)
+    return {status:receipt.status==='conflict'?409:receipt.status==='rejected'?400:200,body:receipt}
+  }
+  if(method==='GET'&&path==='source-reads') {
+    requireQueryUser(query,identity)
+    return ok({requests:store.sources.pendingReads(identity.userId)})
+  }
   if (method === 'GET' && path === 'goals') { requireQueryUser(query, identity); return ok(store.listGoals(identity.userId, keysetCursor(query))) }
   const detail = /^goals\/([^/]+)$/.exec(path)
   if (method === 'GET' && detail) return ok(store.goalDetail(identity.userId, detail[1]!))
@@ -217,6 +234,8 @@ async function route(host: AlongApiHost, identity: AlongIdentity, method: string
  * internals never leak into the body the Host may relay to the phone. */
 function failure(error: unknown): AlongSourceResponse {
   if (error instanceof OwnershipError) return { status: 404, body: { error: 'not_found' } }
+  if (error instanceof TaskReviewError) return {status:400,body:{error:error.code}}
+  if (error instanceof SourceStateError) return { status: 400, body: { error: error.code } }
   if (error instanceof AlongApiError) return { status: error.status, body: { error: error.code } }
   if (error instanceof SettingsConflict) return { status: 409, body: { error: 'conflict' } }
   if (error instanceof UserError) return { status: 400, body: { error: 'invalid_request' } }

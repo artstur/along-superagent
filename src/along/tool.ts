@@ -20,8 +20,9 @@ function jsonOutput(value: unknown): unknown {
 // Harness 0.2.2 checks lossless JSON before rendering. Optional object fields are absent on the wire;
 // invalid array items, non-finite numbers and non-JSON objects still fail rather than becoming null.
 export const alongTool = <S extends z.ZodType>(definition: { name: string; description: string; schema: S
+  invalidArguments?:(error:z.ZodError)=>unknown
   execute: (args: z.infer<S>, signal: AbortSignal) => Promise<unknown> }): Tool => ({ ...definition,
     execute: async (args: z.infer<S>, signal: AbortSignal) => jsonOutput(await definition.execute(args, signal)),
-    ...(['along_changes_commit','along_chat_reply','along_health_followup'].includes(definition.name)
-      ? {invalidArguments:(error:z.ZodError)=>alongArgumentRecovery(definition.name,error)} : {}),
+    ...(['along_changes_commit','along_task_update','along_task_cancel','along_chat_reply','along_health_followup'].includes(definition.name)
+      ? {invalidArguments:definition.invalidArguments??((error:z.ZodError)=>alongArgumentRecovery(definition.name,error))} : {}),
   }) as unknown as Tool

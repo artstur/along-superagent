@@ -22,6 +22,7 @@
 import { EVENT_ID_SHAPE, EVENT_SCHEMA_VERSION, EventEnvelopeSchema, HEALTH_SUMMARY_TYPES, MESSAGE_KINDS, payloadHash,
   type BoundIdentity, type EventEnvelope, type EventReceipt, type HealthSummaryPayload } from './envelope.ts'
 import { OwnershipError, type AlongStore, type InboxEventInput } from './store.ts'
+import { nextDailyTime } from './task-schedule.ts'
 
 /** Goal mutation is a chat concern (D4): no client event may carry it (BC-01-06's refusal lives here). */
 const CLIENT_FORBIDDEN_EVENT_TYPES = new Set(['along.goal.updated', 'along.goal.archived'])
@@ -141,6 +142,7 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
           }
           return { status: 'rejected', event_id: envelope.event_id, reason: externalReason(existing.rejectReason ?? 'invalid_envelope') }
         }
+        if(feedback?.kind==='task.completed'&&feedbackTask?.status==='cancelled')return reject('task_cancelled',envelope.event_id)
 
         // e — business writes for the accepted branch; the user row is asserted first (pairing usually created
         // it; direct calls must not strand rows without their owner).
@@ -188,11 +190,25 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
             messageId: envelope.message_id, causationId: envelope.causation_id,
             replyToMessageId: feedback.reply_to_message_id })
           receivedSeq = message.seq
-          if (feedback.kind === 'task.completed') {
+          if (feedback.kind === 'task.completed'&&feedbackTask.status!=='cancelled') {
+            const mandate=store.health.daily(feedbackTask.id)
+            if(mandate&&feedbackTask.status==='open') {
+              let trigger=store.triggers.get(identity.userId,feedbackTask.id)
+              if(!trigger)trigger=store.triggers.put(feedbackTask,{kind:'time',actor:'user',capability:'reminder'},store.inputVersion(feedbackTask.goalId))
+              const occurrence=trigger.definition.actor==='user'?store.triggers.completeUserOccurrence(feedbackTask,envelope.event_id,receivedAt,store.inputVersion(feedbackTask.goalId)):undefined
+              const at=feedbackTask.scheduledAt
+              // Completion closes this occurrence. A future cycle already renewed by the due worker is retained.
+              if(at&&(Date.parse(at)<=Date.parse(receivedAt)||occurrence?.dueAt===at)) {
+                const next=nextDailyTime(at,mandate.zone,Date.parse(receivedAt),mandate.wallTime,mandate.weekday)
+                const revision=store.appendTaskRevision({taskId:feedbackTask.id,userId:identity.userId,scheduledAt:next,originEventId:envelope.event_id})
+                store.appendSync({userId:identity.userId,goalId:feedbackTask.goalId,taskId:feedbackTask.id,kind:'task_updated',payload:{task_id:feedbackTask.id,goal_id:feedbackTask.goalId,status:'open',revision}})
+              }
+            } else {
             // A fact, not a goal edit (D4): status flips to done and the version advances deterministically —
             // no ChangeSet, `basis_changeset` stays NULL so agent-driven and fact-driven revisions stay apart.
             store.appendTaskRevision({ taskId: feedbackTask.id, userId: identity.userId, status: 'done',
               completedFeedbackEventId: envelope.event_id, originEventId: envelope.event_id })
+            }
           }
           // `task.feedback` changes no status and raises no version — its meaning is Stage B's Worker's to judge.
         }

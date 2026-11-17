@@ -30,3 +30,15 @@ CREATE TABLE IF NOT EXISTS task_daily (
  task_id TEXT PRIMARY KEY REFERENCES user_task(id), evidence_event_id TEXT NOT NULL, timezone TEXT NOT NULL, wall_time TEXT NOT NULL
 );
 `
+
+/** Private maintenance review of one existing task. Distinct from clock and observation occurrences. */
+export const TASK_TRIGGER_REVIEW_DDL = `
+CREATE TABLE IF NOT EXISTS task_trigger_review (
+ event_id TEXT PRIMARY KEY REFERENCES health_dispatch(event_id), task_id TEXT NOT NULL REFERENCES user_task(id),
+ task_revision INTEGER NOT NULL, input_version INTEGER NOT NULL, evidence_event_id TEXT NOT NULL, device_id TEXT NOT NULL,
+ original_scheduled_at TEXT, original_content TEXT NOT NULL, reason TEXT NOT NULL,
+ context_read_at TEXT, retired INTEGER NOT NULL DEFAULT 0,
+ UNIQUE(task_id,task_revision,input_version,evidence_event_id,device_id)
+);
+CREATE INDEX IF NOT EXISTS task_trigger_review_task ON task_trigger_review(task_id,event_id);
+`

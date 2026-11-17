@@ -129,6 +129,12 @@ export class SourceStateError extends Error { constructor(readonly code: string)
 
 /** Private source facts/read queue on the caller's shared SQLite transaction; it performs no I/O outside SQLite. */
 export class SourceStateStore {
+  /** A private request taints this occurrence even if the model later omits its source labels. */
+  hasRead(scope:SourceReadScope):boolean {
+    return !!this.db.prepare(`SELECT 1 FROM source_state_read WHERE user_id=? AND goal_id=? AND task_id=?
+      AND task_revision=? AND input_version=? AND ticket_id=? AND execution_key=? LIMIT 1`)
+      .get(scope.userId,scope.goalId,scope.taskId,scope.taskRevision,scope.inputVersion,scope.ticketId,scope.executionKey)
+  }
   private serial = 0
   private readonly prefix = 'source_state_' + randomUUID().replaceAll('-', '')
   constructor(private readonly db: DatabaseSync, private readonly options: Options = {}) {}

@@ -13,8 +13,12 @@ import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText,
 import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
+import { calculate, CalculationInputSchema } from './calculation.ts'
+import { SourceReadInputSchema } from './source-state.ts'
+import { QUANTITY_SOURCES,QUANTITY_PARAMETERS } from './calculation-evidence.ts'
 import { DATA_SOURCE_CATALOG, DATA_SOURCE_INPUT } from './data-sources.ts'
 import { alongTool } from './tool.ts'
+import { alongArgumentRecovery } from './argument-recovery.ts'
 import type { MemoryService } from './memory/service.ts'
 import { memoryTools } from './memory/tools.ts'
 import { createHash } from 'node:crypto'
@@ -33,6 +37,18 @@ const TOOL_CREATE_GOAL_SCHEMA = z.discriminatedUnion('domain', [
   createGoalOperation.extend({ domain: z.enum(['health', 'finance']), metric: ALONG_METRIC_SCHEMA }),
 ])
 const TOOL_OPS_SCHEMA = z.array(z.discriminatedUnion('op', [TOOL_CREATE_GOAL_SCHEMA, ...otherOperations])).min(1)
+// Reuse the business operation's fields object itself; a second lookalike schema would drift.
+const taskUpdateOperation = ALONG_OPS_SCHEMA.element.options.find(op=>op.shape.op.value==='task.update') as (typeof ALONG_OPS_SCHEMA.element.options)[4]
+const TASK_MUTATION_CONTEXT = {
+  task_id:ALONG_ID_SCHEMA,
+  base_revision:ALONG_BASE_REVISION_SCHEMA.describe('JSON integer from this existing task revision; never the goal revision or a quoted string.'),
+  goal_revision:ALONG_BASE_REVISION_SCHEMA.describe('JSON integer from along_goal_read.goal.current_revision.'),
+  input_version:ALONG_INPUT_VERSION_SCHEMA,
+  idempotency_key:z.string().min(1).max(128),
+  reason:ALONG_REASON_SCHEMA,
+}
+const TASK_UPDATE_INPUT = z.object({...TASK_MUTATION_CONTEXT,fields:taskUpdateOperation.shape.fields}).strict()
+const TASK_CANCEL_INPUT = z.object(TASK_MUTATION_CONTEXT).strict()
 
 /** Host dependencies of the Along tools; the Runtime assembles them when the Along service is installed. */
 export interface AlongToolsHost {
@@ -50,7 +66,8 @@ export interface AlongToolsHost {
 const HEALTH_TYPES = ['steps', 'workout', 'active_energy', 'weight', 'resting_heart_rate', 'wrist_temperature', 'sleep'] as const
 
 const taskView = (task: TaskRow) => ({ task_id: task.id, status: task.status, revision: task.currentRevision,
-  content: task.content, scheduled_at: task.scheduledAt, reminder_plan:task.reminderPlan, goal_id: task.goalId })
+  content: task.content, scheduled_at: task.scheduledAt, reminder_plan:task.reminderPlan, goal_id: task.goalId,
+  ...(task.trigger?{trigger:task.trigger}:{}) })
 
 const revisionView = (revision: GoalRevisionRow) => ({ revision: revision.revision, title: revision.title,
   metric: revision.metric, context: revision.context, status: revision.status, basis_changeset: revision.basisChangeset,
@@ -73,6 +90,19 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if (bound === undefined) throw new Error(`ticket ${ticketId} has no Along work scope; Along tools are unavailable`)
     return bound
   }
+  const currentVersions = () => {
+    const bound=scope()
+    if(!bound.allowedGoalId)return undefined
+    const goal=store.assertGoalOwner(bound.userId,bound.allowedGoalId)
+    return {base_revision:goal.currentRevision,input_version:store.inputVersion(goal.id),
+      tasks:store.listTasks(bound.userId,{goalId:goal.id},{limit:100}).items.map(t=>({task_id:t.id,base_revision:t.currentRevision}))}
+  }
+  const mutationRecovery = (name:string,error:z.ZodError) => {
+    const recovery=alongArgumentRecovery(name,error),versions=currentVersions()
+    return {...recovery,...(versions?{current_versions:{goal_revision:versions.base_revision,input_version:versions.input_version,tasks:versions.tasks}}:{}),
+      required_types:{base_revision:'JSON integer from the task revision',goal_revision:'JSON integer from goal current_revision',input_version:'JSON integer from goal input_version'},
+      guidance:'No operation was written. Repair the listed fields, never coerce numeric strings. Copy top-level task base_revision, goal_revision and input_version as JSON integers from actual read tools/current_versions. Use this original task_id; do not create a replacement task after a rejected update. fields is the existing task.update fields object; preserve omitted fields. Re-read after conflicts, use a fresh key after a corrected submission.'}
+  }
   // Reads are bound to the dispatch scope: a bound ticket reads its own goal (a foreign goal_id is refused);
   // an unbound ticket must name a goal_id, which the store still ownership-checks (BC-07-05).
   const readableGoalId = (bound: CommitScope, provided?: string): string => {
@@ -90,12 +120,80 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     if(!bound.allowedGoalId)throw new Error('research requires a bound existing goal')
     if(store.getGoal(bound.userId,bound.allowedGoalId)?.status!=='active')throw new Error('research requires an active goal')
     const due=host.healthFollowup?.forTicket(ticketId)?.due
+    const link=store.getWorkLink(ticketId)
+    if(!due&&link&&store.changeSetsByWork(link.workId).some(change=>change.status==='applied'&&Array.isArray(change.ops)&&change.ops.some((raw:unknown)=>{
+      if(!raw||typeof raw!=='object')return false
+      const op=raw as {op?:string;trigger?:{actor?:string;capability?:string}}
+      return op.op==='task.create'&&op.trigger?.actor==='agent'&&op.trigger.capability==='research'
+    })))throw new Error('Research execution is already queued by this planning work. Read back its durable task, give the planning reply and report ready; the Host dispatches a separate occurrence with its own sources/results. Do not execute or impersonate that occurrence here.')
+    if(due)host.healthFollowup!.taskContext(ticketId)
     const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
     const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
     const original=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)?.text:undefined
     return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(bound.triggerEventId?{budgetEventId:bound.triggerEventId}:{}),...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
   }
-  return [
+  const automatic=host.healthFollowup?.forTicket(ticketId)?host.healthFollowup.tools(ticketId):[]
+  const dueWork=host.healthFollowup?.forTicket(ticketId)?.due
+  const execution=dueWork&&store.triggers.get(scope().userId,dueWork.taskId)?.definition
+  const taskFinish=automatic.find(tool=>tool.name==='along_health_followup')
+  const tools:Tool[] = [
+    ...(dueWork?[
+    alongTool({name:'along_source_read',description:'Request the authorized current summary for this host-dispatched Agent task. A pending/stale/unavailable result is a durable request: report state:progress with the concrete waiting reason and end this attempt for Host retry. There is no report state named waiting; do not invent data, finish the task or repeatedly poll. Host retries on the same occurrence; credentials never reach this tool. Only ready returns private scoped data; never send private values into public search.',
+      schema:SourceReadInputSchema,execute:async(args)=>{
+        scope()
+        if(!host.healthFollowup)throw new Error('task execution unavailable')
+        const bound=host.healthFollowup.sourceScope(ticketId)
+        return store.sources.createRead(bound,args)
+      }}),
+    alongTool({name:'along_task_context',description:'Read the actual single task occurrence dispatched by the host, its trigger/executor/capability and current revisions. This also records that you read its evaluated context. It is not a claim that the human acted. No model-selected identities or task ids.',
+      schema:z.object({}).strict(),execute:async()=>{
+        scope()
+        const context=host.healthFollowup?.taskContext(ticketId)
+        if(!context)throw new Error('no task execution is bound to this planning work; persist triggers, read them back, reply and report ready so the Host can dispatch the occurrence separately')
+        const detail=store.goalDetail(context.task.userId,context.task.goalId)
+        return {task:taskView(context.task),trigger:context.definition?.definition,
+          occurrence_id:context.occurrence?.id,execution_key:context.occurrence?.id??context.dispatch.eventId,
+          goal:{current_revision:detail.goal.currentRevision,input_version:store.inputVersion(detail.goal.id),title:detail.revision?.title,context:detail.revision?.context},
+          observations:context.observed.summaries.map(summaryView)}
+      }}),
+    ]:[]),
+    ...(execution?.actor==='agent'&&execution.capability==='calculation'?[alongTool({name:'along_calculate',description:'Execute this host-bound calculation occurrence using bounded exact arithmetic with units, persist its scoped receipt for along_task_finish. Input facts/assumptions are separate from arithmetic correctness. This tool is unavailable to planning tickets.',
+      schema:z.object({calculation:CalculationInputSchema,source_request_id:z.string().min(1).max(128).optional(),quantity_sources:QUANTITY_SOURCES.optional(),quantity_parameters:QUANTITY_PARAMETERS.optional()}).strict(),execute:async(args)=>{
+        const bound=scope(),d=host.healthFollowup?.forTicket(ticketId)
+        if(d?.due) {
+          const calcScope=host.healthFollowup!.calculationScope(ticketId)
+          return store.atomic(()=>{
+            const definition=store.triggers.get(calcScope.userId,calcScope.taskId)?.definition
+            const sourceDependent=definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated')
+            if((sourceDependent||store.sources.hasRead(calcScope))&&(!args.source_request_id||!args.quantity_sources))throw new Error('source-dependent calculation requires source_request_id and quantity_sources from an actual fresh task read')
+            if((args.source_request_id===undefined)!==(args.quantity_sources===undefined))throw new Error('source request and quantity bindings must be provided together')
+            if(args.quantity_parameters&&!args.source_request_id)throw new Error('explicit private calculation parameters require the current source read')
+            const bindings=args.source_request_id?store.calculationEvidence.verify(calcScope,args.source_request_id,args.quantity_sources,args.calculation.quantities,args.quantity_parameters):undefined
+            const receipt=store.calculations.calculate(calcScope,args.calculation)
+            if(bindings)store.calculationEvidence.record(receipt.id,args.source_request_id!,bindings)
+            return {receipt_id:receipt.id,result:receipt.calculation.result,input:receipt.calculation.input,trace:receipt.calculation.trace,
+              calculated_at:receipt.calculatedAt,reused:receipt.reused,persisted:true,
+              input_sources:bindings?[...bindings.sources.map(s=>({quantity:s.quantity,kind:'private_field',unit:s.unit})),
+                ...bindings.parameters.map(p=>({quantity:p.quantity,kind:p.kind==='constant'?'named_constant':'user_parameter',unit:p.unit}))]
+                :args.calculation.quantities.map(q=>({quantity:q.name,kind:'supplied_input',unit:q.unit??'1'}))}
+          })
+        }
+        throw new Error('calculation requires a dispatched calculation occurrence')
+      }})]:[]),
+    ...(!automatic.length?[alongTool({name:'along_calculation_preview',description:'Answer a direct user arithmetic question without a task execution. Returns persisted:false and no receipt, never completes a task. After creating a typed task, finish planning and let its separate occurrence run instead.',
+      schema:z.object({calculation:CalculationInputSchema}).strict(),execute:async(args)=>{
+        const bound=scope()
+        const source=bound.triggerEventId&&store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)
+        if(!source||source.audience!=='conversation'||source.direction!=='inbound'||source.role!=='user')throw new Error('calculation preview requires a real current user question')
+        if(!store.isCurrentChatInput(bound.userId,source.eventId,bound.allowedGoalId))return {status:'conflicted',reason:'conflicted_input'}
+        const queued=bound.allowedGoalId&&store.listTasks(bound.userId,{goalId:bound.allowedGoalId},{limit:200}).items
+          .find(task=>task.status==='open'&&task.trigger?.actor==='agent'&&task.trigger.capability==='calculation'
+            &&Date.parse(task.createdAt)>=Date.parse(source.receivedAt))
+        if(queued)return {status:'queued_for_execution',persisted:false,task_id:queued.id,
+          guidance:'This is the planning ticket, not the dispatched occurrence. The typed calculation is already durable. Read back its trigger, send the direct planning reply, and report ready; the Host will dispatch its execution separately. Do not edit status/content or wait here for its result.'}
+        return {...calculate(args.calculation),persisted:false,scope:'conversation_question'}
+      }})]:[]),
+    ...(taskFinish&&dueWork?[{...taskFinish,name:'along_task_finish',description:'Finish this host-dispatched task occurrence. For calculation provide the actual along_calculate receipt; for research provide the structured sourced recommendation. This persists a task result and queues its existing notification channel, never proves phone delivery or human action. Read along_task_context first; no personal chat for background work.'}]:[]),
     alongTool({name:'along_data_sources_catalog',
       description:'Read the trusted data-source capability catalog. A recommendation is not authorization. Use only these provider ids; official setup is not OAuth and never means connected.',
       schema:z.object({}).strict(),execute:async()=>{scope();return {sources:DATA_SOURCE_CATALOG}}}),
@@ -115,14 +213,15 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const changed=store.replaceGoalDataSources(bound.userId,goalId,args.sources)
         return {status:'recommended',reused:!changed,data_sources:store.goalDataSources(bound.userId,goalId)}
       })}),
-    ...researchTools(store.research,researchScope,host.web??(()=>undefined)),
+    ...(!automatic.length||dueWork&&(!execution||execution.capability==='research')
+      ?researchTools(store.research,researchScope,host.web??(()=>undefined)):[]),
     alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
       schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{
         const bound=scope(),page=store.listGoals(bound.userId,{limit:20,cursor:args.cursor})
         return {goals:page.items.map(goal=>{const detail=store.goalDetail(bound.userId,goal.id);return {
           goal_id:goal.id,status:goal.status,title:detail.revision?.title,context:detail.revision?.context,tasks:detail.tasks.map(taskView)}}),next_cursor:page.nextCursor}
       }}),
-    ...(host.healthFollowup?.forTicket(ticketId) ? host.healthFollowup.tools(ticketId) : []),
+    ...automatic,
     ...(host.memory ? memoryTools(host.memory, () => {
       const bound = scope()
       return { userId: bound.userId, goalId: bound.allowedGoalId }
@@ -173,7 +272,11 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             text:message.text,at:message.occurredAt??message.receivedAt}
         })
         const context = host.memory?.context({ userId: bound.userId, goalId: bound.allowedGoalId }, conversation)
-        return { timezone: page.items.at(-1)?.timezone ?? [...page.items].reverse().find(m=>m.timezone)?.timezone, now:new Date().toISOString(), ...(context ? { memories: context.memories, memory_history: context.history } : {}), task_feedback:feedback, messages: (context?.messages ?? conversation).map(message =>
+        const timezone=page.items.at(-1)?.timezone??[...page.items].reverse().find(m=>m.timezone)?.timezone
+        let civil:Record<string,string>={}
+        if(timezone)try {civil={local_now:new Intl.DateTimeFormat('sv-SE',{timeZone:timezone,dateStyle:'full',timeStyle:'long',hourCycle:'h23'}).format(new Date()),
+          local_weekday:new Intl.DateTimeFormat('en-US',{timeZone:timezone,weekday:'long'}).format(new Date())}}catch{/* Never invent a civil clock for an unknown zone. */}
+        return { timezone, now:new Date().toISOString(),...civil, ...(context ? { memories: context.memories, memory_history: context.history } : {}), task_feedback:feedback, messages: (context?.messages ?? conversation).map(message =>
             ({ seq: message.seq, event_id: message.eventId, role: message.role, text: message.text, at: message.occurredAt ?? message.receivedAt })),
           ...(page.nextCursor !== undefined ? { next_before_seq: Number(page.nextCursor) } : {}) }
       },
@@ -258,8 +361,14 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         reason: ALONG_REASON_SCHEMA.describe('One-sentence change note the user will see.'),
         derived_from_changeset: ALONG_ID_SCHEMA.optional()
           .describe('For「改回去」: the applied ChangeSet whose goal snapshot is restored; fields must match or be omitted.'),
-        ops: TOOL_OPS_SCHEMA.describe('For qualitative goals choose custom and omit metric. Numeric health/finance goals require type, target, unit and period. Every new task needs reminder_plan: scheduled (supply future scheduled_at, source agent or user, and explanation), needs_time (one question), or off (untimed or opt_out). For edits keep is explicit. Daily/weekly require a matching quoted user mandate and action.'),
+        ops: TOOL_OPS_SCHEMA.describe('Each new task needs its typed trigger. For task.update put the task numeric base_revision beside op/task_id, outside fields; fields contains actual changes. A timing edit preserves trigger:"keep" or supplies the full typed trigger. Only time triggers need scheduled_at/reminder_plan; repeat once/daily/weekly belongs beside scheduled_at, never inside reminder_plan. A scheduled plan has state/source/explanation, original evidence/action and optional recurrence_source. Use custom and omit metric for qualitative goals. Numeric goals require their actual metric.'),
       }).strict(),
+      invalidArguments:error=>{
+        const recovery=alongArgumentRecovery('along_changes_commit',error),versions=currentVersions()
+        if(!versions)return recovery
+        return {...recovery,current_versions:versions,
+          update_structure:{op:'task.update',task_id:'copy an owned task_id above',base_revision:'copy its numeric base_revision above without quotes',fields:{trigger:'keep',scheduled_at:'the authorized ISO time',repeat:'preserve actual cadence',reminder_plan:'a valid plan object; repeat stays outside'}}}
+      },
       execute: async args => {
         const bound = scope()
         const createFirst = args.ops[0] !== undefined && args.ops[0].op === 'goal.create'
@@ -271,15 +380,20 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         }
         const ops = ALONG_OPS_SCHEMA.parse(args.ops.map(op => op.op === 'goal.create' && op.domain === 'custom' ? { ...op, metric: null } : op))
         const result = host.service.commitChangeSet(
-          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true })
+          { ...args, ops, ...(bound.allowedGoalId !== undefined ? { goal_id: bound.allowedGoalId } : {}) }, { ...bound, requireReminderPlan:true,requireTaskTrigger:true })
         if (result.status === 'invalid') {
           const guidance:Record<string,string> = {
+            task_completion_requires_executor:'Only the Host-dispatched Agent occurrence can complete this task with actual tool evidence. Stop editing its status/content. Finish the current planning reply/report ready to release the goal; the durable trigger will execute separately.',
+            task_execution_already_settled:'This Agent execution already finished under the same input. Its result belongs in task detail; do not rewrite the stable task or retry a status edit. Reply from the actual result and finish the planning ticket.',
+            task_trigger_required:'Every new/replanned task must include its typed trigger. Use immediate for a real Agent operation now, time with a persisted clock/cadence, event with registered owned conditions, or waiting with a real user_input/capability_available resumption. Include actor and supported capability; a task card alone is not an execution plan.',
+            waiting_trigger_requires_condition:'This executor capability is already installed. Missing source data is not a missing calculator: use event with a registered source_ready/health_available/task_completed condition (and the owned source recommendation), or waiting:user_input for genuinely missing user information. A capability_available wait without a condition is only for an actually unavailable executor.',
+            trigger_source_not_recommended:'Create/read this goal, read the catalog, and persist the appropriate source recommendation before creating its data-dependent task. The host cannot subscribe to an unimplemented or out-of-goal source.',
             recurring_research_remains_open:'This host-bound review cannot edit or stop the ongoing research task, its wording, time or recurrence. Make no task ChangeSet; deliver this occurrence with along_health_followup outcome:keep and its recommendation. The host renews the existing cadence. A new explicit user chat handles task changes.',
             reminder_plan_required:'Every new task needs reminder_plan in that op. If the action has a time or deadline, choose the next useful future instant as source:agent, repeat:once with explanation. For a genuine missing window use needs_time with one specific question; explicitly declined or untimed work uses off.',
             task_scoped_repeat_evidence_required:'Re-read the explicit user mandate and the existing task/time first. A once plan does not fulfill a clearly requested weekly cadence; report any unresolved cadence accurately. Use the original cadence clause, a specific action shared with the task, and the actual reminder weekday. For an explicit 补上每周 instruction quote the complete command including 补上; retain the existing future task clock if unchanged. Without a reminder verb use source:agent with a truthful explanation, not a forged source:user reminder quote. Do not substitute once for a clearly requested weekly cadence; explain the unresolved part if still unverified.',
-            user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For user source, quote the single original clock + reminder verb + exact task action, and pass that action. If cadence was also rejected, schedule the next occurrence once.',
-            daily_mandate_required:'When daily reminders have not been delegated for this action, schedule the next useful occurrence as source:agent and repeat:once.',
-            weekly_plan_required:'If weekly evidence is incomplete, schedule a concrete next occurrence once, or ask for the essential booking window.',
+            user_clock_evidence_required:'A deadline, class time, or lead time selected by you is not a user-specified reminder clock. Use source:"agent" plus a plain-language explanation. For a human reminder use its actual reminder clock/action evidence; an Agent operation may cite the exact user clock and requested operation. A deadline or lead time selected by you stays source:agent. Do not silently replace a requested recurrence with once.',
+            daily_mandate_required:'Re-read the original action and cadence. Do not infer daily from a metric alone or silently replace a requested recurring action with once; persist explicit waiting if essential cadence authority is missing.',
+            weekly_plan_required:'A requested weekly action requires a scheduled weekly plan with its own weekday and authorized evidence. Do not substitute once to pass validation. Ask only for a genuinely essential missing booking window; otherwise infer a reasonable clock as source:agent.',
             reminder_declined:'The user declined reminders. Keep or update the action with reminder_plan:{state:"off",reason:"opt_out"} and omit scheduled_at.',
           }
           const remedy = result.reason && guidance[result.reason]
@@ -288,5 +402,18 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         return result
       },
     }),
+  ]
+  const commit=tools.find(tool=>tool.name==='along_changes_commit')!
+  const mutate = (args:z.infer<typeof TASK_CANCEL_INPUT>|z.infer<typeof TASK_UPDATE_INPUT>,signal:AbortSignal) => {
+    if(!scope().allowedGoalId)throw new Error('an existing goal must be bound before updating or cancelling its task')
+    const {task_id,base_revision,goal_revision,input_version,idempotency_key,reason}=args
+    const op='fields' in args?{op:'task.update',task_id,base_revision,fields:args.fields}:{op:'task.cancel',task_id,base_revision}
+    return commit.execute(commit.schema.parse({idempotency_key,base_revision:goal_revision,input_version,reason,ops:[op]}),signal)
+  }
+  return [...tools,
+    alongTool({name:'along_task_update',description:'Update ONE existing task by its stable task_id. Prefer this for a single-task change. All versions are TOP-LEVEL JSON integers: base_revision is this task revision; goal_revision is the goal current_revision; input_version is the goal input_version. fields uses the existing task.update contract; omitted fields stay unchanged. Timing changes preserve trigger:"keep" or supply the authorized typed trigger and validated plan/cadence. The Host uses the ordinary ChangeSet writer and scope guards. Read back the same task after applied; never create a replacement after a rejection. Multi-task atomic changes and new tasks still use along_changes_commit.',
+      schema:TASK_UPDATE_INPUT,invalidArguments:error=>mutationRecovery('along_task_update',error),execute:mutate}),
+    alongTool({name:'along_task_cancel',description:'Cancel ONE existing task by its original stable task_id. All versions are TOP-LEVEL JSON integers: task base_revision, goal_revision and input_version. Reuses the ordinary ChangeSet writer, bound goal, current authority and idempotency. Does not create or delete another task, mark a human action complete, or accept user/goal identity. Read current versions first and read back cancellation; stale results/old occurrences cannot revive it.',
+      schema:TASK_CANCEL_INPUT,invalidArguments:error=>mutationRecovery('along_task_cancel',error),execute:mutate}),
   ]
 }

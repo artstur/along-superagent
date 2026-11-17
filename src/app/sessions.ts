@@ -64,7 +64,7 @@ declare module '@deepseek-ai/cordis' {
  */
 export const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
   'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
-  'along_web_search', 'along_web_fetch', 'along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_health_followup', 'along_goal_overview', 'along_changes_commit', 'along_chat_reply', 'along_memory_search', 'along_memory_forget', 'along_data_sources_catalog', 'along_data_sources_recommend']
+  'along_web_search', 'along_web_fetch', 'along_source_read', 'along_task_context', 'along_task_review_context', 'along_task_review_finish', 'along_source_review_context', 'along_source_review_finish', 'along_calculate', 'along_calculation_preview', 'along_task_finish', 'along_goal_read', 'along_conversation_read', 'along_task_list', 'along_health_read', 'along_health_followup', 'along_goal_overview', 'along_changes_commit', 'along_task_update', 'along_task_cancel', 'along_chat_reply', 'along_memory_search', 'along_memory_forget', 'along_data_sources_catalog', 'along_data_sources_recommend']
 /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
 const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
   + 'end the turn instead of waiting for them.'
@@ -277,8 +277,15 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute, tool.invalidArguments)
     if (master) {
-      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
-        agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
+      const settings=host.store.settings(),alongOnly=settings.sources.along?.enabled===true&&settings.sources.github?.enabled===false
+      binding.disposers.push(agent.ctx.tools.restrict({ allow: alongOnly?['skill']:['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
+        agent.ctx.tools.guard(execution => {
+          const current=host.store.settings()
+          if(current.sources.along?.enabled===true&&current.sources.github?.enabled===false&&execution&&
+            !['skill'].includes(execution.name)&&!execution.name.startsWith('orchestrator_')&&!execution.name.startsWith('along_'))
+            return 'Along business routing uses registered goal/task capabilities; repository, terminal and file tools are unavailable'
+          return noWait(execution, () => this.routed(agent))
+        }))
     } else {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
       binding.disposers.push(...this.workOnly(agent, ticket!.id))
@@ -308,10 +315,14 @@ export class Sessions {
     const parent = scopeParentOf(agent)
     const scheduled = store.tickets.get(ticketId)?.mandate.basis.via === 'scheduled'
     const along=store.tickets.get(ticketId)?.mandate.actor?.source==='along'
-    const allow = scheduled ? [] : WORK_TOOLS.filter(name => (!along||!['web_search','web_fetch'].includes(name))&&agent.ctx.tools.get(name, parent))
+    const allow = scheduled ? [] : WORK_TOOLS.filter(name => (!along||name==='skill'||name.startsWith('along_'))&&agent.ctx.tools.get(name, parent))
     return [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(execution => {
       const current = store.tickets.get(ticketId)
       if(!current||!liveTicket(current))return 'Ticket ended; new work needs a new authorized ticket'
+      if(current.mandate.actor?.source==='along'&&['web_search','web_fetch'].includes(execution?.name))
+        return 'Use along_web_search and along_web_fetch for scoped public evidence in this Along task'
+      if(current.mandate.actor?.source==='along'&&execution&&execution.name!=='skill'&&execution.name!=='orchestrator_report'&&!execution.name.startsWith('along_'))
+        return 'Along business execution uses registered task capabilities only; do not inspect or modify repository/runtime files to repair a rejected business operation'
       return current.mandate.actor?.source==='along'&&['web_search','web_fetch'].includes(execution?.name)
         ? 'Use along_web_search and along_web_fetch for scoped public evidence in this Along task' : undefined
     })]
