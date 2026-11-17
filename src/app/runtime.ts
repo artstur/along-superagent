@@ -369,7 +369,7 @@ export class Runtime extends Service implements SourceHost {
         return fact?{state:fact.state,generation:fact.generation,revision:fact.revision,reference:fact.reference,capabilities:fact.capabilities}:undefined
       } })
     return {
-      service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore,{available:capability=>capability!=='research'||!!researchWeb(this.ctx)}) }),
+      service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore,{available:capability=>capability!=='research'||!!researchWeb(this.ctx)}), taskReviews:healthFollowup }),
       worklink, runrecord, memory, maintenance, healthFollowup,
       bridgeToken: bridgeTokenOf(alongBridgeTokenFile),
       stateDir: alongStateDir,
