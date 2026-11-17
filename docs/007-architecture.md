@@ -374,6 +374,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/calculation-evidence.ts` | Exact private-quantity bindings to fresh scoped source reads, rechecked before calculation publication |
 | `src/along/source-state.ts` | Monotonic Host-attested source metadata and private task-scoped cache reads with authorization, freshness and replay boundaries |
 | `src/along/task-trigger.ts` | Registered task trigger definitions, generations and durable execution/completion occurrences |
+| `src/along/source-goal-review.ts` | First-ready metadata-only legacy goal continuation, immutable human fields, bounded new Agent work and persisted trigger postconditions |
 | `src/along/task-repair.ts` | Private same-task trigger review request, evidence/current-scope checks, narrow ChangeSet boundary and persisted completion postconditions |
 | `src/along/task-activation.ts` | Trusted condition evaluation and activation into the existing persistent due-task dispatch |
 | `src/along/store.ts` | `AlongStore`, the only writer of `along.sqlite`: ownership checks, object and input versions, messages ordered by the server's `seq`, paged goal, task, message and change-set reads, health summaries, Inbox rows, the delivery queue with its lease and failure paths, work links, run records and the sync outbox, all inside `atomic` savepoints; `assertAlongDataIsolation` keeps the business directory outside the worker execution root |
@@ -459,6 +460,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-calculation-evidence.spec.ts` | Fresh private fields, explicit user/standard parameters, unit/literal provenance and receipt publication boundaries |
 | `tests/along-calculation.spec.ts` | Exact arithmetic, units, rounding, bounded invalid input, receipt ownership, replay, caller rollback and restart durability |
 | `tests/along-prompts.spec.ts` | Actual Sessions role selection, on-demand capability registration, isolated overrides, provenance and packaged prompt fixture |
+| `tests/along-source-goal-review.spec.ts` | Controlled synthetic actual Runtime/API/Worker/read/calculation lifecycle, durable restart/retry, atomic acceptance and legacy/typed field preservation |
 | `tests/along-source-state.spec.ts` | Source version ordering, scoped private reads, freshness recovery, revocation, negative replay, bounded summaries and restart/rollback |
 | `tests/along-task-trigger-runtime.spec.ts` | Actual Runtime/Engine/tool chain from new goal to immediate calculation, persisted result and idempotent publication |
 | `tests/along-task-trigger-review.spec.ts` | Private bridge maintenance admission, same-goal evidence, immutable task fields, durable postconditions, schema-12 migration and stale scope refusal |

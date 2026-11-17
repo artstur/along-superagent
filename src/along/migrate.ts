@@ -13,6 +13,7 @@ import { DATA_SOURCE_DDL } from './data-sources.ts'
 import { TASK_TRIGGER_DDL } from './task-trigger.ts'
 import { CALCULATION_SCHEMA } from './calculation-store.ts'
 import { SOURCE_STATE_SCHEMA } from './source-state.ts'
+import { SOURCE_GOAL_REVIEW_DDL } from './source-goal-review.ts'
 import { CALCULATION_EVIDENCE_DDL } from './calculation-evidence.ts'
 
 /** Raised when `along.sqlite` cannot be opened or migrated; the caller must abort startup. */
@@ -37,6 +38,7 @@ const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
     if(!db.prepare('PRAGMA table_info(task_trigger)').all().some(row=>row.name==='capability_missing'))
       db.exec('ALTER TABLE task_trigger ADD COLUMN capability_missing INTEGER NOT NULL DEFAULT 0')
   },
+  13:db=>db.exec(SOURCE_GOAL_REVIEW_DDL),
   12:db=>db.exec(TASK_TRIGGER_REVIEW_DDL),
   11:db=>db.exec(CALCULATION_EVIDENCE_DDL),
   10: db => { db.exec(TASK_TRIGGER_DDL); db.exec(CALCULATION_SCHEMA); db.exec(SOURCE_STATE_SCHEMA) },

@@ -7,6 +7,8 @@
  * `CommitScope` → `src/along/changeset.ts`) and are assignable to them.
  */
 import type { AlongStore } from './store.ts'
+import { ensureSourceGoalReview,sourceReviewChangeRefusal,assertSourceReviewWrite } from './source-goal-review.ts'
+import { SourceEventSchema } from './source-state.ts'
 import { taskReviewChangeRefusal,assertTaskReviewWrite } from './task-repair.ts'
 
 /** Server-bound identity from the Host's pairing session; never taken from a request body. */
@@ -56,6 +58,14 @@ export class AlongService {
     if (!this.modules.inbox) throw new Error('the Along inbox module is not installed')
     return this.modules.inbox.acceptEvent(envelope, identity)
   }
+  /** Commit the real capability fact and its bounded legacy-goal continuation before acknowledging either. */
+  acceptSourceEvent(identity:AlongIdentity,body:unknown) {
+    return this.store.atomic(()=>{
+      const input=SourceEventSchema.parse(body),receipt=this.store.sources.acceptEvent(identity,input)
+      if(receipt.status==='accepted')ensureSourceGoalReview(this.store,identity,input.goal_id)
+      return receipt
+    })
+  }
   requestTaskTriggerReview(identity:AlongIdentity,body:unknown):unknown {
     if(!this.modules.taskReviews)throw new Error('task trigger review not installed')
     return this.modules.taskReviews.requestTaskReview(identity,body)
@@ -64,10 +74,10 @@ export class AlongService {
   commitChangeSet(input: AlongChangeSetInput, scope: AlongCommitScope): AlongChangeSetResult {
     if (!this.modules.changeset) throw new Error('the Along changeset module is not installed')
     return this.store.atomic(()=>{
-      const refused=taskReviewChangeRefusal(this.store,input,scope)
+      const refused=taskReviewChangeRefusal(this.store,input,scope)??sourceReviewChangeRefusal(this.store,input,scope)
       if(refused)return {status:'invalid',reason:refused}
       const result=this.modules.changeset!.commitChangeSet(input, scope)
-      if(result.status==='applied')assertTaskReviewWrite(this.store,scope)
+      if(result.status==='applied'){assertTaskReviewWrite(this.store,scope);assertSourceReviewWrite(this.store,scope)}
       return result
     })
   }

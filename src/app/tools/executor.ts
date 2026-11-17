@@ -117,6 +117,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
     // registration is what makes them visible, the WORK_TOOLS allow-list only keeps them unmasked (§2.3.6).
     ...(maintenance ? host.maintenance!.tools(ticketId) : host.along !== undefined ? alongTools(host.along, ticketId) : []),
   ]
+  if(host.healthFollowup?.forTicket(ticketId)?.sourceReview)return tools.filter(tool=>['along_source_review_context','along_source_review_finish','along_goal_read','along_conversation_read','along_task_list','along_data_sources_catalog','along_changes_commit','along_task_update','along_task_cancel','orchestrator_report'].includes(tool.name))
   if(host.healthFollowup?.forTicket(ticketId)?.repair)return tools.filter(tool=>['along_task_review_context','along_task_review_finish','along_task_update','along_task_cancel','along_goal_read','along_conversation_read','along_task_list','along_changes_commit','orchestrator_report'].includes(tool.name))
   return maintenance ? tools.filter(tool => ['along_maintenance_run', 'orchestrator_report'].includes(tool.name)) : tools
 }
