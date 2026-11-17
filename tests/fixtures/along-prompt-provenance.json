@@ -1,0 +1,53 @@
+{
+  "kind": "synthetic-source-assembly",
+  "sha256": "767087379c77c83c03a44c7a5cfd98787772155378549f95c6b3d89d8853ad0d",
+  "characters": 7160,
+  "parts": [
+    {
+      "key": "along/shared",
+      "sha256": "9d187129536f4cad6ed764799d3e11ca3ca63a0b94d1861291bdd2e15645be9f"
+    },
+    {
+      "key": "along/worker",
+      "sha256": "8599cffbb19072f42a229259f3b8ba5d8b6397c85604f840b24a7675f164151c"
+    },
+    {
+      "key": "along/task-due",
+      "sha256": "d03a35e26092c030ce27c7fd46ac364f0b32570ab01c3c6157e8af7fa55a0c76"
+    },
+    {
+      "key": "along/skill-index",
+      "sha256": "234ab8b3aa553d998f646aec5278430f593994fd0bfb23157f90ac46d8c830ad"
+    }
+  ],
+  "skills": [
+    {
+      "name": "dsh-superagent-along-goal",
+      "sha256": "b12e99be86aaa9034642f48c7e56bb4a48320911c1abe4fbc8e1b8ad343e8653"
+    },
+    {
+      "name": "dsh-superagent-along-task",
+      "sha256": "d2a8be1bdfd649e0e49aa35a93e97f9f0ddac2c056edd54a8c20804cccee7c78"
+    },
+    {
+      "name": "dsh-superagent-along-research",
+      "sha256": "f5c4cc0d06eba96703d9aa0c86a84a15905b77a8d77776247b6c8561dfad4459"
+    },
+    {
+      "name": "dsh-superagent-along-hiking",
+      "sha256": "dc82e9814e653787f544b7ffde191369bc01ecbfef91e26f175028aa170cb81f"
+    },
+    {
+      "name": "dsh-superagent-along-scheduling",
+      "sha256": "09d7e487f179cb74f518d82e5dd1604022284adc2df0378e959e85d2f2bd2efe"
+    },
+    {
+      "name": "dsh-superagent-along-calculation",
+      "sha256": "e0d24491f1aab4e42ab224a0c914d24a89ba110d0273006a2a36f731ae4feeee"
+    },
+    {
+      "name": "dsh-superagent-along-data",
+      "sha256": "946bada34a3283deaced4197bd2df5bdb9fe74ef2464b7293b12541f8adf877d"
+    }
+  ]
+}
