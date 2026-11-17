@@ -264,6 +264,11 @@ export class HealthFollowup {
         continue
       }
       if (ticket) {
+        // A persisted private read is Host work, not another model turn. Construct its exact
+        // occurrence scope directly; taskContext would falsely mark a Worker context as read.
+        const occurrence=d.due&&this.activation.occurrence(d)
+        if(d.due&&occurrence&&store.sources.awaitingData({userId:d.userId,goalId:d.goalId,taskId:d.due.taskId,
+          taskRevision:d.due.revision,inputVersion:d.inputVersion,ticketId:ticket.id,executionKey:occurrence.id}))continue
         const last = latestAssignment(ticket)
         const retryFrom = ticket.delivery?.at ?? last?.report?.at ?? last?.endedAt
         if (

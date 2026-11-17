@@ -64,14 +64,15 @@ function receipt(row: Record<string, SQLInputValue>): CalculationReceipt {
 export class CalculationStore {
   constructor(private readonly db: DatabaseSync, private readonly now: () => string = () => new Date().toISOString()) {}
 
-  calculate(scope: CalculationScope, input: unknown): CalculationReceipt & { reused: boolean } {
+  calculate(scope: CalculationScope, input: unknown, proofDigest?:string): CalculationReceipt & { reused: boolean } {
     validScope(scope)
     const bound = this.db.prepare(`SELECT r.content FROM user_task t JOIN goal g ON g.id=t.goal_id
       JOIN task_revision r ON r.task_id=t.id AND r.user_id=t.user_id AND r.goal_id=t.goal_id
       WHERE t.id=? AND t.user_id=? AND t.goal_id=? AND g.user_id=? AND r.revision=?`)
       .get(scope.taskId, scope.userId, scope.goalId, scope.userId, scope.taskRevision)
     if (!bound || bound.content !== scope.taskContent) throw new CalculationError('calculation_scope_mismatch')
-    const calculation = calculate(input), inputDigest = hash(calculation.input)
+    if(proofDigest!==undefined&&!/^[a-f0-9]{64}$/.test(proofDigest))throw new CalculationError('calculation_invalid_proof_context')
+    const calculation = calculate(input), inputDigest = proofDigest===undefined?hash(calculation.input):hash([calculation.input,{source_proof:proofDigest}])
     const id = 'calc_' + hash([scope.userId, scope.goalId, scope.taskId, scope.taskRevision, scope.inputVersion,
       scope.executionKey, inputDigest]).slice(0, 40)
     const previous = this.get(scope, id)

@@ -1,5 +1,6 @@
 /** Binds each private calculation input to a fresh field, a named constant or an explicit current user parameter. */
 import { isDeepStrictEqual } from 'node:util'
+import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import { CalculationInputSchema, type CalculationInput } from './calculation.ts'
@@ -87,6 +88,8 @@ const semantic = (value: VerifiedCalculationEvidence) => ({ ...value, read: { ..
 /** Private receipt evidence only; caller wraps verify/calculate/record or final publication in its Host transaction. */
 export class CalculationEvidenceStore {
   constructor(private readonly db: DatabaseSync, private readonly sources: SourceStateStore) {}
+  /** Only verified Host proof participates; freshness-only refresh keeps the same semantic receipt. */
+  digest(evidence:VerifiedCalculationEvidence):string {return createHash('sha256').update(JSON.stringify(semantic(evidence))).digest('hex')}
   has(receiptId:string):boolean {return !!this.db.prepare('SELECT 1 FROM task_calculation_source WHERE receipt_id=?').get(receiptId)}
   verify(scope: SourceReadScope, requestId: string, rawSources: unknown, rawQuantities: CalculationInput['quantities'], rawParameters: unknown = []): VerifiedCalculationEvidence {
     const bindings = QUANTITY_SOURCES.parse(rawSources), parameters = QUANTITY_PARAMETERS.parse(rawParameters)
