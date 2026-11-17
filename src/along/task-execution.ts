@@ -89,7 +89,13 @@ export function taskExecution(db: DatabaseSync, userId: string, task: { id: stri
       const root = researchRoot(db, userId, task, row)
       if (!root || development(root.eventId)) continue
       const content = executionContent(db, userId, task, row, payload, root.revision)
-      if (!content || !isResearchTaskContent(content)) continue
+      const typedResearch=one(`SELECT 1 FROM task_trigger_occurrence x LEFT JOIN task_trigger t ON t.task_id=x.task_id AND t.user_id=x.user_id
+        AND t.goal_id=x.goal_id AND t.generation=x.generation WHERE x.user_id=? AND x.goal_id=? AND x.task_id=?
+        AND x.dispatch_event_id=? AND x.task_revision=? AND x.state='settled' AND (x.outcome='agent_researched'
+          OR x.outcome='researched' AND json_valid(t.definition) AND json_extract(t.definition,'$.actor')='agent'
+          AND json_extract(t.definition,'$.capability')='research') LIMIT 1`,
+        userId,task.goalId,task.id,root.eventId,root.revision??-1)
+      if (!content || !typedResearch&&!isResearchTaskContent(content)) continue
       // Structured source ids must resolve to this user's goal and to one Worker scope that really
       // obtained evidence. Reuse is allowed: the tool request need not be new in this business event.
       const tickets = new Set<string>()

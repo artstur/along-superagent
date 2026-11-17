@@ -46,11 +46,12 @@ export function recommendationText(value:Recommendation|undefined,proposed:strin
  if(!value||!needsProjection(value.kind,value.options))return proposed
  return [value.summary,...value.options.map(option=>`${option.title}：${option.status==='excluded'?'暂不安排':option.status==='conditional'?'出行条件待核实':'现有条件已核对，出发前仍需复查'}`),value.nextStep].join('\n').slice(0,1200)
 }
-/** Notification routing uses task state and the original action, never the model’s notify label. */
-export function recommendationNotice(value:Recommendation|undefined,task:{status:string;content:string}|undefined,originalContent=task?.content):'recommendation_ready'|'task_result'|undefined {
+/** Typed research authority is Host-supplied; legacy tasks still use the original physical/information action boundary. */
+export function recommendationNotice(value:Recommendation|undefined,task:{status:string;content:string}|undefined,originalContent=task?.content,typedAgentResearch=false):'recommendation_ready'|'task_result'|undefined {
  if(!value||value.status==='unavailable')return undefined
+ if(typedAgentResearch&&!value.sources.length)return undefined
  if(!task||task.status==='open')return 'recommendation_ready'
- return task.status==='done'&&!!originalContent&&isResearchTaskContent(originalContent)?'task_result':undefined
+ return task.status==='done'&&(typedAgentResearch||!!originalContent&&isResearchTaskContent(originalContent))?'task_result':undefined
 }
 export function recommendation(store:ResearchStore,scope:ResearchScope,input:RecommendationInput,now=Date.now()):Recommendation {
  const kind=scope.requiredKind??input.kind

@@ -537,7 +537,7 @@ export class HealthFollowup {
             const resultText=calculation?calculationResultText(calculation.calculation,privateCalculation):args.text
             const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)
-            this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':structured?'researched':'notification_queued')
+            this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':structured?(definition?.actor==='agent'&&definition.capability==='research'?'agent_researched':'researched'):'notification_queued')
             if(definition?.actor==='agent'&&args.outcome==='ask') {
               const task=store.assertTaskOwner(d.userId,d.due!.taskId)
               store.triggers.put(task,{kind:'waiting',actor:'agent',capability:definition.capability,conditions:definition.conditions,
@@ -550,7 +550,7 @@ export class HealthFollowup {
               store.appendSync({userId:d.userId,goalId:d.goalId,taskId:task.id,kind:'task_updated',payload:{task_id:task.id,goal_id:d.goalId,revision,status:'done'}})
             }
             const currentTask=d.due?store.getTask(d.userId,d.due.taskId):undefined
-            const notice=args.outcome==='ask'?undefined:structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
+            const notice=args.outcome==='ask'?undefined:structured?recommendationNotice(structured,currentTask,originalContent,definition?.actor==='agent'&&definition.capability==='research'):'task_result'
             if(priorSources!==JSON.stringify(store.goalDataSources(d.userId,d.goalId))) {
               store.appendSync({userId:d.userId,goalId:d.goalId,kind:'goal_updated',payload:{}})
             }
