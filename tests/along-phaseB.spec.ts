@@ -24,7 +24,7 @@ it('returns lossless JSON from goal and task tools under the real Harness output
     store.appendGoalRevision({goalId:goal.id,userId:USER,title:'改善睡眠',status:'active'})
     store.insertTask({goalId:goal.id,userId:USER,content:'睡前放下手机'})
     const tools=alongTools({service:new AlongService(store),scopeFor:()=>({userId:USER,allowedGoalId:goal.id})},'json-ticket')
-    for(const name of ['along_goal_read','along_task_list','along_health_read']) {
+    for(const name of ['along_goal_read','along_task_list','along_health_read','along_data_sources_catalog']) {
       const tool=tools.find(tool=>tool.name===name)!
       const result=await tool.execute(tool.schema.parse({}),new AbortController().signal)
       expect(result).toStrictEqual(JSON.parse(JSON.stringify(result)))
@@ -90,6 +90,10 @@ it('persists an observation and answer without a goal, then applies explicit int
     {op:'task.create',content:'今晚睡前把手机放到床外',reminder_plan:{state:'scheduled',source:'agent',explanation:'给睡前准备留出时间。'},scheduled_at:new Date(Date.now()+3600_000).toISOString()},
   ]})).toMatchObject({status:'applied'})
   const goal=store.listGoals(USER).items[0]!
+  expect(await h.runTool(action,'along_data_sources_catalog',{})).toMatchObject({sources:expect.any(Array)})
+  expect(await h.runTool(action,'along_data_sources_recommend',{base_revision:1,input_version:1,
+    sources:[{provider:'apple-health',reason:'睡眠目标需要所选睡眠摘要'}]})).toMatchObject({status:'recommended',data_sources:[{provider:'apple-health',status:'recommended'}]})
+  expect(store.workspaceSync(USER,0,200).items.at(-1)?.payload).toMatchObject({snapshot:{dataSources:[{provider:'apple-health',status:'recommended'}]}})
   await h.runTool(action,'along_chat_reply',{text:'已建立改善睡眠的目标，今晚先把手机放到床外。'})
   await h.runTool(action,'orchestrator_report',{state:'ready',summary:'目标和下一步已生效。'})
   const first=await dispatch('b_old_plan','这周提前睡觉',{goal_id:goal.id})

@@ -13,6 +13,7 @@ import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText,
 import { researchTools, type ResearchWeb } from './web-research.ts'
 import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
+import { DATA_SOURCE_CATALOG, DATA_SOURCE_INPUT } from './data-sources.ts'
 import { alongTool } from './tool.ts'
 import type { MemoryService } from './memory/service.ts'
 import { memoryTools } from './memory/tools.ts'
@@ -95,6 +96,25 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     return {userId:bound.userId,goalId:bound.allowedGoalId,ticketId,...(bound.triggerEventId?{budgetEventId:bound.triggerEventId}:{}),...(hikingIntent(content??'')||hikingIntent(original??'')?{requiredKind:'hiking' as const}:{})}
   }
   return [
+    alongTool({name:'along_data_sources_catalog',
+      description:'Read the trusted data-source capability catalog. A recommendation is not authorization. Use only these provider ids; official setup is not OAuth and never means connected.',
+      schema:z.object({}).strict(),execute:async()=>{scope();return {sources:DATA_SOURCE_CATALOG}}}),
+    alongTool({name:'along_data_sources_recommend',
+      description:'Replace the current goal’s recommended data sources after evaluating its actual data needs. Read the catalog and current goal first. A newly created goal resolves from this original chat. Empty sources withdraw explicit recommendations. Does not connect accounts, accept secrets or change goal content. Never pass user_id, goal_id, URLs or connected status.',
+      schema:z.object({base_revision:ALONG_BASE_REVISION_SCHEMA,input_version:ALONG_INPUT_VERSION_SCHEMA,sources:DATA_SOURCE_INPUT}).strict(),
+      execute:async args=>store.atomic(()=>{
+        const bound=scope()
+        const source=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`):undefined
+        if(!source||source.audience!=='conversation'||source.role!=='user'||source.direction!=='inbound')throw new Error('data source recommendations require a current user chat')
+        const goalId=bound.allowedGoalId??store.conversationGoal(bound.userId,store.conversationRoot(bound.userId,source.eventId))
+        if(!goalId)throw new Error('create the goal before recommending data sources')
+        const goal=store.assertGoalOwner(bound.userId,goalId)
+        if(goal.status!=='active')throw new Error('data source recommendations require an active goal')
+        if(!store.isCurrentChatInput(bound.userId,source.eventId,goalId)||store.inputVersion(goalId)!==args.input_version)return {status:'conflicted',reason:'conflicted_input'}
+        if(goal.currentRevision!==args.base_revision)return {status:'conflicted',reason:'conflicted_revision'}
+        const changed=store.replaceGoalDataSources(bound.userId,goalId,args.sources)
+        return {status:'recommended',reused:!changed,data_sources:store.goalDataSources(bound.userId,goalId)}
+      })}),
     ...researchTools(store.research,researchScope,host.web??(()=>undefined)),
     alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
       schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{
@@ -123,6 +143,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
             current_revision: detail.goal.currentRevision, input_version: store.inputVersion(goalId),
             title: detail.revision?.title, metric: detail.revision?.metric, context: detail.revision?.context },
           tasks: detail.tasks.map(taskView),
+          data_sources: detail.dataSources,
           bound_task_id:store.getWorkLink(ticketId)?.taskId,
           ...(args.include_revisions === true ? { revisions: store.goalRevisions(goalId).map(revisionView) } : {}),
         }
