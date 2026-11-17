@@ -9,6 +9,7 @@ import { RESEARCH_DDL } from './research-store.ts'
 import { MEMORY_DDL } from './memory/schema.ts'
 import { HEALTH_DDL, TASK_SCHEDULE_DDL } from './health-schema.ts'
 import { MAINTENANCE_DDL } from './maintenance-schema.ts'
+import { DATA_SOURCE_DDL } from './data-sources.ts'
 
 /** Raised when `along.sqlite` cannot be opened or migrated; the caller must abort startup. */
 export class AlongSchemaError extends Error {}
@@ -28,6 +29,7 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  9: db => { db.exec(DATA_SOURCE_DDL) },
   8: db => {
     const columns = new Set(db.prepare('PRAGMA table_info(message)').all().map(row => row.name))
     if (!columns.has('audience')) db.exec("ALTER TABLE message ADD COLUMN audience TEXT NOT NULL DEFAULT 'conversation' CHECK(audience IN ('conversation','background'))")

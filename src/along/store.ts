@@ -19,6 +19,7 @@ import type { ReminderPlan } from './reminder-plan.ts'
 import { ResearchStore } from './research-store.ts'
 import { HealthStore } from './health-store.ts'
 import { MaintenanceStore } from './maintenance-store.ts'
+import { recommendedSources, type DataSourceInput, type GoalDataSource } from './data-sources.ts'
 import { taskExecution, type TaskExecutionSummary } from './task-execution.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
@@ -127,7 +128,7 @@ export interface SyncItem {
   messageId?: string; changesetId?: string; payload: unknown; createdAt: string; deliveredAt?: string
 }
 
-export interface GoalDetail { goal: GoalRow; revision?: GoalRevisionRow; tasks: TaskRow[]; recentChangesets: ChangeSetRow[] }
+export interface GoalDetail { goal: GoalRow; revision?: GoalRevisionRow; tasks: TaskRow[]; recentChangesets: ChangeSetRow[]; dataSources: GoalDataSource[] }
 
 /** Thrown when a resource is missing **or** belongs to another user — one shape for both, so existence never leaks (BC-07-05). */
 export class OwnershipError extends Error {
@@ -657,7 +658,34 @@ export class AlongStore {
       revision: this.currentGoalRevision(goalId),
       tasks: this.listTasks(userId, { goalId }, { limit: MAX_PAGE }).items.map(task => ({ ...task, execution: this.taskExecution(userId, task.id) })),
       recentChangesets: this.changeSetsByGoal(userId, goalId, { limit: 5 }).items,
+      dataSources: this.goalDataSources(userId, goalId),
     }))
+  }
+  /** Display recommendations are scoped to a goal; they never grant access to an account. */
+  goalDataSources(userId: string, goalId: string): GoalDataSource[] {
+    const goal=this.assertGoalOwner(userId,goalId)
+    const row=this.one('SELECT sources FROM goal_data_sources WHERE goal_id=? AND user_id=?',goalId,userId)
+    const sources=row?recommendedSources(JSON.parse(String(row.sources))):[]
+    const health=this.health.state(goalId)
+    if (!sources.some(source=>source.provider==='apple-health') && (goal.domain==='health'||
+        health?.inputVersion===this.inputVersion(goalId)&&health.types.length>0)) {
+      sources.push({provider:'apple-health',status:'recommended',reason:'此目标需要所选健康摘要，用于评估和跟进安排。'})
+    }
+    return sources
+  }
+  /** Shares the goal writer's transaction. Host callers must establish current chat/version scope first. */
+  replaceGoalDataSources(userId: string, goalId: string, input: DataSourceInput[]): boolean {
+    return this.atomic(()=>{
+      if(this.assertGoalOwner(userId,goalId).status!=='active')throw new Error('data sources require an active goal')
+      const sources=recommendedSources(input).map(({provider,reason})=>({provider,reason}))
+      const serialized=JSON.stringify(sources)
+      const previous=this.one('SELECT sources FROM goal_data_sources WHERE goal_id=? AND user_id=?',goalId,userId)
+      if((previous?String(previous.sources):'[]')===serialized)return false
+      this.run('INSERT INTO goal_data_sources(goal_id,user_id,sources,updated_at) VALUES(?,?,?,?) ON CONFLICT(goal_id) DO UPDATE SET sources=excluded.sources,updated_at=excluded.updated_at',
+        goalId,userId,serialized,new Date().toISOString())
+      this.appendSync({userId,goalId,kind:'goal_updated',payload:{}})
+      return true
+    })
   }
   /** Product execution evidence, separate from worker assignment/run audit. */
   taskExecution(userId: string, taskId: string): TaskExecutionSummary {

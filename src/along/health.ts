@@ -439,7 +439,11 @@ export class HealthFollowup {
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
             const notice=args.outcome==='ask'?undefined:structured?recommendationNotice(structured,currentTask,originalContent):'task_result'
+            const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)
+            if(priorSources!==JSON.stringify(store.goalDataSources(d.userId,d.goalId))) {
+              store.appendSync({userId:d.userId,goalId:d.goalId,kind:'goal_updated',payload:{}})
+            }
             if ((args.outcome !== 'keep'||structured) && args.text) {
               const eventId = `followup_${d.eventId}`,
                 message = store.appendMessage({

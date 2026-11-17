@@ -19,6 +19,8 @@ Along 的 Mac 本地 Agent 工程，基于 DSH Super Agent 构建，负责接收
 
 ## 本地运行
 
+按目标推荐的数据源与同步契约见 [数据源推荐](docs/along/011-goal-data-sources.md)。OKX 当前仅提供官方设置入口，打开页面不表示已授权或连接；本轮不读取真实金融账户。
+
 与 Along 产品工程相邻放置：
 
 ```text

@@ -433,6 +433,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/argument-recovery.ts` | Along ChangeSet/recommendation type repair paths and complete structural examples, preserving strict identity rejection |
 | `src/along/tool.ts` | Shared strict lossless JSON output for Along business and memory tools |
 | `src/along/tools.ts` | Host-bound goal, conversation, task, health and ChangeSet worker tools |
+| `src/along/data-sources.ts` | Trusted source catalog and bounded recommendation schema; official setup is separate from account authorization |
 | `src/along/worklink.ts` | Stable event/thread/ticket/assignment mapping and business work scopes |
 
 ## Tests
@@ -440,6 +441,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | Test | Covers |
 | --- | --- |
 | `tests/along-conversation-boundary.spec.ts` | Host-owned conversation audience, exact evidence-backed historical isolation, migration and capability-safe sync replay |
+| `tests/along-data-sources.spec.ts` | Per-goal source recommendations, host-bound writes, migration, persistence, replay and semantic health relevance |
 | `tests/along-weekly-completion.spec.ts` | Registered ready refusal before a real weekly update, update/recommendation ordering and original task/time preservation |
 | `tests/along-argument-recovery.spec.ts` | Actual registered tool recovery, nested schema types, zero-write rejection, corrected submissions and unaffected strict tools |
 | `tests/along-research.spec.ts` | Web seam calls, scoped evidence, failure recovery, source validity, reply identity and existing due Worker delivery |

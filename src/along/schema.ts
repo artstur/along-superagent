@@ -6,7 +6,7 @@
  */
 
 /** Current schema version of `along.sqlite`; raised with every future migration step. */
-export const ALONG_SCHEMA_VERSION = 8
+export const ALONG_SCHEMA_VERSION = 9
 /** The oldest schema version this build can open and migrate directly; older databases need a backup restore. */
 export const ALONG_OLDEST_SCHEMA = 1
 
