@@ -189,8 +189,9 @@ export class TaskTriggerStore {
     return this.db.prepare("SELECT * FROM task_trigger_occurrence WHERE user_id=? AND task_id=? AND completion_event_id IS NOT NULL ORDER BY completed_at DESC").all(userId,taskId).map(occurrence)
   }
   dependencyFact(userId:string,taskId:string):TriggerOccurrence|undefined {
-    const r=this.db.prepare(`SELECT * FROM task_trigger_occurrence WHERE user_id=? AND task_id=? AND state='settled'
-      AND (completion_event_id IS NOT NULL OR outcome IN ('calculated','researched')) ORDER BY created_at DESC LIMIT 1`).get(userId,taskId)
+    const r=this.db.prepare(`SELECT x.* FROM task_trigger_occurrence x JOIN task_trigger t ON t.user_id=x.user_id AND t.task_id=x.task_id AND t.generation=x.generation
+      WHERE x.user_id=? AND x.task_id=? AND x.state='settled' AND t.state<>'cancelled'
+      AND (x.completion_event_id IS NOT NULL OR x.outcome IN ('calculated','researched')) ORDER BY x.created_at DESC LIMIT 1`).get(userId,taskId)
     return r&&occurrence(r)
   }
   view(userId:string,taskId:string):TaskTriggerView|undefined {

@@ -13,6 +13,7 @@ import { DATA_SOURCE_DDL } from './data-sources.ts'
 import { TASK_TRIGGER_DDL } from './task-trigger.ts'
 import { CALCULATION_SCHEMA } from './calculation-store.ts'
 import { SOURCE_STATE_SCHEMA } from './source-state.ts'
+import { CALCULATION_EVIDENCE_DDL } from './calculation-evidence.ts'
 
 /** Raised when `along.sqlite` cannot be opened or migrated; the caller must abort startup. */
 export class AlongSchemaError extends Error {}
@@ -32,6 +33,7 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  11:db=>db.exec(CALCULATION_EVIDENCE_DDL),
   10: db => { db.exec(TASK_TRIGGER_DDL); db.exec(CALCULATION_SCHEMA); db.exec(SOURCE_STATE_SCHEMA) },
   9: db => { db.exec(DATA_SOURCE_DDL) },
   8: db => {

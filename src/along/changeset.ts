@@ -351,7 +351,12 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
     evidenceMessages.set(op,userMessage)
     const changesTiming = fields.scheduled_at !== undefined || fields.repeat !== undefined
     const reopening = op.op === 'task.update' && op.fields.status === 'open' && existing?.status !== 'open'
+    if(reopening&&(!message||message.role!=='user'||message.direction!=='inbound'||message.audience!=='conversation'))
+      return refuse('invalid','reopening_requires_current_user_instruction')
     const priorTrigger=existing&&store.triggers.get(scope.userId,existing.id)
+    if(op.op==='task.update'&&op.fields.status==='done'&&priorTrigger?.definition.actor==='agent')return refuse('invalid','task_completion_requires_executor')
+    if(existing?.status==='done'&&priorTrigger?.definition.actor==='agent'&&input.input_version<=priorTrigger.inputVersion)
+      return refuse('invalid','task_execution_already_settled')
     if(scope.requireTaskTrigger&&(op.op==='task.create'||priorTrigger&&(reopening||changesTiming||fields.content!==undefined))&&fields.trigger===undefined)
       return refuse('invalid','task_trigger_required')
     if(fields.trigger==='keep'&&(!priorTrigger||reopening||fields.content!==undefined&&fields.content!==existing?.content))return refuse('invalid','cannot_keep_task_trigger')

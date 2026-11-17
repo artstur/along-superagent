@@ -24,6 +24,7 @@ import { taskExecution, type TaskExecutionSummary } from './task-execution.ts'
 import { TaskTriggerStore, type TaskTriggerView } from './task-trigger.ts'
 import { CalculationStore } from './calculation-store.ts'
 import { SourceStateStore } from './source-state.ts'
+import { CalculationEvidenceStore } from './calculation-evidence.ts'
 
 /** Page of rows for the paged reads; `nextCursor` feeds back through `PageCursor.cursor`/`beforeSeq`. */
 export interface Page<T> { items: T[]; nextCursor?: string }
@@ -200,6 +201,7 @@ export class AlongStore {
   readonly triggers: TaskTriggerStore
   readonly calculations: CalculationStore
   readonly sources: SourceStateStore
+  readonly calculationEvidence:CalculationEvidenceStore
   private depth = 0
   /**
    * Opens (or creates) the database at `path`, sets the durability PRAGMAs and migrates the schema.
@@ -218,7 +220,8 @@ export class AlongStore {
       this.research = new ResearchStore(this.db)
       this.triggers = new TaskTriggerStore(this.db)
       this.calculations = new CalculationStore(this.db)
-    this.sources = new SourceStateStore(this.db)
+      this.sources = new SourceStateStore(this.db)
+      this.calculationEvidence=new CalculationEvidenceStore(this.db,this.sources)
     } catch (error) {
       this.db.close()
       throw error
@@ -997,7 +1000,9 @@ export class AlongStore {
   }
   /** Open (in-flight) work rows of one goal — routing reference only; the hard guarantee stays the version check. */
   workLinksForGoal(goalId: string): WorkLinkRow[] {
-    return this.all('SELECT * FROM work_link WHERE goal_id = ? AND ended_at IS NULL ORDER BY created_at', goalId).map(row => this.workLinkRow(row))
+    return this.all(`SELECT w.* FROM work_link w WHERE w.ended_at IS NULL AND (w.goal_id=? OR w.goal_id IS NULL AND EXISTS (
+      SELECT 1 FROM changeset c WHERE c.work_id=w.work_id AND c.goal_id=? AND c.status='applied')) ORDER BY w.created_at`,goalId,goalId)
+      .map(row => ({...this.workLinkRow(row),goalId}))
   }
   /** Marks the ticket's row ended (clears the in-flight marker); `ticket.ended` owns this call. */
   markWorkLinkEnded(ticketId: string, at: string): void {

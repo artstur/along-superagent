@@ -474,6 +474,8 @@ export class HealthFollowup {
             const definition=this.activation.definition(d)?.definition
             const calculation=args.calculation_receipt?store.calculations.get(this.calculationScope(ticketId),args.calculation_receipt):undefined
             if(args.calculation_receipt&&!calculation)throw new Error('calculation receipt is not bound to this task occurrence')
+            if(calculation&&definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated'))
+              store.calculationEvidence.assertCurrent(this.sourceScope(ticketId),calculation.id,calculation.calculation.input.quantities)
             if(definition?.actor==='agent'&&args.outcome!=='ask') {
               if(definition.capability==='calculation'&&!calculation)throw new Error('calculation task requires its actual persisted tool receipt')
               if(definition.capability==='research'&&!args.recommendation)throw new Error('research task requires a structured sourced result')
@@ -488,6 +490,8 @@ export class HealthFollowup {
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
+            if(definition?.actor==='agent'&&definition.capability==='research'&&args.outcome!=='ask'&&!structured?.sources.length)
+              throw new Error('research execution requires actual verified sources; report failed or blocked, not completion')
             const resultText=calculation?`计算结果：${calculation.calculation.result.value}${calculation.calculation.result.unit==='1'?'':` ${calculation.calculation.result.unit}`}`:args.text
             const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)

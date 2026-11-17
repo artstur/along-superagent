@@ -43,6 +43,9 @@ export class TaskActivation {
     const task=store.getTask(row.userId,c.task_id)
     if(!task||task.goalId!==row.goalId||task.status==='cancelled')return {ready:false,token:'',reason:'等待前置任务完成'}
     const completed=store.triggers.dependencyFact(row.userId,task.id)
+    const dependent=store.getTask(row.userId,row.taskId)
+    if(completed&&store.health.daily(task.id)&&dependent&&Date.parse(completed.completedAt??completed.createdAt)<Date.parse(dependent.createdAt))
+      return {ready:false,token:'',reason:'等待前置周期任务本次完成'}
     if(completed)return {ready:true,token:`completed:${completed.id}:${completed.completionEventId??completed.outcome}`}
     return task.status==='done'&&task.completedFeedbackEventId
       ?{ready:true,token:`completed:${task.id}:${task.completedFeedbackEventId}`}
@@ -53,6 +56,7 @@ export class TaskActivation {
     const store=this.host.store
     for(const row of store.triggers.list()) {
       const task=store.getTask(row.userId,row.taskId),goal=store.getGoal(row.userId,row.goalId)
+      if(task?.status==='done'&&goal?.status==='active') {store.triggers.setState(row,'settled');continue}
       if(!task||task.status!=='open'||goal?.status!=='active') {store.triggers.cancel(row.userId,row.taskId);continue}
       if(this.host.allowed&&!this.host.allowed(row.userId)) {store.triggers.setState(row,'waiting','等待授权恢复');continue}
       if(row.state==='cancelled'||row.state==='settled')continue

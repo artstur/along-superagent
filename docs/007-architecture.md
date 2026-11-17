@@ -371,6 +371,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/research-store.ts`, `recommendation.ts`, `web-research.ts` | Host-scoped durable public web evidence, validated recommendation protocol and bounded Harness web service adapters |
 | `src/along/calculation.ts` | Bounded exact decimal arithmetic, dimensional units, explicit conversion and reproducible calculation traces without executable expressions |
 | `src/along/calculation-store.ts` | Host-bound, transaction-sharing calculation receipts with execution-time task context and deterministic replay identities |
+| `src/along/calculation-evidence.ts` | Exact private-quantity bindings to fresh scoped source reads, rechecked before calculation publication |
 | `src/along/source-state.ts` | Monotonic Host-attested source metadata and private task-scoped cache reads with authorization, freshness and replay boundaries |
 | `src/along/task-trigger.ts` | Registered task trigger definitions, generations and durable execution/completion occurrences |
 | `src/along/task-activation.ts` | Trusted condition evaluation and activation into the existing persistent due-task dispatch |

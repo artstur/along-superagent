@@ -6,6 +6,8 @@ An Along task that needs arithmetic must obtain a deterministic result, not mere
 
 The parent orchestration change registers the tool, binds the scope, checks live authority and revisions inside the AlongStore transaction, and publishes its result. This isolated upstream change does not edit shared registration, schema version, migration, or UI files.
 
+The integrated private-data wrapper is `calculation-evidence.ts`. Source-dependent calculations supply the actual `source_request_id` and `quantity_sources:[{quantity,path}]`; the Host checks a fresh authorized read for this occurrence, safe field paths, exact decimal values and field units, then rechecks before publication. The registered OKX summary's `tradingEquityUsd` is USD and its two counts are count; metadata readiness alone grants neither input values nor currency conversion. Only dimensionless 0/1/100 may be unbound arithmetic constants. Other unsupported input coverage remains waiting, never a fabricated zero. Bindings persist privately in `task_calculation_source` (migration11), outside chat and sync.
+
 ## Input and output
 
 `CalculationInputSchema` accepts named decimal quantities and an ordered list of arithmetic steps. Steps may reference only earlier quantities/steps. Supported operations are add, subtract, multiply, divide, min, max, ceil, floor, round and explicit unit conversion. No expression string, executable code, filesystem path or URL is accepted.

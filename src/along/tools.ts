@@ -15,6 +15,7 @@ import { healthSummaryIsCurrent, type HealthFollowup } from './health.ts'
 import { z } from 'zod'
 import { calculate, CalculationInputSchema } from './calculation.ts'
 import { SourceReadInputSchema } from './source-state.ts'
+import { QUANTITY_SOURCES } from './calculation-evidence.ts'
 import { DATA_SOURCE_CATALOG, DATA_SOURCE_INPUT } from './data-sources.ts'
 import { alongTool } from './tool.ts'
 import type { MemoryService } from './memory/service.ts'
@@ -121,12 +122,18 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           observations:context.observed.summaries.map(summaryView)}
       }}),
     alongTool({name:'along_calculate',description:'Perform bounded exact arithmetic with units; never executable code. An active host-dispatched calculation task persists a scoped receipt for along_task_finish. A direct current user question may calculate without creating a goal, but that preview is not a task execution or completion. Input facts/assumptions must be explained separately from arithmetic correctness.',
-      schema:z.object({calculation:CalculationInputSchema}).strict(),execute:async(args)=>{
+      schema:z.object({calculation:CalculationInputSchema,source_request_id:z.string().min(1).max(128).optional(),quantity_sources:QUANTITY_SOURCES.optional()}).strict(),execute:async(args)=>{
         const bound=scope(),d=host.healthFollowup?.forTicket(ticketId)
         if(d?.due) {
           const calcScope=host.healthFollowup!.calculationScope(ticketId)
           return store.atomic(()=>{
+            const definition=store.triggers.get(calcScope.userId,calcScope.taskId)?.definition
+            const sourceDependent=definition?.conditions?.some(c=>c.kind==='source_ready'||c.kind==='source_updated')
+            if(sourceDependent&&(!args.source_request_id||!args.quantity_sources))throw new Error('source-dependent calculation requires source_request_id and quantity_sources from an actual fresh task read')
+            if((args.source_request_id===undefined)!==(args.quantity_sources===undefined))throw new Error('source request and quantity bindings must be provided together')
+            const bindings=args.source_request_id?store.calculationEvidence.verify(calcScope,args.source_request_id,args.quantity_sources,args.calculation.quantities):undefined
             const receipt=store.calculations.calculate(calcScope,args.calculation)
+            if(bindings)store.calculationEvidence.record(receipt.id,args.source_request_id!,bindings)
             return {receipt_id:receipt.id,result:receipt.calculation.result,input:receipt.calculation.input,trace:receipt.calculation.trace,
               calculated_at:receipt.calculatedAt,reused:receipt.reused,persisted:true}
           })
