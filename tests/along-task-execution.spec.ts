@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { AlongStore } from '../src/along/store.ts'
 import { AlongService } from '../src/along/service.ts'
 import { createInbox } from '../src/along/inbox.ts'
@@ -10,7 +10,7 @@ import { recommendation } from '../src/along/recommendation.ts'
 
 const user = 'u_execution', device = 'd_execution'
 const dirs: string[] = [], stores: AlongStore[] = []
-afterEach(() => { for (const s of stores.splice(0)) s.close(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+afterEach(() => { vi.useRealTimers(); for (const s of stores.splice(0)) s.close(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
 function fixture(content = '研究周末广深徒步目的地') {
   const dir = mkdtempSync(join(tmpdir(), 'along-task-execution-')); dirs.push(dir)
   const path = join(dir, 'along.sqlite'), store = new AlongStore(path); stores.push(store)
@@ -141,4 +141,45 @@ it('returns the latest twenty records while keeping the total count and isolatin
   const other = store.insertTask({ userId: user, goalId: otherGoal.id, content: task.content })
   expect(store.goalDetail(user, goal.id).tasks[0]!.execution?.count).toBe(23)
   expect(store.taskExecution(user, other.id).count).toBe(0)
+})
+
+it('retains a confirmed historical execution after its weather or route sources expire later', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-17T11:00:00Z'))
+  const { store, task, say, reply } = fixture()
+  say('natural_research'); await reply('natural_research')
+  const before = store.taskExecution(user, task.id)
+  expect(before.count).toBe(1)
+  vi.setSystemTime(new Date('2026-12-17T11:00:00Z'))
+  expect(store.taskExecution(user, task.id)).toEqual(before)
+})
+
+it('does not infer a confirmed current result from only all-expired reused evidence, without claiming no attempt ran', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-01T11:00:00Z'))
+  const { store, task, say, reply, evidence } = fixture()
+  const old = evidence('ticket')
+  vi.setSystemTime(new Date('2026-11-17T11:00:00Z'))
+  say('new_research'); await reply('new_research', 'ticket', old)
+  expect(store.taskExecution(user, task.id)).toEqual({ version: 1, count: 0, records: [] })
+  expect(store.counts(user).messages).toBe(2) // Actual output/audit is retained; this is not a failed-attempt ledger.
+})
+
+it('records a partial result with still-valid evidence even if another cited source was already stale', async () => {
+  const { store, task, say, reply, evidence } = fixture()
+  const proof = evidence('ticket')
+  const old = store.research.save(proof.scope, { title: '旧路线资料', url: 'https://www.gz.gov.cn/older-route',
+    content: '历史资料记载旧步道。', purpose: 'route', fetched: true }, Date.now() - 8 * 86400_000)
+  proof.input.options[0]!.facts.push({ label: '历史资料', value: '旧步道', evidence: [{ sourceId: old.id, quote: '历史资料记载旧步道。' }] })
+  say('partial_research'); await reply('partial_research', 'ticket', proof)
+  expect(store.taskExecution(user, task.id).count).toBe(1)
+})
+
+it('retains the original research kind after the stable task receives a legitimate later content revision', async () => {
+  const { store, task, say, reply } = fixture()
+  say('original_research'); await reply('original_research')
+  const before = store.taskExecution(user, task.id)
+  expect(before.count).toBe(1)
+  store.appendTaskRevision({ userId: user, taskId: task.id, content: '周末进行广深徒步' })
+  expect(store.getTask(user, task.id)?.content).toBe('周末进行广深徒步')
+  expect(store.taskExecution(user, task.id)).toEqual(before)
+  expect(store.taskExecution(user, task.id).records[0]!.kind).toBe('research')
 })

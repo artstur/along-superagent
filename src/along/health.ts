@@ -457,7 +457,7 @@ export class HealthFollowup {
                 goalId: d.goalId,
                 taskId: d.due?.taskId,
                 messageId: message.id,
-                payload: { message_id: message.id, text: message.text, ...(structured?{recommendation:structured}:{}),
+                payload: { message_id: message.id, text: message.text, ...(d.due?{task_execution_revision:d.due.revision}:{}), ...(structured?{recommendation:structured}:{}),
                   ...(notice?{notification: {
                   event_id: eventId, kind:notice, revision: currentTask?.currentRevision ?? d.inputVersion
                 }}:{}) }
