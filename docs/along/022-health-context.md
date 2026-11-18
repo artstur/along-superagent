@@ -10,3 +10,5 @@
 - SP明确时长不证明早睡、统计窗未结束不否定已经观测的睡眠时段、聚合不证明人任务完成、未知不判正常。保留实际用户明确约束；来源是Agent推定的准备时刻可在用户授权和新证据内调整，不把已存在时间自动当作用户硬约束。
 
 PR边界：客户端PR负责Native投递context、Swift真实源码测试及产物/版本；Agent PR负责schema/存储/工具/变化判定/语义SP及回归。Agent先兼容上线，client同步后上机。UI/OKX无改动。
+
+The bound health read also exposes the same-goal, same-input previous evaluated facts, with evaluation time and per-summary currentness, so a new Worker can compare the changed timing without reconstructing an unbounded chat. No previous judgement is treated as current fact.

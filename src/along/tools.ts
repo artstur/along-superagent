@@ -7,6 +7,7 @@
  *
  * Memory and planner-history filtering share Runtime's host-owned MemoryService.
  */
+import { healthInterpretation } from './health-context.ts'
 import { weeklyCompletionNotice } from './completion.ts'
 import { isDeepStrictEqual } from 'node:util'
 import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
@@ -78,6 +79,8 @@ const summaryView = (summary: HealthSummaryRow) => ({
   unit: summary.unit, statistic: summary.statistic, summarizer_version: summary.summarizerVersion,
   type: summary.type, value: summary.value, metric_version: summary.metricVersion, timezone: summary.timezone,
   availability: summary.availability,
+  ...(summary.context ? { context: summary.context } : {}),
+  ...(healthInterpretation(summary.type) ? { interpretation: healthInterpretation(summary.type) } : {}),
   ...(summary.windowStart !== undefined ? { window: { start: summary.windowStart, end: summary.windowEnd } } : {}),
 })
 
@@ -311,7 +314,14 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           .filter(summary => summary.adapter === 'known') // 待适配类型不进模型上下文（001 §4.4）
           .filter(summary => args.type === undefined || summary.type === args.type)
         const result = host.healthFollowup?.read(ticketId, summaries) ?? { summaries }
-        return { ...result, summaries: result.summaries.map(summaryView) }
+        const prior = bound.allowedGoalId ? store.health.state(bound.allowedGoalId) : undefined
+        const previous = prior && prior.userId === bound.userId &&
+          prior.inputVersion === store.inputVersion(bound.allowedGoalId!)
+          ? { evaluated_at: prior.updatedAt, kind: 'prior_evaluation_facts',
+              summaries: prior.baseline.filter(summary => args.type === undefined || summary.type === args.type).map(summaryView) }
+          : undefined
+        return { ...result, summaries: result.summaries.map(summaryView),
+          ...(previous ? { previous_assessment: previous } : {}) }
       },
     }),
     alongTool({

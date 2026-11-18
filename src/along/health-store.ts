@@ -79,7 +79,7 @@ export class HealthStore {
   retireRepair(eventId:string):void {if(this.repairSchema())this.db.prepare('UPDATE task_trigger_review SET retired=1 WHERE event_id=?').run(eventId)}
   state(
     goalId: string
-  ): { inputVersion: number; types: string[]; baseline: HealthSummaryRow[]; seenTypes: string[] } | undefined {
+  ): { userId: string; updatedAt: string; inputVersion: number; types: string[]; baseline: HealthSummaryRow[]; seenTypes: string[] } | undefined {
     const row = this.db.prepare('SELECT * FROM health_followup WHERE goal_id=?').get(goalId)
     const dispatched =
       row &&
@@ -90,6 +90,8 @@ export class HealthStore {
         .get(goalId, Number(row.input_version))
     return row
       ? {
+          userId: String(row.user_id),
+          updatedAt: String(row.updated_at),
           seenTypes: dispatched
             ? (JSON.parse(String(dispatched.snapshot)) as HealthSummaryRow[]).map((s) => s.type)
             : [],

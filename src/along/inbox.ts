@@ -62,7 +62,7 @@ function saveHealthSummaries(store: AlongStore, userId: string, envelope: EventE
   const adapt = (summaries: readonly HealthSummaryPayload[]) => summaries.map(summary => ({
     type: summary.type, metricVersion: summary.metric_version, unit: summary.unit, statistic: summary.statistic,
     window: summary.window, timezone: summary.timezone, value: summary.value, availability: summary.availability,
-    summarizerVersion: summary.summarizer_version,
+    summarizerVersion: summary.summarizer_version, context: summary.context,
   }))
   const knownTypes = HEALTH_SUMMARY_TYPES as readonly string[]
   const summaries = envelope.payload.event_type === 'along.health_summary_updated' ? envelope.payload.summaries : []

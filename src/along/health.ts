@@ -55,7 +55,8 @@ export function significantHealthChange(current: HealthSummaryRow, previous?: He
   if (
     !previous ||
     !isDeepStrictEqual(comparable(current), comparable(previous)) ||
-    current.availability !== previous.availability
+    current.availability !== previous.availability ||
+    !isDeepStrictEqual(current.context, previous.context)
   )
     return true
   if (current.availability !== 'ok') return false

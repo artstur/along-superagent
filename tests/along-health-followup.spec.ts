@@ -685,3 +685,35 @@ it('automatic ask cannot promote execution wording into chat or push, and assess
  await h.runtime.pump();await h.runtime.idle()
  expect(h.runtime.store.tickets.list().some(t=>t.id!==ticket.id&&t.mandate.basis.via==='health')).toBe(true)
 },25000)
+
+it('reads scoped timing aggregates, reassesses equal-duration timing changes and keeps unchanged recaptures quiet', async () => {
+  const { h, store, goal, event, dispatch } = await setup()
+  const makeRows = (start: string, wake: string, revision: string) => [{
+    ...summaries(420, 'sleep', revision, { start: '2026-11-15T10:00:00Z', end: '2026-11-16T10:00:00Z' })[0]!,
+    context: { windowDays: 7 as const, daysWithData: 5, averageThroughAt: '2026-11-15T10:00:00Z',
+      latestWindowOpen: true, latestNightMinutes: 420, latestSleepStartAt: start, latestWakeAt: wake }
+  }]
+  expect(event('sleep_bounds_first', makeRows('2026-11-15T17:00:00Z', '2026-11-16T00:00:00Z', '2026-11-16T04:00:00Z'))).toMatchObject({ status: 'accepted' })
+  const first = await dispatch()
+  const read = await h.runTool(first.worker, 'along_health_read', {}) as { summaries: { context?: unknown; interpretation?: string[] }[] }
+  expect(read.summaries[0]?.context).toMatchObject({ latestSleepStartAt: '2026-11-15T17:00:00Z' })
+  expect(read.summaries[0]?.interpretation?.join(' ')).toContain('not bedtime')
+  expect(read.summaries[0]?.interpretation?.join(' ')).toContain('naps')
+  await h.runTool(first.worker, 'along_health_followup', { outcome: 'keep', types: ['sleep'], reason: '观测到睡眠区间，但总长和首尾不能证明主睡眠或关灯；保留原任务。' })
+  await h.runTool(first.worker, 'orchestrator_report', { state: 'ready', summary: '已保存真实评估，未伪造人体活动完成' })
+  vi.setSystemTime(new Date('2026-11-16T04:01:00Z'))
+  expect(event('sleep_bounds_changed', makeRows('2026-11-15T19:00:00Z', '2026-11-16T02:00:00Z', '2026-11-16T04:01:00Z'))).toMatchObject({ status: 'accepted' })
+  const second = await dispatch()
+  expect(second.ticket.id).not.toBe(first.ticket.id)
+  const secondRead = await h.runTool(second.worker, 'along_health_read', {}) as { summaries: { context?: unknown }[]; previous_assessment: { summaries: { context?: unknown }[] } }
+  expect(secondRead.summaries[0]?.context).toMatchObject({ latestSleepStartAt: '2026-11-15T19:00:00Z' })
+  expect(secondRead.previous_assessment.summaries[0]?.context).toMatchObject({ latestSleepStartAt: '2026-11-15T17:00:00Z' })
+  await h.runTool(second.worker, 'along_health_followup', { outcome: 'keep', types: ['sleep'], reason: '同总长的时段变化已复评；没有把它直接认成人的任务完成。' })
+  await h.runTool(second.worker, 'orchestrator_report', { state: 'ready', summary: '已保存第二次评估' })
+  vi.setSystemTime(new Date('2026-11-16T04:02:00Z'))
+  expect(event('sleep_same_recapture', makeRows('2026-11-15T19:00:00Z', '2026-11-16T02:00:00Z', '2026-11-16T04:02:00Z'))).toMatchObject({ status: 'accepted' })
+  await h.runtime.pump(); await h.runtime.idle()
+  expect(h.runtime.store.tickets.list().filter(ticket => ticket.mandate.basis.via === 'health')).toHaveLength(2)
+  expect(store.counts(USER).messages).toBe(0)
+  expect(store.health.state(goal.id)?.types).toEqual(['sleep'])
+})
