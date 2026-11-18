@@ -22,15 +22,15 @@ function report(now=Date.now()) {
  for(const rows of [value.sampleFills,value.sampleBills])for(const row of rows)row.ts=String(Number(row.ts)+shift)
  return value
 }
-async function setup(dir?:string){
+async function setup(dir?:string,planning=false){
  if(dir){const db=new Store(join(dir,'orchestrator.sqlite'));db.saveSettings({...db.settings(),eval:{...db.settings().eval,mode:'auto'},sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...db.settings().policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}});db.close()}
  const h=host=dir?await startRuntime(undefined,{dir}):await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}));if(!dir)h.runtime.sources.register(alongKind)
  const settings=h.runtime.store.settings();h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...settings.policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}})
  const along=h.runtime.along!,store=along.service.alongStore;store.assertUser(userId,deviceId)
  const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({userId,goalId:goal.id,title:'观察OKX交易与账单以复核策略',context:['真实用户希望分析实际交易与策略效果，规则尚未提供'],status:'active'});store.ensureInputVersion(userId,goal.id)
  along.service.acceptEvent({event_id:'original_goal',schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'请读取我的只读账户成交和账单分析策略，策略规则我稍后提供。'}},{userId,deviceId})
- store.markDelivered('along:'+userId+':original_goal',new Date().toISOString());store.replaceGoalDataSources(userId,goal.id,[{provider:'okx',reason:'用户希望分析真实成交和账单'}])
- const tasks=['导出旧成交材料','本人整理策略规则'].map(content=>{const t=store.insertTask({userId,goalId:goal.id,content});store.appendTaskRevision({userId,taskId:t.id});return store.getTask(userId,t.id)!})
+ if(!planning)store.markDelivered('along:'+userId+':original_goal',new Date().toISOString());store.replaceGoalDataSources(userId,goal.id,[{provider:'okx',reason:'用户希望分析真实成交和账单'}])
+ const tasks=(planning?[]:['导出旧成交材料','本人整理策略规则']).map(content=>{const t=store.insertTask({userId,goalId:goal.id,content});store.appendTaskRevision({userId,taskId:t.id});return store.getTask(userId,t.id)!})
  const headers={'x-along-bridge':'1','x-along-bridge-token':along.bridgeToken,'x-along-user':userId,'x-along-device':deviceId}
  const fact={event_id:'summary_ready',goal_id:goal.id,provider:'okx',generation:1,revision:1,state:'ready',capabilities:['trading_account_summary'],occurred_at:new Date().toISOString(),reference:'summary_ref'}
  const source=(patch:Record<string,unknown>={})=>h.alongApi('POST','source-events',{...fact,...patch},headers)
@@ -38,8 +38,14 @@ async function setup(dir?:string){
  const commit=(session:string,ops:unknown[],key:string)=>h.runTool(session,'along_changes_commit',{idempotency_key:key,base_revision:store.getGoal(userId,goal.id)!.currentRevision,input_version:store.inputVersion(goal.id),reason:'根据真实能力补充独立分析，保全原人工行为',ops})
  return {h,along,store,goal,tasks,headers,fact,source,worker,commit}
 }
-async function readyHistory(dir?:string){
- const f=await setup(dir);expect(await f.source()).toMatchObject({status:200,body:{status:'accepted'}})
+function publicWebFixture(h:Host){
+ const search=vi.fn(async()=>({sources:[],truncated:false})),fetch=vi.fn(async()=>({url:'https://www.deepseek.com/method',statusCode:200,body:{kind:'text',content:'public fixture'},truncated:false}))
+ const original=h.ctx.get.bind(h.ctx)
+ vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search,fetch}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:original(name))
+ return {search,fetch}
+}
+async function readyHistory(dir?:string,declareHistory=true){
+ const f=await setup(dir);const publicWeb=declareHistory?undefined:publicWebFixture(f.h);expect(await f.source()).toMatchObject({status:200,body:{status:'accepted'}})
  const summary=await f.worker('source_review');await f.h.runTool(summary.session,'along_source_review_context',{})
  expect(await f.commit(summary.session,f.tasks.map(t=>({op:'task.update',task_id:t.id,base_revision:1,fields:{trigger:{kind:'waiting',actor:'user',capability:'reminder',resume:'user_input',reason:'此人工材料尚需本人提供'}}})),'summary_wait')).toMatchObject({status:'applied'})
  await f.h.runTool(summary.session,'along_source_review_finish',{outcome:'need_data',reason:'摘要不含成交和账单，原人工任务保持待提供',needs:['成交和账单明细及策略规则']});await f.h.runTool(summary.session,'orchestrator_report',{state:'ready',summary:'保留人工任务等待，未假造收益分析'})
@@ -47,13 +53,13 @@ async function readyHistory(dir?:string){
  expect(await f.source(historyFact)).toMatchObject({status:200,body:{status:'accepted'}})
  const history=await f.worker('source_review');expect(history.ticket.id).not.toBe(summary.ticket.id)
  expect(await f.h.runTool(history.session,'along_source_review_context',{})).toMatchObject({review:{legacy_task_ids:[]},source:{private_data_read:false,available_reports:[{capability:'trading_history'}]}})
- expect(await f.commit(history.session,[{op:'task.create',content:'依据成交与账单报告复核实际费用与已观测盈亏分量',trigger:{kind:'event',actor:'agent',capability:'research',repeat:'on_change',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_history'}]}}],'history_task')).toMatchObject({status:'applied'})
+ expect(await f.commit(history.session,[{op:'task.create',content:'依据成交与账单报告复核实际费用与已观测盈亏分量',trigger:declareHistory?{kind:'event',actor:'agent',capability:'research',repeat:'on_change',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_history'}]}:{kind:'immediate',actor:'agent',capability:'research'}}],'history_task')).toMatchObject({status:'applied'})
  await f.h.runTool(history.session,'along_source_review_finish',{outcome:'revise',reason:'单独创建只读历史分析；原人工材料与规则仍待本人'});await f.h.runTool(history.session,'orchestrator_report',{state:'ready',summary:'历史能力分析任务已持久化'})
  const due=await f.worker('task_due');await f.h.runTool(due.session,'along_task_context',{})
  const read=await f.h.runTool(due.session,'along_source_read',{provider:'okx',capability:'trading_history',max_age_seconds:1800})
  expect(read).toMatchObject({state:'pending',capability:'trading_history'})
  const data=report();const deliver=(patch:Record<string,unknown>={})=>f.h.alongApi('POST','source-read-results',{request_id:read.request_id,state:'ready',generation:1,revision:2,observed_at:data.windowEnd,reference:'history_ref',data,...patch},f.headers)
- return {...f,historyFact,due,read,data,deliver}
+ return {...f,historyFact,due,read,data,deliver,publicWeb}
 }
 it('validates the real Host fixture and does not permit incomplete or raw payloads to claim a full history report',()=>{
  expect(SOURCE_CAPABILITY.parse('trading_history')).toBe('trading_history');expect(OKXHistoryReportSchema.parse(fixture)).toEqual(fixture)
@@ -138,4 +144,87 @@ it('does not turn an unavailable public web research executor into a runnable ta
  expect(f.store.triggers.get(userId,task.id)).toMatchObject({state:'waiting',reason:'等待执行能力恢复',capabilityMissing:true})
  expect(f.h.runtime.store.tickets.list().some(t=>t.mandate.basis.via==='task_due')).toBe(false)
  expect(f.store.taskExecution(userId,task.id).count).toBe(0)
+},30_000)
+
+it('private history never exposes public web tools or sends a private tag to the provider',async()=>{
+ const f=await readyHistory();f.data.sampleFills[0].tag='PRIVATE_TAG_84201';await f.deliver()
+ const search=vi.fn(async()=>({sources:[],truncated:false})),fetch=vi.fn(async()=>({url:'https://www.deepseek.com/method',statusCode:200,body:{kind:'text',content:'public fixture'},truncated:false}))
+ const original=f.h.ctx.get.bind(f.h.ctx)
+ vi.spyOn(f.h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search,fetch}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:original(name))
+ let error:unknown;try{await f.h.runTool(f.due.session,'along_web_search',{query:'PRIVATE_TAG_84201 fee explanation',purpose:'general'})}catch(e){error=e}
+ expect(search).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled();expect(f.h.tools.get(f.due.session)?.has('along_web_search')).toBe(false);expect(error).toBeDefined()
+},30_000)
+it('long valid monetary facts remain complete lines with explicit excerpts and visible interpretation',()=>{
+ const value=report(),money='9'.repeat(36)+'.'+'9'.repeat(24),fg=value.groups.fills[0],bg=value.groups.bills.find((g:any)=>g.instType==='SWAP')
+ value.groups.fills=Array.from({length:3},(_,i)=>({...fg,instId:'X'.repeat(77)+i,feeCashflow:money}))
+ value.groups.bills=Array.from({length:3},(_,i)=>({...bg,instId:'Y'.repeat(77)+i,tradePnl:money,tradeFee:'-'+money,tradeNet:'0',fundingCashflow:'-'+money,otherCashflow:money}))
+ const text=okxHistoryResultText(value,'策略规则仍未提供，需要补齐映射再解释有效性。')
+ expect(text.length).toBeLessThanOrEqual(1200);expect(/[0-9.]$/.test(text)).toBe(false);expect(text).toMatch(/节选|省略/);expect(text).toContain('策略规则/映射');expect(text).toContain('Agent解读');expect(text).toContain('策略规则仍未提供')
+ for(const line of text.split('\n').filter(line=>line.includes('手续费')||line.includes('盈亏分量')))for(const token of line.match(/-?\d+(?:\.\d+)?/g)??[])if(token.length>20)expect(token.replace(/^-/,'')).toBe(money)
+})
+const historyDefinition={kind:'event',actor:'agent',capability:'research',repeat:'on_change',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_history'}]}
+async function directPlanner(f:Awaited<ReturnType<typeof setup>>){
+ const trigger='along:'+userId+':original_goal'
+ await vi.waitFor(async()=>{await f.h.runtime.pump();await f.h.runtime.idle();expect(f.store.getDelivery(trigger)?.status).toBe('delivered')},{timeout:10000})
+ const routed=await f.h.route({kind:'accept',trigger_id:trigger,title:'按本人请求规划成交复盘',worktree_name:'history-planner-regression',acknowledgement:'将根据授权历史安排分析。'})
+ const id=(routed.ticket as {ticket_id:string}).ticket_id,session='worker-'+id;await vi.waitFor(()=>expect(f.h.tools.has(session)).toBe(true));await f.h.runTool(session,'along_conversation_read',{});return {id,session}
+}
+const historySubscribers=(f:Awaited<ReturnType<typeof setup>>)=>f.store.goalDetail(userId,f.goal.id).tasks.filter(t=>t.status==='open'&&t.trigger?.actor==='agent'&&t.trigger.conditions?.some(c=>(c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history'))
+it('queued history bootstrap yields to the real direct planner and rechecks its committed subscriber',async()=>{
+ const f=await setup(undefined,true),planner=await directPlanner(f)
+ await f.source({event_id:'history_ready',reference:'history_ref',capabilities:['trading_account_summary','trading_history']})
+ expect(await f.commit(planner.session,[{op:'task.create',content:'根据本人请求统计成交成本与交易账单分量',trigger:historyDefinition}],'direct_history')).toMatchObject({status:'applied'})
+ await f.h.runTool(planner.session,'along_chat_reply',{text:'已安排有证据的只读历史复盘。'});await f.h.runTool(planner.session,'orchestrator_report',{state:'ready',summary:'原用户任务已保存'})
+ for(let i=0;i<4;i++){await f.h.runtime.pump();await f.h.runtime.idle()}
+ const review=f.h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='source_review'&&!t.ended)
+ if(review){const session='worker-'+review.id;await vi.waitFor(()=>expect(f.h.tools.has(session)).toBe(true));await f.h.runTool(session,'along_source_review_context',{});await f.commit(session,[{op:'task.create',content:'另一张相近的成交账单分析卡',trigger:historyDefinition}],'duplicate_review')}
+ expect(historySubscribers(f)).toHaveLength(1)
+},30_000)
+
+it('already registered public search and fetch tools reject an immediate occurrence after an actual private history read',async()=>{
+ const f=await readyHistory(undefined,false);expect(f.h.tools.get(f.due.session)?.has('along_web_search')).toBe(true)
+ await f.deliver();expect(await f.h.runTool(f.due.session,'along_source_read',{provider:'okx',capability:'trading_history',max_age_seconds:1800})).toMatchObject({state:'ready'})
+ await expect(f.h.runTool(f.due.session,'along_web_search',{query:'PRIVATE_TAG_84201 fees',purpose:'general'})).rejects.toThrow('private history')
+ await expect(f.h.runTool(f.due.session,'along_web_fetch',{source_id:'synthetic_existing_public_source',purpose:'general'})).rejects.toThrow('private history')
+ expect(f.publicWeb!.search).not.toHaveBeenCalled();expect(f.publicWeb!.fetch).not.toHaveBeenCalled()
+},30_000)
+it('a bootstrap that already read context still yields if direct planning becomes active before its first write',async()=>{
+ const f=await setup(undefined,true)
+ await f.source({event_id:'history_ready',reference:'history_ref',capabilities:['trading_account_summary','trading_history']})
+ const review=await f.worker('source_review');await f.h.runTool(review.session,'along_source_review_context',{})
+ const planner=await directPlanner(f)
+ expect(await f.commit(review.session,[{op:'task.create',content:'元数据复评试图先创建历史分析',trigger:historyDefinition}],'review_first')).toMatchObject({status:'invalid',reason:'source_review_wait_for_direct_planning'})
+ expect(historySubscribers(f)).toHaveLength(0)
+ expect(await f.commit(planner.session,[{op:'task.create',content:'本人请求的历史分析',trigger:historyDefinition}],'direct_after_review')).toMatchObject({status:'applied'})
+ await f.h.runTool(planner.session,'along_chat_reply',{text:'已按原请求安排历史复盘。'});await f.h.runTool(planner.session,'orchestrator_report',{state:'ready',summary:'原用户规划已完成'})
+ expect(await f.commit(review.session,[{op:'task.create',content:'元数据复评的晚到重复任务',trigger:historyDefinition}],'review_late')).toMatchObject({status:'invalid',reason:'source_review_history_already_planned'})
+ expect(historySubscribers(f)).toHaveLength(1)
+},30_000)
+it('bootstrap suppression preserves separate legitimate history tasks created by the actual user planner',async()=>{
+ const f=await setup(undefined,true),planner=await directPlanner(f)
+ await f.source({event_id:'history_ready',reference:'history_ref',capabilities:['trading_account_summary','trading_history']})
+ expect(await f.commit(planner.session,[{op:'task.create',content:'独立核对成交手续费',trigger:historyDefinition},{op:'task.create',content:'独立核对资金费账单',trigger:historyDefinition}],'two_distinct_direct_tasks')).toMatchObject({status:'applied'})
+ await f.h.runTool(planner.session,'along_chat_reply',{text:'分别安排成本与资金费两项工作。'});await f.h.runTool(planner.session,'orchestrator_report',{state:'ready',summary:'两项独立工作已保存'})
+ for(let i=0;i<4;i++){await f.h.runtime.pump();await f.h.runtime.idle()}
+ expect(historySubscribers(f).map(t=>t.content).sort()).toEqual(['独立核对成交手续费','独立核对资金费账单'].sort())
+ expect(f.h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='source_review'&&!t.ended)).toHaveLength(0)
+},30_000)
+
+it('a goal-less direct planner retains priority after its registered goal.create binds the new history goal',async()=>{
+ const f=await setup(),event='new_history_goal',trigger='along:'+userId+':'+event
+ f.along.service.acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text:'新建一个长期OKX只读成交和账单复盘目标，策略规则稍后提供。'}},{userId,deviceId})
+ await vi.waitFor(async()=>{await f.h.runtime.pump();await f.h.runtime.idle();expect(f.store.getDelivery(trigger)?.status).toBe('delivered')},{timeout:10_000})
+ const routed=await f.h.route({kind:'accept',trigger_id:trigger,title:'建立长期成交复盘',worktree_name:'new-history-goal-planner',acknowledgement:'先建立目标并接入数据。'})
+ const id=(routed.ticket as {ticket_id:string}).ticket_id,planner='worker-'+id;await vi.waitFor(()=>expect(f.h.tools.has(planner)).toBe(true));await f.h.runTool(planner,'along_conversation_read',{})
+ expect(await f.h.runTool(planner,'along_changes_commit',{idempotency_key:'create_history_goal',base_revision:0,input_version:1,reason:'建立本人要求的长期只读复盘目标',ops:[{op:'goal.create',domain:'custom',title:'长期OKX历史复盘',context:[]}]})).toMatchObject({status:'applied'})
+ expect(f.store.getWorkLink(id)?.goalId).toBeUndefined()
+ const created=f.store.listGoals(userId,{limit:100}).items.find(g=>g.id!==f.goal.id)!;expect(created).toBeDefined()
+ expect(await f.h.runTool(planner,'along_data_sources_recommend',{base_revision:created.currentRevision,input_version:f.store.inputVersion(created.id),sources:[{provider:'okx',reason:'本人要求只读成交账单'}]})).toMatchObject({status:'recommended'})
+ expect(await f.h.alongApi('POST','source-events',{...f.fact,event_id:'new_goal_history_ready',goal_id:created.id,reference:'new_goal_history_ref',capabilities:['trading_account_summary','trading_history']},f.headers)).toMatchObject({status:200})
+ for(let i=0;i<3;i++){await f.h.runtime.pump();await f.h.runtime.idle()}
+ expect(f.h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='source_review')).toHaveLength(0)
+ expect(await f.h.runTool(planner,'along_changes_commit',{idempotency_key:'new_goal_history_task',base_revision:f.store.getGoal(userId,created.id)!.currentRevision,input_version:f.store.inputVersion(created.id),reason:'原规划建立真实历史分析订阅',ops:[{op:'task.create',content:'按原请求持续复盘历史报告',trigger:historyDefinition}]})).toMatchObject({status:'applied'})
+ await f.h.runTool(planner,'along_chat_reply',{text:'历史分析订阅已建立。'});await f.h.runTool(planner,'orchestrator_report',{state:'ready',summary:'原请求规划结束'})
+ for(let i=0;i<3;i++){await f.h.runtime.pump();await f.h.runtime.idle()}
+ const tasks=f.store.goalDetail(userId,created.id).tasks;expect(tasks).toHaveLength(1);expect(tasks[0]!.trigger?.conditions).toMatchObject([{capability:'trading_history'}]);expect(f.h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='source_review')).toHaveLength(0)
 },30_000)

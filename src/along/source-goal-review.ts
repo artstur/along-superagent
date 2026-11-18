@@ -71,6 +71,14 @@ export function sourceReviewCurrent(store:AlongStore,d:HealthDispatch):boolean {
   })
 }
 
+/** A queued bootstrap is obsolete once a different legitimate planner already persisted the history subscriber. */
+export function sourceReviewHistoryAlreadyPlanned(store:AlongStore,d:HealthDispatch):boolean {
+  if(!d.sourceReview?.capabilities.includes('trading_history'))return false
+  return store.goalDetail(d.userId,d.goalId).tasks.some(task=>task.status==='open'&&task.trigger?.actor==='agent'&&
+    task.trigger.conditions?.some(c=>(c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')&&
+    store.taskRevisionOrigin(task.id,task.currentRevision)!==d.eventId)
+}
+
 /** Keep the original human actions, their clocks/plans and unrelated typed tasks immutable in this planning scope. */
 export function sourceReviewChangeRefusal(store:AlongStore,input:AlongChangeSetInput,scope:AlongCommitScope):string|undefined {
   const d=scope.triggerEventId?store.health.get(scope.triggerEventId):undefined
@@ -80,6 +88,7 @@ export function sourceReviewChangeRefusal(store:AlongStore,input:AlongChangeSetI
     if(!raw||typeof raw!=='object'||Array.isArray(raw))return 'outside_source_review'
     const op=raw as {op?:unknown;task_id?:unknown;fields?:Record<string,unknown>;trigger?:unknown}
     if(op.op==='task.create') {
+      if(sourceReviewHistoryAlreadyPlanned(store,d))return 'source_review_history_already_planned'
       const parsed=TASK_TRIGGER_SCHEMA.safeParse(op.trigger)
       if(!parsed.success||parsed.data.actor!=='agent')return 'source_review_new_task_requires_agent_trigger'
       continue

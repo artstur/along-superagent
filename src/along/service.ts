@@ -50,7 +50,7 @@ export interface AlongChangesetModule { commitChangeSet(input: AlongChangeSetInp
  */
 export class AlongService {
   constructor(private readonly store: AlongStore,
-    private readonly modules: { inbox?: AlongInboxModule; changeset?: AlongChangesetModule; taskReviews?:{requestTaskReview(identity:AlongIdentity,body:unknown):unknown} } = {}) {}
+    private readonly modules: { inbox?: AlongInboxModule; changeset?: AlongChangesetModule; taskReviews?:{requestTaskReview(identity:AlongIdentity,body:unknown):unknown;sourceReviewPlanningRefusal?(scope:AlongCommitScope):string|undefined} } = {}) {}
   /** Storage primitives for the loopback API reads and for the injected modules. */
   get alongStore(): AlongStore { return this.store }
   /** Receive an event reliably (transactional Inbox + business rows + delivery queue); implemented by the inbox module. */
@@ -74,7 +74,7 @@ export class AlongService {
   commitChangeSet(input: AlongChangeSetInput, scope: AlongCommitScope): AlongChangeSetResult {
     if (!this.modules.changeset) throw new Error('the Along changeset module is not installed')
     return this.store.atomic(()=>{
-      const refused=taskReviewChangeRefusal(this.store,input,scope)??sourceReviewChangeRefusal(this.store,input,scope)
+      const refused=this.modules.taskReviews?.sourceReviewPlanningRefusal?.(scope)??taskReviewChangeRefusal(this.store,input,scope)??sourceReviewChangeRefusal(this.store,input,scope)
       if(refused)return {status:'invalid',reason:refused}
       const result=this.modules.changeset!.commitChangeSet(input, scope)
       if(result.status==='applied'){assertTaskReviewWrite(this.store,scope);assertSourceReviewWrite(this.store,scope)}

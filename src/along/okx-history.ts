@@ -1,7 +1,7 @@
 /** Bounded deterministic Host report, never arbitrary history blobs or execution instructions. */
 import { z } from 'zod'
 const count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-const timestamp=z.string().datetime({offset:true}).refine(value=>Number.isFinite(Date.parse(value)))
+const timestamp=z.string().max(40).datetime({offset:true}).refine(value=>Number.isFinite(Date.parse(value)))
 const decimal=z.string().max(160).regex(/^-?\d+(?:\.\d+)?$/)
 const optionalDecimal=z.union([decimal,z.literal('')])
 const identifier=z.string().max(96).regex(/^[A-Za-z0-9_.:-]*$/)
@@ -46,12 +46,17 @@ export type OKXHistoryReport=z.infer<typeof OKXHistoryReportSchema>
 /** Numerical facts are rendered from verified report fields, not retyped or recomputed by the model. */
 export function okxHistoryResultText(report:OKXHistoryReport,interpretation:string):string {
   const amount=(value:string|null)=>value===null?'未知':value
-  const rows=[`OKX 成交与账单观察窗口：${report.windowStart} 至 ${report.windowEnd}。`,
+  const header=[`OKX 成交与账单观察窗口：${report.windowStart} 至 ${report.windowEnd}。`,
     `覆盖${report.coverage.complete?'完整':'不完整'}：已采集${report.totals.fills}笔成交、${report.totals.bills}条账单。以下是已观测分量，不是全账户净收益；现货期初成本及用户策略规则/映射仍需补充。`,
     '币种分别保留；成交手续费与账单手续费是替代证据，不重复相加。']
-  for(const group of report.groups.fills.slice(0,3))rows.push(`${group.instId} 成交手续费现金流：${amount(group.feeCashflow)} ${group.feeCcy}（负数为支出，正数为返佣）。`)
-  for(const group of report.groups.bills.slice(0,3))rows.push(`${group.instId||group.instType||'账户'} ${group.ccy}：普通交易账单盈亏分量${amount(group.tradePnl)}、手续费${amount(group.tradeFee)}、两项合计${amount(group.tradeNet)}；资金费现金流${amount(group.fundingCashflow)}，其他现金流${amount(group.otherCashflow)}。`)
-  const facts=rows.join('\n')
-  const budget=Math.max(0,1200-facts.length-10)
-  return (facts+'\nAgent解读：'+interpretation.slice(0,budget)).slice(0,1200)
+  // Every factual line is atomic: never shorten an amount to make it fit a UI text budget.
+  const details=[...report.groups.bills.map(group=>`${group.instId||group.instType||'账户'} ${group.ccy}：普通交易账单盈亏分量${amount(group.tradePnl)}、手续费${amount(group.tradeFee)}、两项合计${amount(group.tradeNet)}；资金费现金流${amount(group.fundingCashflow)}，其他现金流${amount(group.otherCashflow)}。`),
+    ...report.groups.fills.map(group=>`${group.instId} 成交手续费现金流：${amount(group.feeCashflow)} ${group.feeCcy}（负数为支出，正数为返佣）。`)]
+  const interpretationText=interpretation.length<=260?interpretation:interpretation.slice(0,259).replace(/-?\d[\d.]*$/,'')+'…（解读节选）'
+  const suffix='\nAgent解读：'+interpretationText
+  const rows=[...header],footerReserve=90,budget=1200-suffix.length-footerReserve
+  let shown=0,length=header.join('\n').length
+  for(const line of details)if(length+line.length+1<=budget){rows.push(line);length+=line.length+1;shown++}
+  if(shown<details.length||report.coverage.groupsTruncated)rows.push(`分组指标为节选：省略${details.length-shown}个当前报告分组${report.coverage.groupsTruncated?'，上游报告还存在未展示分组':''}；未展示项不代表零。`)
+  return rows.join('\n')+suffix
 }

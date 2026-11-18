@@ -1,5 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
-import { reconcileSourceGoalReviews,sourceReviewCurrent,sourceReviewContext,finishSourceReview,SOURCE_REVIEW_FINISH } from './source-goal-review.ts'
+import { reconcileSourceGoalReviews,sourceReviewCurrent,sourceReviewContext,finishSourceReview,sourceReviewHistoryAlreadyPlanned,SOURCE_REVIEW_FINISH } from './source-goal-review.ts'
 import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -19,7 +19,7 @@ import { alongTool } from './tool.ts'
 import { requestTaskReview, taskReviewCurrent, taskReviewContext, finishTaskReview, TASK_REVIEW_FINISH, TaskReviewError } from './task-repair.ts'
 import { calculationResultText } from './calculation-result.ts'
 import { OKXHistoryReportSchema,okxHistoryResultText } from './okx-history.ts'
-import type { AlongIdentity } from './service.ts'
+import type { AlongIdentity,AlongCommitScope } from './service.ts'
 import { TaskActivation, type ActivationHost } from './task-activation.ts'
 import type { CalculationScope } from './calculation-store.ts'
 
@@ -110,6 +110,27 @@ export class HealthFollowup {
   readonly activation:TaskActivation
   constructor(private readonly host: HealthHost) {
     this.activation=new TaskActivation({store:host.store,available:host.available,source:host.source,allowed:userId=>this.allowed(userId),currentHealth:healthSummaryIsCurrent})
+  }
+  /** Direct planning keeps priority even while its newly created goal still lives on a goal-less work row. */
+  private directPlanningActive(userId:string,goalId:string):boolean {
+    const store=this.host.store
+    return this.host.repo.tickets.list().some(ticket=>{
+      if(ticket.ended||ticket.mandate.actor.source!=='along'||ticket.mandate.actor.id!==userId||this.forTicket(ticket.id))return false
+      const link=store.getWorkLink(ticket.id)
+      if(!link?.eventId)return false
+      const message=store.getMessage(userId,`msg:${userId}:${link.eventId}`)
+      if(message?.audience!=='conversation'||message.role!=='user'||message.direction!=='inbound')return false
+      const boundGoal=link.goalId??store.changeSetsByWork(link.workId).find(change=>change.status==='applied'&&change.goalId!==undefined)?.goalId
+        ??store.conversationGoal(userId,store.conversationRoot(userId,link.eventId))
+      if(boundGoal!==goalId)return false
+      const last=latestAssignment(ticket)
+      return !last?.report||!['waiting','blocked','failed'].includes(last.report.state)||!!(last.deliveredAt&&last.deliveredAt>last.report.at)
+    })
+  }
+  sourceReviewPlanningRefusal(scope:AlongCommitScope):string|undefined {
+    const d=scope.triggerEventId?this.host.store.health.get(scope.triggerEventId):undefined
+    return d?.sourceReview?.capabilities.includes('trading_history')&&this.directPlanningActive(d.userId,d.goalId)
+      ?'source_review_wait_for_direct_planning':undefined
   }
   private allowed(userId: string, settings = this.host.settings()): boolean {
     return (
@@ -259,6 +280,14 @@ export class HealthFollowup {
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
+      if(d.sourceReview?.capabilities.includes('trading_history')) {
+        if(!d.sourceReview.legacyTasks.length&&sourceReviewHistoryAlreadyPlanned(store,d)) {
+          store.health.retireSourceReview(d.eventId)
+          if(ticket&&!ticket.ended)this.host.engine().report(ticket.id,{state:'dropped',summary:'A direct planner already persisted this history subscription; the metadata bootstrap is no longer needed.'})
+          continue
+        }
+        if(this.directPlanningActive(d.userId,d.goalId))continue
+      }
       if ((d.due||d.repair||d.sourceReview) && !this.current(d)) {
         if (ticket && !ticket.ended && latestAssignment(ticket) && latestAssignment(ticket)!.state !== 'ended') this.host.engine().report(ticket.id, { state: 'dropped', summary: 'Superseded scheduled task.' })
         if(d.sourceReview)store.health.retireSourceReview(d.eventId);else if(d.repair)store.health.retireRepair(d.eventId);else store.health.retireDue(d.eventId)
