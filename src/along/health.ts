@@ -278,6 +278,8 @@ export class HealthFollowup {
       }
     }
     // The immutable row is an outbox across the Along/DSH database boundary.
+    // reserve before async admission creates a ticket/work link, so sibling recoveries cannot race.
+    const submittedGoals=new Set<string>()
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
@@ -319,8 +321,9 @@ export class HealthFollowup {
         continue
       } // Never reopen an ended/stopped ticket; a subsequent changed input gets a new dispatch.
       if (store.getGoal(d.userId, d.goalId)?.status !== 'active') continue
-      // A source fact is persisted immediately, but its review waits for an already-running goal Worker.
-      if(d.sourceReview&&store.workLinksForGoal(d.goalId).some(link=>{
+      // Persisted recoveries queue behind actual planning/work and behind a sibling just admitted this pump.
+      if(submittedGoals.has(d.goalId)||this.directPlanningActive(d.userId,d.goalId))continue
+      if(store.workLinksForGoal(d.goalId).some(link=>{
         const other=repo.tickets.get(link.ticketId)
         if(!other||other.ended)return false
         const review=this.forTicket(other.id)
@@ -331,6 +334,7 @@ export class HealthFollowup {
       const t = this.trigger(d),
         saved = repo.triggers.get(t.id)
       this.host.engine().receive(t)
+      submittedGoals.add(d.goalId)
       if (saved) {
         const thread = repo.threads.get(`along:${t.threads[0]!.id}`)
         if (!thread?.evaluating && !thread?.pending.includes(t.id)) this.host.engine().reevaluate(t.id)
