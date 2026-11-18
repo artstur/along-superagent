@@ -23,7 +23,7 @@ export const WorkoutContextSchema = z.object({
   yesterdayMinutes: z.number().finite().min(0).max(40320),
   latestWorkoutAt: timestamp,
   patterns: z.array(z.object({
-    activity: z.string().regex(/^(?:yoga|walking|hiking|running|cycling|swimming|pilates|traditionalStrengthTraining|traditional_strength_training|functionalStrengthTraining|functional_strength_training|highIntensityIntervalTraining|high_intensity_interval_training|healthkit_activity_[0-9]+)$/),
+    activity: z.string().regex(/^(?:yoga|walking|hiking|running|cycling|swimming|pilates|strength_training|hiit|traditionalStrengthTraining|traditional_strength_training|functionalStrengthTraining|functional_strength_training|highIntensityIntervalTraining|high_intensity_interval_training|healthkit_activity_[0-9]+)$/),
     weekday: z.number().int().min(1).max(7),
     hour: z.number().int().min(0).max(23),
     count,

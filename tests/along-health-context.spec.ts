@@ -81,3 +81,14 @@ it('persists validated context per user and migrates a scalar schema15 row witho
     checked.close()
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+// Exact labels emitted by HealthKitReader.activityName (Client main1601858), plus its numeric fallback.
+it.each(['yoga','walking','hiking','running','cycling','swimming','pilates','strength_training','functional_strength_training','hiit','healthkit_activity_3000'])(
+  'accepts the actual native activity label %s without dropping a legitimate pattern', activity => {
+    const workoutContext={windowDays:28,weekStartAt:'2026-11-15T16:00:00Z',todayMinutes:0,todayCount:0,yesterdayMinutes:60,
+      latestWorkoutAt:'2026-11-17T11:00:00Z',patterns:[{activity,weekday:3,hour:19,count:4,recentCount:1,averageMinutes:60,lastObservedAt:'2026-11-17T11:00:00Z'}]}
+    const result=EventEnvelopeSchema.safeParse(wire({...summary,type:'workout',statistic:'sum',context:workoutContext}))
+    expect(result.success).toBe(true)
+    if(result.success&&result.data.payload.event_type==='along.health_summary_updated')
+      expect(result.data.payload.summaries[0]?.context).toEqual(workoutContext)
+  })
