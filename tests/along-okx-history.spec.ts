@@ -76,7 +76,8 @@ it('new history after a completed summary review dispatches once, reads actual s
  expect(await f.h.runTool(f.due.session,'along_task_finish',finish)).toMatchObject({status:'recorded',reused:false});expect(await f.h.runTool(f.due.session,'along_task_finish',finish)).toMatchObject({status:'recorded',reused:true})
  await f.h.runTool(f.due.session,'orchestrator_report',{state:'ready',summary:'授权报告分析已回原任务详情，未做完整策略收益推断'})
  const task=f.store.goalDetail(userId,f.goal.id).tasks.find(t=>!f.tasks.some(old=>old.id===t.id))!;expect(task.status).toBe('open');expect(f.store.taskExecution(userId,task.id)).toMatchObject({count:1,records:[{kind:'research',outcome:'researched'}]})
- const result=f.store.syncPage(userId,0,200).items.find(i=>i.kind==='message'&&i.taskId===task.id)!;expect(result.payload).toMatchObject({notification:{kind:'task_result'},text:expect.stringContaining('普通交易账单盈亏分量10')});expect(result.payload).not.toHaveProperty('recommendation');expect(JSON.stringify(result)).not.toContain(f.data.sampleBills[0].billId)
+ const result=f.store.syncPage(userId,0,200).items.find(i=>i.kind==='message'&&i.taskId===task.id)!;expect(result.payload).toMatchObject({notification:{kind:'task_result'},text:expect.stringContaining('普通交易账单盈亏分量10')});
+ expect(f.store.taskExecution(userId,task.id).records[0]?.recommendationEventId).toBe((result.payload as {notification:{event_id:string}}).notification.event_id);expect(result.payload).not.toHaveProperty('recommendation');expect(JSON.stringify(result)).not.toContain(f.data.sampleBills[0].billId)
  expect(f.store.conversationContextPage(userId,f.goal.id,undefined,100).items.filter(m=>m.audience==='conversation').map(m=>m.eventId)).toEqual(['original_goal'])
  for(const old of f.tasks){expect(f.store.getTask(userId,old.id)).toMatchObject({content:old.content,status:'open'});expect(f.store.taskExecution(userId,old.id).count).toBe(0)}
  for(let i=0;i<3;i++){expect(await f.source(f.historyFact)).toMatchObject({status:200});await f.h.runtime.pump()}
@@ -227,4 +228,25 @@ it('a goal-less direct planner retains priority after its registered goal.create
  await f.h.runTool(planner,'along_chat_reply',{text:'历史分析订阅已建立。'});await f.h.runTool(planner,'orchestrator_report',{state:'ready',summary:'原请求规划结束'})
  for(let i=0;i<3;i++){await f.h.runtime.pump();await f.h.runtime.idle()}
  const tasks=f.store.goalDetail(userId,created.id).tasks;expect(tasks).toHaveLength(1);expect(tasks[0]!.trigger?.conditions).toMatchObject([{capability:'trading_history'}]);expect(f.h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='source_review')).toHaveLength(0)
+},30_000)
+
+it('replays an already acknowledged private result with its real event link from durable API snapshots without another execution',async()=>{
+ const f=await readyHistory();await f.deliver()
+ await f.h.runTool(f.due.session,'along_task_finish',{outcome:'keep',types:[],reason:'真实历史报告已保存',text:'策略归属还需本人提供规则。',source_request_id:f.read.request_id})
+ await f.h.runTool(f.due.session,'orchestrator_report',{state:'ready',summary:'只保存这一次有证据的结果'})
+ const task=f.store.goalDetail(userId,f.goal.id).tasks.find(t=>!f.tasks.some(old=>old.id===t.id))!,page=f.store.syncPage(userId,0,200),endSeq=page.items.at(-1)!.seq
+ const original=page.items.find(item=>item.kind==='message'&&item.taskId===task.id)!,eventId=(original.payload as {notification:{event_id:string}}).notification.event_id
+ expect(await f.h.alongApi('POST','sync/ack',{seqs:page.items.map(item=>item.seq)},f.headers)).toMatchObject({status:200})
+ const saved=structuredClone(f.store.syncPage(userId,0,200)),counts=f.store.counts(userId),execution=f.store.taskExecution(userId,task.id),dispatch=structuredClone(f.store.health.get(eventId.slice('followup_'.length)))
+ expect(dispatch?.result).toMatchObject({source_request_id:f.read.request_id});expect(execution).toMatchObject({count:1,records:[{recommendationEventId:eventId}]})
+ const detail=await f.h.alongApi('GET','goals/'+f.goal.id,undefined,f.headers);expect(detail.status).toBe(200)
+ expect((detail.body as any).tasks.find((t:any)=>t.id===task.id).execution).toEqual(execution)
+ expect(await f.h.alongApi('GET','sync?user_id='+userId+'&after_seq='+endSeq+'&limit=200&conversation_version=1',undefined,f.headers)).toMatchObject({status:200,body:{items:[]}})
+ const replay=await f.h.alongApi('GET','sync?user_id='+userId+'&after_seq=0&limit=200&conversation_version=1',undefined,f.headers)
+ expect(replay.status).toBe(200)
+ const restored=(replay.body as any).items.find((item:any)=>item.seq===original.seq)
+ expect(restored).toMatchObject({seq:original.seq,messageId:original.messageId,payload:{text:(original.payload as {text:string}).text,message:{eventId},snapshot:{tasks:expect.arrayContaining([expect.objectContaining({id:task.id,execution})])}}})
+ expect(restored.payload).not.toHaveProperty('recommendation');expect(JSON.stringify(execution)).not.toContain(f.read.request_id)
+ expect(f.store.syncPage(userId,0,200)).toEqual(saved);expect(f.store.counts(userId)).toEqual(counts);expect(f.store.health.get(eventId.slice('followup_'.length))).toEqual(dispatch);expect(f.store.taskExecution(userId,task.id)).toEqual(execution)
+ for(const old of f.tasks)expect(f.store.taskExecution(userId,old.id).count).toBe(0)
 },30_000)
