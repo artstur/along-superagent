@@ -167,8 +167,8 @@ export class HealthFollowup {
       human: false,
       at: d.createdAt,
       threads: [{ source: 'along', id: `goal/${d.goalId}/health/${d.eventId}` }],
-      text: 'Health summaries changed. Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.',
-      meta: { event_type: 'along.health_summary_updated', goal_id: d.goalId, health_dispatch: d.eventId }
+      text: (d.reassessment ? 'Host requested a review of an earlier completed assessment against existing accepted health facts; this is not a new observation or user instruction. ' : 'Health summaries changed. ') + 'Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.',
+      meta: { event_type: d.reassessment?'along.health_reassessment':'along.health_summary_updated', goal_id: d.goalId, health_dispatch: d.eventId, ...(d.reassessment?{source_health_dispatch:d.reassessment.sourceDispatchId,review_reason:d.reassessment.reason}:{}) }
     }
   }
   private bound(t: Trigger): HealthDispatch | undefined {
@@ -194,7 +194,7 @@ export class HealthFollowup {
     return {
       ...base,
       gate: (t, thread, tickets) => {
-        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (t.meta.event_type !== 'along.health_summary_updated' || t.meta.health_dispatch === undefined))
+        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (!['along.health_summary_updated','along.health_reassessment'].includes(String(t.meta.event_type)) || t.meta.health_dispatch === undefined))
           return base.gate(t, thread, tickets)
         const d = this.bound(t),
           g = d && this.host.store.getGoal(d.userId, d.goalId)
@@ -278,6 +278,8 @@ export class HealthFollowup {
       }
     }
     // The immutable row is an outbox across the Along/DSH database boundary.
+    // reserve before async admission creates a ticket/work link, so sibling recoveries cannot race.
+    const submittedGoals=new Set<string>()
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
@@ -318,9 +320,12 @@ export class HealthFollowup {
         }
         continue
       } // Never reopen an ended/stopped ticket; a subsequent changed input gets a new dispatch.
+      // An obsolete audited row must not reserve this goal ahead of a current recovery.
+      if(!this.current(d))continue
       if (store.getGoal(d.userId, d.goalId)?.status !== 'active') continue
-      // A source fact is persisted immediately, but its review waits for an already-running goal Worker.
-      if(d.sourceReview&&store.workLinksForGoal(d.goalId).some(link=>{
+      // Persisted recoveries queue behind actual planning/work and behind a sibling just admitted this pump.
+      if(submittedGoals.has(d.goalId)||this.directPlanningActive(d.userId,d.goalId))continue
+      if(store.workLinksForGoal(d.goalId).some(link=>{
         const other=repo.tickets.get(link.ticketId)
         if(!other||other.ended)return false
         const review=this.forTicket(other.id)
@@ -331,6 +336,7 @@ export class HealthFollowup {
       const t = this.trigger(d),
         saved = repo.triggers.get(t.id)
       this.host.engine().receive(t)
+      submittedGoals.add(d.goalId)
       if (saved) {
         const thread = repo.threads.get(`along:${t.threads[0]!.id}`)
         if (!thread?.evaluating && !thread?.pending.includes(t.id)) this.host.engine().reevaluate(t.id)

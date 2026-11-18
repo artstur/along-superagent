@@ -75,7 +75,7 @@ it('persists validated context per user and migrates a scalar schema15 row witho
     expect(migrated.latestHealthSummaries('u_context')[0]?.context).toBeUndefined()
     migrated.close()
     const checked = new DatabaseSync(file)
-    expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('16')
+    expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('17')
     const columns = Object.keys(before[0]!).map(key => '"' + key + '"').join(',')
     expect(checked.prepare('SELECT ' + columns + ' FROM health_summary').all()).toEqual(before)
     checked.close()
@@ -92,3 +92,21 @@ it.each(['yoga','walking','hiking','running','cycling','swimming','pilates','str
     if(result.success&&result.data.payload.event_type==='along.health_summary_updated')
       expect(result.data.payload.summaries[0]?.context).toEqual(workoutContext)
   })
+
+it('upgrades schema16 completed health assessments additively and retains the original decision and facts',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'health-reassessment-migrate-')),file=join(dir,'along.sqlite')
+ try {
+  const store=new AlongStore(file);store.assertUser('u_context','d_context')
+  const goal=store.insertGoal({userId:'u_context',domain:'custom'});store.appendGoalRevision({userId:'u_context',goalId:goal.id,title:'保持原入睡目标',status:'active'});store.ensureInputVersion('u_context',goal.id)
+  createInbox(store).acceptEvent(wire(),{userId:'u_context',deviceId:'d_context'})
+  const source=store.health.dispatch('u_context',goal.id,1,store.latestHealthSummaries('u_context'))
+  store.health.finish(source,{outcome:'keep',types:['sleep'],reason:'Original completed decision'})
+  store.close()
+  const raw=new DatabaseSync(file);raw.exec('ALTER TABLE health_dispatch DROP COLUMN reassessment_of');raw.exec('ALTER TABLE health_dispatch DROP COLUMN reassessment_reason');raw.exec("UPDATE meta SET value='16' WHERE key='schema_version'")
+  const tables=['health_dispatch','health_followup','health_summary','goal','goal_revision'];const before=Object.fromEntries(tables.map(t=>[t,raw.prepare('SELECT * FROM '+t).all()]));raw.close()
+  const next=new AlongStore(file);expect(next.health.get(source.eventId)?.result).toEqual({outcome:'keep',types:['sleep'],reason:'Original completed decision'});expect(next.health.get(source.eventId)?.reassessment).toBeUndefined();next.close()
+  const checked=new DatabaseSync(file)
+  for(const t of tables){const cols=Object.keys(before[t]![0]!).map(c=>'"'+c+'"').join(',');expect(checked.prepare('SELECT '+cols+' FROM '+t).all()).toEqual(before[t])}
+  expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('17');checked.close()
+ } finally {rmSync(dir,{recursive:true,force:true})}
+})

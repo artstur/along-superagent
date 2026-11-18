@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS health_followup (
 CREATE TABLE IF NOT EXISTS health_dispatch (
  event_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, goal_id TEXT NOT NULL REFERENCES goal(id),
  input_version INTEGER NOT NULL, snapshot TEXT NOT NULL, read_snapshot TEXT,
- result TEXT, created_at TEXT NOT NULL
+ result TEXT, created_at TEXT NOT NULL, reassessment_of TEXT, reassessment_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS health_dispatch_goal ON health_dispatch(goal_id,created_at);
 `

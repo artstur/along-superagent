@@ -9,6 +9,7 @@ export interface TaskRepairReview {
   taskId:string;revision:number;evidenceEventId:string;deviceId:string;originalScheduledAt?:string;originalContent:string;reason:string;retired:boolean;contextReadAt?:string
 }
 export interface HealthDispatch {
+  reassessment?: { sourceDispatchId: string; reason: string }
   sourceReview?:SourceGoalReview
   repair?:TaskRepairReview
   due?: DueTask
@@ -108,6 +109,7 @@ export class HealthStore {
     const repair=r&&this.repairSchema()?this.db.prepare('SELECT * FROM task_trigger_review WHERE event_id=?').get(eventId):undefined
     return r
       ? {
+          ...(r.reassessment_of==null?{}:{reassessment:{sourceDispatchId:String(r.reassessment_of),reason:String(r.reassessment_reason)}}),
           ...(source?{sourceReview:{provider:'okx' as const,sourceEventId:String(source.source_event_id),generation:Number(source.generation),revision:Number(source.revision),reference:String(source.reference),deviceId:String(source.device_id),
             capabilities:JSON.parse(String(source.capabilities)),legacyTasks:JSON.parse(String(source.legacy_tasks)),originalTaskIds:JSON.parse(String(source.original_task_ids)),retired:source.retired===1,...(source.context_read_at==null?{}:{contextReadAt:String(source.context_read_at)})}}:{}),
           ...(repair?{repair:{taskId:String(repair.task_id),revision:Number(repair.task_revision),evidenceEventId:String(repair.evidence_event_id),deviceId:String(repair.device_id),
@@ -136,6 +138,23 @@ export class HealthStore {
         'INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING'
       )
       .run(eventId, userId, goalId, inputVersion, JSON.stringify(snapshot), new Date().toISOString())
+    return this.get(eventId)!
+  }
+  /** Host-only recovery of a completed assessment. Never exposed as a Worker tool or paired user message. */
+  requestReassessment(input:{userId:string;goalId:string;sourceDispatchId:string;inputVersion:number;reviewKey:string;reason:string}):HealthDispatch {
+    const source=this.get(input.sourceDispatchId)
+    const goal=this.db.prepare('SELECT user_id,status,domain FROM goal WHERE id=?').get(input.goalId)
+    const version=this.db.prepare('SELECT version FROM input_version WHERE goal_id=?').get(input.goalId)?.version
+    if(!source||!source.result||source.due||source.repair||source.sourceReview||source.reassessment||
+      source.userId!==input.userId||source.goalId!==input.goalId||source.inputVersion!==input.inputVersion||
+      goal?.user_id!==input.userId||goal.status!=='active'||goal.domain==='finance'||Number(version)!==input.inputVersion)
+      throw new Error('health reassessment scope or input changed')
+    if(!/^[A-Za-z0-9_-]{1,80}$/.test(input.reviewKey)||input.reason.trim().length<2||input.reason.length>240)
+      throw new Error('health reassessment requires a bounded recovery reason')
+    const eventId='health_reassessment_'+createHash('sha256').update(JSON.stringify([source.eventId,input.inputVersion,input.reviewKey])).digest('hex').slice(0,40)
+    this.db.prepare(`INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at,reassessment_of,reassessment_reason)
+      VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`).run(eventId,source.userId,source.goalId,source.inputVersion,
+        JSON.stringify(source.readSnapshot??source.snapshot),new Date().toISOString(),source.eventId,input.reason.trim())
     return this.get(eventId)!
   }
   recentUnnotifiedTasks(now: string): {userId:string; goalId:string; due:DueTask}[] {
