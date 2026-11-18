@@ -1,5 +1,5 @@
 /** Stage C: facts are durable before this module creates narrowly bound automatic follow-up work. */
-import { reconcileSourceGoalReviews,sourceReviewCurrent,sourceReviewContext,finishSourceReview,SOURCE_REVIEW_FINISH } from './source-goal-review.ts'
+import { reconcileSourceGoalReviews,sourceReviewCurrent,sourceReviewContext,finishSourceReview,sourceReviewHistoryAlreadyPlanned,SOURCE_REVIEW_FINISH } from './source-goal-review.ts'
 import { recommendation, RECOMMENDATION_INPUT, hikingIntent, recommendationText, recommendationNotice } from './recommendation.ts'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -18,7 +18,8 @@ import { hasDailyMandate, nextDailyTime } from './task-schedule.ts'
 import { alongTool } from './tool.ts'
 import { requestTaskReview, taskReviewCurrent, taskReviewContext, finishTaskReview, TASK_REVIEW_FINISH, TaskReviewError } from './task-repair.ts'
 import { calculationResultText } from './calculation-result.ts'
-import type { AlongIdentity } from './service.ts'
+import { OKXHistoryReportSchema,okxHistoryResultText } from './okx-history.ts'
+import type { AlongIdentity,AlongCommitScope } from './service.ts'
 import { TaskActivation, type ActivationHost } from './task-activation.ts'
 import type { CalculationScope } from './calculation-store.ts'
 
@@ -110,6 +111,27 @@ export class HealthFollowup {
   constructor(private readonly host: HealthHost) {
     this.activation=new TaskActivation({store:host.store,available:host.available,source:host.source,allowed:userId=>this.allowed(userId),currentHealth:healthSummaryIsCurrent})
   }
+  /** Direct planning keeps priority even while its newly created goal still lives on a goal-less work row. */
+  private directPlanningActive(userId:string,goalId:string):boolean {
+    const store=this.host.store
+    return this.host.repo.tickets.list().some(ticket=>{
+      if(ticket.ended||ticket.mandate.actor.source!=='along'||ticket.mandate.actor.id!==userId||this.forTicket(ticket.id))return false
+      const link=store.getWorkLink(ticket.id)
+      if(!link?.eventId)return false
+      const message=store.getMessage(userId,`msg:${userId}:${link.eventId}`)
+      if(message?.audience!=='conversation'||message.role!=='user'||message.direction!=='inbound')return false
+      const boundGoal=link.goalId??store.changeSetsByWork(link.workId).find(change=>change.status==='applied'&&change.goalId!==undefined)?.goalId
+        ??store.conversationGoal(userId,store.conversationRoot(userId,link.eventId))
+      if(boundGoal!==goalId)return false
+      const last=latestAssignment(ticket)
+      return !last?.report||!['waiting','blocked','failed'].includes(last.report.state)||!!(last.deliveredAt&&last.deliveredAt>last.report.at)
+    })
+  }
+  sourceReviewPlanningRefusal(scope:AlongCommitScope):string|undefined {
+    const d=scope.triggerEventId?this.host.store.health.get(scope.triggerEventId):undefined
+    return d?.sourceReview?.capabilities.includes('trading_history')&&this.directPlanningActive(d.userId,d.goalId)
+      ?'source_review_wait_for_direct_planning':undefined
+  }
   private allowed(userId: string, settings = this.host.settings()): boolean {
     return (
       settings.eval.mode === 'auto' &&
@@ -125,7 +147,7 @@ export class HealthFollowup {
   private trigger(d: HealthDispatch): Trigger {
     if(d.sourceReview)return {id:`along:${d.userId}:${d.eventId}`,source:'along',actor:{source:'along',id:d.userId},human:false,at:d.createdAt,
       threads:[{source:'along',id:`goal/${d.goalId}/source-review/${d.eventId}`}],
-      text:'Real source capability became ready for an existing goal with legacy human tasks. Read along_source_review_context and all original goal/conversation/task pages. Review minimum useful next steps against actual coverage. Preserve old human meaning/status/clock and unrelated typed tasks; never relabel old tasks as calculations. Every open legacy task needs a persisted user trigger: preserve its existing clock as time, otherwise waiting with a real reason and resume condition. Create a separate registered Agent task only when genuinely useful, or record specific need_data. This is metadata-only background planning, never private data read, account performance evidence, user chat, notification or execution. Finish with along_source_review_finish before reporting ready.',
+      text:'A newly admitted real source capability became ready for an existing goal. Read along_source_review_context and all original goal/conversation/task pages. Review minimum useful next steps against actual coverage. Preserve old human meaning/status/clock and unrelated typed tasks; never relabel old tasks as calculations. Every open legacy task needs a persisted user trigger: preserve its existing clock as time, otherwise waiting with a real reason and resume condition. Create a separate registered Agent task only when genuinely useful, or record specific need_data. This is metadata-only background planning, never private data read, account performance evidence, user chat, notification or execution. Finish with along_source_review_finish before reporting ready.',
       meta:{event_type:'along.source_ready_review',goal_id:d.goalId,health_dispatch:d.eventId,provider:d.sourceReview.provider,generation:d.sourceReview.generation,revision:d.sourceReview.revision}}
     if(d.repair)return {id:`along:${d.userId}:${d.eventId}`,source:'along',actor:{source:'along',id:d.userId},human:false,at:d.createdAt,
       threads:[{source:'along',id:`goal/${d.goalId}/task-trigger-review/${d.eventId}`}],
@@ -210,7 +232,7 @@ export class HealthFollowup {
       name: d.sourceReview?'source-goal-review':d.repair?'task-trigger-review':d.due ? 'scheduled-task-review' : 'health-followup',
       scope: d.sourceReview?'Review this goal against current accepted source capability metadata. Preserve original human tasks and unrelated typed fields; create only useful separate typed Agent steps or honest need_data. Never read private data, change goals, post chat or execute tasks in this review.':d.repair?'Inspect and repair only this existing task trigger/plan through validated ChangeSets; preserve goal, other tasks, content, status and existing clock. Read original evidence and finish with persisted postconditions. No user chat or execution notification.':d.due ? 'Review the single bound due task under the current user mandate. Never change the goal.' :
         'Evaluate the bound existing goal against current aggregate health data; update user tasks through validated Along tools or keep. Never create, rewrite or archive the goal.',
-      reason: d.sourceReview?'Host-verified first-ready capability bootstrap for an existing goal':d.repair?'Persisted private task-trigger maintenance request with real same-goal user evidence':d.due ? 'Host-verified scheduled task for an allowed paired user' : 'Host-verified health change for an allowed paired user',
+      reason: d.sourceReview?'Host-verified new-capability bootstrap for an existing goal':d.repair?'Persisted private task-trigger maintenance request with real same-goal user evidence':d.due ? 'Host-verified scheduled task for an allowed paired user' : 'Host-verified health change for an allowed paired user',
       note: t.text
     })
     return true
@@ -258,6 +280,14 @@ export class HealthFollowup {
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
+      if(d.sourceReview?.capabilities.includes('trading_history')) {
+        if(!d.sourceReview.legacyTasks.length&&sourceReviewHistoryAlreadyPlanned(store,d)) {
+          store.health.retireSourceReview(d.eventId)
+          if(ticket&&!ticket.ended)this.host.engine().report(ticket.id,{state:'dropped',summary:'A direct planner already persisted this history subscription; the metadata bootstrap is no longer needed.'})
+          continue
+        }
+        if(this.directPlanningActive(d.userId,d.goalId))continue
+      }
       if ((d.due||d.repair||d.sourceReview) && !this.current(d)) {
         if (ticket && !ticket.ended && latestAssignment(ticket) && latestAssignment(ticket)!.state !== 'ended') this.host.engine().report(ticket.id, { state: 'dropped', summary: 'Superseded scheduled task.' })
         if(d.sourceReview)store.health.retireSourceReview(d.eventId);else if(d.repair)store.health.retireRepair(d.eventId);else store.health.retireDue(d.eventId)
@@ -498,6 +528,7 @@ export class HealthFollowup {
             types: z.array(z.enum(HEALTH_SUMMARY_TYPES)).max(7),
             reason: z.string().trim().min(1).max(800),
             text: z.string().trim().min(1).max(1200).optional(),
+            source_request_id:z.string().min(1).max(128).optional().describe('Typed Agent research only: this occurrence’s actual ready trading_history request_id. Publishes Host-rendered facts plus qualitative text without fabricating web citations; fresh scoped read is rechecked at finish.'),
             recommendation: RECOMMENDATION_INPUT.optional().describe('Due research task only: structured result grounded in this ticket’s actual web source ids and exact quotes. Read the research skill.'),
             calculation_receipt:z.string().min(1).max(96).optional().describe('Calculation task only: the receipt_id returned by the registered along_calculate tool in this exact occurrence.')
           })
@@ -518,6 +549,15 @@ export class HealthFollowup {
             if (!this.current(d))
               return { status: 'conflicted', reason: 'conflicted_input' }
             const definition=this.activation.definition(d)?.definition
+            if(definition?.actor==='agent'&&definition.capability==='research'&&args.outcome!=='ask'&&
+              (definition.conditions?.some(c=>(c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')||
+                store.sources.hasRead(this.sourceScope(ticketId),'trading_history'))&&!args.source_request_id)
+              throw new Error('history-dependent research requires its actual fresh source_request_id; public citations cannot replace the private read')
+            const historyRead=args.source_request_id?store.sources.getRead(this.sourceScope(ticketId),args.source_request_id):undefined
+            if(args.source_request_id&&(definition?.actor!=='agent'||definition.capability!=='research'||args.outcome==='ask'||
+              args.recommendation||args.calculation_receipt||!args.text||historyRead?.state!=='ready'||historyRead.capability!=='trading_history'||!historyRead.data))
+              throw new Error('history result requires this typed Agent research occurrence’s fresh authorized history read and qualitative text')
+            const historyReport=historyRead?.data?OKXHistoryReportSchema.parse(historyRead.data):undefined
             const calculation=args.calculation_receipt?store.calculations.get(this.calculationScope(ticketId),args.calculation_receipt):undefined
             if(args.calculation_receipt&&!calculation)throw new Error('calculation receipt is not bound to this task occurrence')
             const privateCalculation=!!calculation&&(store.calculationEvidence.has(calculation.id)||store.sources.hasRead(this.sourceScope(ticketId)))
@@ -525,7 +565,7 @@ export class HealthFollowup {
               store.calculationEvidence.assertCurrent(this.sourceScope(ticketId),calculation.id,calculation.calculation.input.quantities)
             if(definition?.actor==='agent'&&args.outcome!=='ask') {
               if(definition.capability==='calculation'&&!calculation)throw new Error('calculation task requires its actual persisted tool receipt')
-              if(definition.capability==='research'&&!args.recommendation)throw new Error('research task requires a structured sourced result')
+              if(definition.capability==='research'&&!args.recommendation&&!historyReport)throw new Error('research task requires a structured sourced result')
               if(definition.capability==='reminder'&&!args.text)throw new Error('reminder execution requires its user-facing notification text')
             }
             const link = store.getWorkLink(ticketId),
@@ -537,18 +577,18 @@ export class HealthFollowup {
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
-            if(definition?.actor==='agent'&&definition.capability==='research'&&args.outcome!=='ask'&&!structured?.sources.length)
+            if(definition?.actor==='agent'&&definition.capability==='research'&&args.outcome!=='ask'&&!structured?.sources.length&&!historyReport)
               throw new Error('research execution requires actual verified sources; report failed or blocked, not completion')
-            const resultText=calculation?calculationResultText(calculation.calculation,privateCalculation):args.text
+            const resultText=calculation?calculationResultText(calculation.calculation,privateCalculation):historyReport?okxHistoryResultText(historyReport,args.text!):args.text
             const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)
-            this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':structured?(definition?.actor==='agent'&&definition.capability==='research'?'agent_researched':'researched'):'notification_queued')
+            this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':historyReport?'agent_researched':structured?(definition?.actor==='agent'&&definition.capability==='research'?'agent_researched':'researched'):'notification_queued')
             if(definition?.actor==='agent'&&args.outcome==='ask') {
               const task=store.assertTaskOwner(d.userId,d.due!.taskId)
               store.triggers.put(task,{kind:'waiting',actor:'agent',capability:definition.capability,conditions:definition.conditions,
                 resume:'user_input',reason:args.text!.slice(0,240)},d.inputVersion)
             }
-            if(definition?.actor==='agent'&&(calculation||structured)&&args.outcome!=='ask'
+            if(definition?.actor==='agent'&&(calculation||structured||historyReport)&&args.outcome!=='ask'
               &&!(definition.kind==='event'&&definition.repeat==='on_change')&&!store.health.daily(d.due!.taskId)) {
               const task=store.assertTaskOwner(d.userId,d.due!.taskId)
               const revision=store.appendTaskRevision({taskId:task.id,userId:d.userId,status:'done',originEventId:d.eventId})
@@ -559,7 +599,7 @@ export class HealthFollowup {
             if(priorSources!==JSON.stringify(store.goalDataSources(d.userId,d.goalId))) {
               store.appendSync({userId:d.userId,goalId:d.goalId,kind:'goal_updated',payload:{}})
             }
-            if ((args.outcome !== 'keep'||structured||calculation||definition?.actor==='agent'&&definition.capability==='reminder') && resultText) {
+            if ((args.outcome !== 'keep'||structured||calculation||historyReport||definition?.actor==='agent'&&definition.capability==='reminder') && resultText) {
               const eventId = `followup_${d.eventId}`,
                 message = store.appendMessage({
                   userId: d.userId,

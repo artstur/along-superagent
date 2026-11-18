@@ -514,3 +514,14 @@ it.each(['once','on_change'] as const)('notifies a typed Agent %s output without
 
  }finally{await h.stop()}
 },30000)
+it('rechecks the live privacy scope after asynchronous DNS before a public fetch dispatch',async()=>{
+ const {store,scope,save}=fixture(),source=save('general','public methodology'),signal=new AbortController().signal
+ let privateRead=false,release:((url:URL)=>void)|undefined,pausing=true
+ const web:ResearchWeb={assertProvider:vi.fn(),search:vi.fn(async()=>({sources:[],truncated:false})),fetch:vi.fn(async()=>({url:source.url,statusCode:200,body:{kind:'text' as const,content:'public methodology'},truncated:false}))}
+ const live=()=>{if(privateRead)throw new Error('private history scope cannot call public providers');return scope}
+ const tools=researchTools(store.research,live,()=>web,async value=>pausing?new Promise<URL>(resolve=>{release=resolve}):publicHttpsUrl(value))
+ const tool=tools.find(t=>t.name==='along_web_fetch')!,args=tool.schema.parse({source_id:source.id,purpose:'general'})
+ const pending=tool.execute(args,signal);await vi.waitFor(()=>expect(release).toBeDefined())
+ privateRead=true;pausing=false;release!(publicHttpsUrl(source.url));expect(await pending).toMatchObject({status:'failed'});expect(web.fetch).not.toHaveBeenCalled()
+ privateRead=false;expect(await tool.execute(args,signal)).toMatchObject({status:'ok'});expect(web.fetch).toHaveBeenCalledTimes(1)
+})

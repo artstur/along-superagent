@@ -34,6 +34,10 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  15:db=>{
+    if(!db.prepare('PRAGMA table_info(source_goal_review)').all().some(row=>row.name==='capabilities'))
+      db.exec(`ALTER TABLE source_goal_review ADD COLUMN capabilities TEXT NOT NULL DEFAULT '["trading_account_summary"]'`)
+  },
   14:db=>{
     if(!db.prepare('PRAGMA table_info(task_trigger)').all().some(row=>row.name==='capability_missing'))
       db.exec('ALTER TABLE task_trigger ADD COLUMN capability_missing INTEGER NOT NULL DEFAULT 0')

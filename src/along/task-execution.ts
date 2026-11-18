@@ -57,6 +57,20 @@ export function taskExecution(db: DatabaseSync, userId: string, task: { id: stri
 
   // A completion is a recorded user fact that actually changed the state, not an Agent status edit or
   // a second differently keyed feedback while the task was already done.
+  for(const row of all(`SELECT x.id,d.event_id,m.id AS message_id,m.received_at FROM task_trigger_occurrence x
+    JOIN health_dispatch d ON d.event_id=x.dispatch_event_id AND d.user_id=x.user_id AND d.goal_id=x.goal_id
+    JOIN source_state_read r ON r.id=json_extract(d.result,'$.source_request_id') AND r.user_id=x.user_id AND r.goal_id=x.goal_id
+      AND r.task_id=x.task_id AND r.task_revision=x.task_revision AND r.input_version=d.input_version AND r.execution_key=x.id
+    JOIN sync_outbox o ON o.user_id=x.user_id AND o.goal_id=x.goal_id AND o.task_id=x.task_id AND o.kind='message'
+    JOIN message m ON m.id=o.message_id AND m.user_id=x.user_id AND m.event_id='followup_'||d.event_id
+    WHERE x.user_id=? AND x.goal_id=? AND x.task_id=? AND x.state='settled' AND x.outcome='agent_researched'
+      AND json_valid(d.result) AND json_extract(d.result,'$.outcome')<>'ask' AND r.capability='trading_history'
+      AND r.actual_result_revision IS NOT NULL AND r.actual_result_reference IS NOT NULL
+    ORDER BY o.seq`,userId,task.goalId,task.id)) {
+    if(development(String(row.event_id))||development('',String(row.message_id)))continue
+    add('occurrence:'+String(row.id),{kind:'research',outcome:'researched',executedAt:String(row.received_at),
+      summary:'已依据授权成交与账单报告保存分析；实际窗口、覆盖与限制见详情'})
+  }
   for (const row of all(`SELECT r.origin_event_id,e.payload,e.received_at,e.goal_id FROM task_revision r
     JOIN event_inbox e ON e.user_id=r.user_id AND e.event_id=r.origin_event_id
     WHERE r.user_id=? AND r.task_id=? AND r.goal_id=? AND r.status='done'

@@ -31,28 +31,28 @@ export class HealthStore {
     if(!this.sourceReviewSchema())return []
     return this.db.prepare(`SELECT s.user_id,s.goal_id,u.device_id FROM source_state_current s
       JOIN goal g ON g.id=s.goal_id AND g.user_id=s.user_id JOIN user u ON u.id=s.user_id
-      WHERE s.provider='okx' AND s.state='ready' AND g.status='active' AND EXISTS (
+      WHERE s.provider='okx' AND s.state='ready' AND g.status='active' AND (json_valid(s.capabilities) AND EXISTS(SELECT 1 FROM json_each(s.capabilities) WHERE value='trading_history') OR EXISTS (
         SELECT 1 FROM user_task t WHERE t.user_id=s.user_id AND t.goal_id=s.goal_id AND t.status='open'
-        AND NOT EXISTS (SELECT 1 FROM task_trigger x WHERE x.task_id=t.id))`).all()
+        AND NOT EXISTS (SELECT 1 FROM task_trigger x WHERE x.task_id=t.id)))`).all()
       .map(row=>({userId:String(row.user_id),deviceId:String(row.device_id),goalId:String(row.goal_id)}))
   }
   /** One completed review per capability generation, not one Worker for every price revision. */
   requestSourceReview(input:SourceGoalReviewRequest):{dispatch:HealthDispatch;reused:boolean} {
     if(!this.sourceReviewSchema())throw new Error('source goal review not installed')
     const prior=this.db.prepare(`SELECT d.event_id FROM health_dispatch d JOIN source_goal_review r ON r.event_id=d.event_id
-      WHERE d.user_id=? AND d.goal_id=? AND r.provider=? AND r.generation=? AND r.device_id=? AND r.retired=0
+      WHERE d.user_id=? AND d.goal_id=? AND r.provider=? AND r.generation=? AND r.device_id=? AND r.capabilities=? AND r.retired=0
       AND (d.result IS NOT NULL OR d.input_version=?) ORDER BY (d.result IS NOT NULL) DESC,d.created_at LIMIT 1`)
-      .get(input.userId,input.goalId,input.provider,input.generation,input.deviceId,input.inputVersion)
+      .get(input.userId,input.goalId,input.provider,input.generation,input.deviceId,JSON.stringify(input.capabilities),input.inputVersion)
     if(prior)return {dispatch:this.get(String(prior.event_id))!,reused:true}
     const eventId='source_review_'+createHash('sha256').update(JSON.stringify([input.userId,input.deviceId,input.goalId,input.provider,
-      input.generation,input.revision,input.reference,input.sourceEventId,input.inputVersion,input.legacyTasks.map(t=>[t.taskId,t.revision])])).digest('hex').slice(0,40)
+      input.generation,input.capabilities,input.revision,input.reference,input.sourceEventId,input.inputVersion,input.legacyTasks.map(t=>[t.taskId,t.revision])])).digest('hex').slice(0,40)
     const existing=this.get(eventId)
     if(existing)return {dispatch:existing,reused:true}
     this.db.prepare('INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at) VALUES(?,?,?,?,?,?)')
       .run(eventId,input.userId,input.goalId,input.inputVersion,'[]',new Date().toISOString())
-    this.db.prepare(`INSERT INTO source_goal_review(event_id,provider,source_event_id,generation,revision,reference,device_id,legacy_tasks,original_task_ids)
-      VALUES(?,?,?,?,?,?,?,?,?)`).run(eventId,input.provider,input.sourceEventId,input.generation,input.revision,input.reference,input.deviceId,
-        JSON.stringify(input.legacyTasks),JSON.stringify(input.originalTaskIds))
+    this.db.prepare(`INSERT INTO source_goal_review(event_id,provider,source_event_id,generation,revision,reference,device_id,legacy_tasks,original_task_ids,capabilities)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(eventId,input.provider,input.sourceEventId,input.generation,input.revision,input.reference,input.deviceId,
+        JSON.stringify(input.legacyTasks),JSON.stringify(input.originalTaskIds),JSON.stringify(input.capabilities))
     return {dispatch:this.get(eventId)!,reused:false}
   }
   readSourceReviewContext(eventId:string):void {this.read(eventId,[]);this.db.prepare('UPDATE source_goal_review SET context_read_at=? WHERE event_id=? AND retired=0').run(new Date().toISOString(),eventId)}
@@ -107,7 +107,7 @@ export class HealthStore {
     return r
       ? {
           ...(source?{sourceReview:{provider:'okx' as const,sourceEventId:String(source.source_event_id),generation:Number(source.generation),revision:Number(source.revision),reference:String(source.reference),deviceId:String(source.device_id),
-            legacyTasks:JSON.parse(String(source.legacy_tasks)),originalTaskIds:JSON.parse(String(source.original_task_ids)),retired:source.retired===1,...(source.context_read_at==null?{}:{contextReadAt:String(source.context_read_at)})}}:{}),
+            capabilities:JSON.parse(String(source.capabilities)),legacyTasks:JSON.parse(String(source.legacy_tasks)),originalTaskIds:JSON.parse(String(source.original_task_ids)),retired:source.retired===1,...(source.context_read_at==null?{}:{contextReadAt:String(source.context_read_at)})}}:{}),
           ...(repair?{repair:{taskId:String(repair.task_id),revision:Number(repair.task_revision),evidenceEventId:String(repair.evidence_event_id),deviceId:String(repair.device_id),
             ...(repair.original_scheduled_at==null?{}:{originalScheduledAt:String(repair.original_scheduled_at)}),originalContent:String(repair.original_content),reason:String(repair.reason),retired:repair.retired===1,...(repair.context_read_at==null?{}:{contextReadAt:String(repair.context_read_at)})}}:{}),
           ...(due ? { due: { taskId: String(due.task_id), revision: Number(due.revision), dueAt: String(due.due_at) } } : {}),

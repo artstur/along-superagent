@@ -126,7 +126,12 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
       const op=raw as {op?:string;trigger?:{actor?:string;capability?:string}}
       return op.op==='task.create'&&op.trigger?.actor==='agent'&&op.trigger.capability==='research'
     })))throw new Error('Research execution is already queued by this planning work. Read back its durable task, give the planning reply and report ready; the Host dispatches a separate occurrence with its own sources/results. Do not execute or impersonate that occurrence here.')
-    if(due)host.healthFollowup!.taskContext(ticketId)
+    if(due) {
+      const context=host.healthFollowup!.taskContext(ticketId)
+      if(context.definition?.definition.actor==='agent'&&(context.definition.definition.conditions?.some(c=>(c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')||
+        store.sources.hasRead(host.healthFollowup!.sourceScope(ticketId),'trading_history')))
+        throw new Error('private history research cannot call public web providers; use a separate public-only task without private data')
+    }
     const taskId=due?.taskId??store.getWorkLink(ticketId)?.taskId
     const content=taskId?(due?store.taskRevisionContent(bound.userId,taskId,due.revision):store.getTask(bound.userId,taskId)?.content):undefined
     const original=bound.triggerEventId?store.getMessage(bound.userId,`msg:${bound.userId}:${bound.triggerEventId}`)?.text:undefined
@@ -135,6 +140,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
   const automatic=host.healthFollowup?.forTicket(ticketId)?host.healthFollowup.tools(ticketId):[]
   const dueWork=host.healthFollowup?.forTicket(ticketId)?.due
   const execution=dueWork&&store.triggers.get(scope().userId,dueWork.taskId)?.definition
+  const privateHistory=execution?.conditions?.some(c=>(c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')
   const taskFinish=automatic.find(tool=>tool.name==='along_health_followup')
   const tools:Tool[] = [
     ...(dueWork?[
@@ -193,7 +199,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
           guidance:'This is the planning ticket, not the dispatched occurrence. The typed calculation is already durable. Read back its trigger, send the direct planning reply, and report ready; the Host will dispatch its execution separately. Do not edit status/content or wait here for its result.'}
         return {...calculate(args.calculation),persisted:false,scope:'conversation_question'}
       }})]:[]),
-    ...(taskFinish&&dueWork?[{...taskFinish,name:'along_task_finish',description:'Finish this host-dispatched task occurrence. For calculation provide the actual along_calculate receipt; for research provide the structured sourced recommendation. This persists a task result and queues its existing notification channel, never proves phone delivery or human action. Read along_task_context first; no personal chat for background work.'}]:[]),
+    ...(taskFinish&&dueWork?[{...taskFinish,name:'along_task_finish',description:'Finish this host-dispatched task occurrence. For calculation provide the actual along_calculate receipt; for public research provide the structured sourced recommendation; for private OKX history research provide this occurrence’s fresh trading_history source_request_id and qualitative text instead. This persists a task result and queues its existing notification channel, never proves phone delivery or human action. Read along_task_context first; no personal chat for background work.'}]:[]),
     alongTool({name:'along_data_sources_catalog',
       description:'Read the trusted data-source capability catalog. A recommendation is not authorization. Use only these provider ids; official setup is not OAuth and never means connected.',
       schema:z.object({}).strict(),execute:async()=>{scope();return {sources:DATA_SOURCE_CATALOG}}}),
@@ -213,7 +219,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
         const changed=store.replaceGoalDataSources(bound.userId,goalId,args.sources)
         return {status:'recommended',reused:!changed,data_sources:store.goalDataSources(bound.userId,goalId)}
       })}),
-    ...(!automatic.length||dueWork&&(!execution||execution.capability==='research')
+    ...(!privateHistory&&(!automatic.length||dueWork&&(!execution||execution.capability==='research'))
       ?researchTools(store.research,researchScope,host.web??(()=>undefined)):[]),
     alongTool({name:'along_goal_overview',description:"Read one page of this user's goals and current tasks as coordination context. This does not grant writes outside the bound goal. Follow next_cursor for more goals.",
       schema:z.object({cursor:z.string().optional()}).strict(),execute:async args=>{

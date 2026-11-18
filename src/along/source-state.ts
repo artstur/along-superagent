@@ -2,18 +2,22 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { z } from 'zod'
+import { OKXHistoryReportSchema } from './okx-history.ts'
 
 const Id = z.string().min(1).max(128)
 const Version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const Timestamp = z.string().datetime({ offset: true }).refine(value => Number.isFinite(Date.parse(value)))
 const Reference = z.string().min(1).max(256).regex(/^[^\r\n\u0000]+$/)
-const Provider = z.literal('okx'), Capability = z.literal('trading_account_summary')
+const Provider = z.literal('okx')
+export const SOURCE_CAPABILITY = z.enum(['trading_account_summary','trading_history'])
+export type SourceCapability = z.infer<typeof SOURCE_CAPABILITY>
+const Capability = SOURCE_CAPABILITY
 const SourceStatus = z.enum(['ready', 'disconnected', 'revoked', 'unavailable'])
 export const SourceEventSchema = z.object({
   event_id: Id, goal_id: Id, provider: Provider, generation: Version, revision: Version, state: SourceStatus,
-  capabilities: z.array(Capability).max(1), occurred_at: Timestamp, reference: Reference,
+  capabilities: z.array(Capability).max(2), occurred_at: Timestamp, reference: Reference,
 }).strict().superRefine((event, ctx) => {
-  if (event.state === 'ready' ? event.capabilities.length !== 1 : event.capabilities.length !== 0) {
+  if (event.state === 'ready' ? event.capabilities.length < 1 || new Set(event.capabilities).size !== event.capabilities.length : event.capabilities.length !== 0) {
     ctx.addIssue({ code: 'custom', path: ['capabilities'], message: 'Ready has the verified read capability; other states have none.' })
   }
 })
@@ -92,7 +96,7 @@ export interface SourceState extends Omit<SourceEvent, 'event_id'> { received_at
 export interface SourceReadView {
   request_id: string
   provider: 'okx'
-  capability: 'trading_account_summary'
+  capability: SourceCapability
   state: 'pending' | 'ready' | 'denied' | 'stale' | 'unavailable' | 'invalidated'
   generation: number
   revision: number
@@ -104,7 +108,7 @@ export interface SourceReadView {
   data?: Data
 }
 export interface PendingSourceRead {
-  request_id: string; goal_id: string; provider: 'okx'; capability: 'trading_account_summary'
+  request_id: string; goal_id: string; provider: 'okx'; capability: SourceCapability
   generation: number; revision: number; max_age_seconds: number
 }
 export interface SourceEventReceipt {
@@ -130,15 +134,15 @@ export class SourceStateError extends Error { constructor(readonly code: string)
 /** Private source facts/read queue on the caller's shared SQLite transaction; it performs no I/O outside SQLite. */
 export class SourceStateStore {
   /** A private request taints this occurrence even if the model later omits its source labels. */
-  hasRead(scope:SourceReadScope):boolean {
+  hasRead(scope:SourceReadScope,capability?:SourceCapability):boolean {
     return !!this.db.prepare(`SELECT 1 FROM source_state_read WHERE user_id=? AND goal_id=? AND task_id=?
-      AND task_revision=? AND input_version=? AND ticket_id=? AND execution_key=? LIMIT 1`)
-      .get(scope.userId,scope.goalId,scope.taskId,scope.taskRevision,scope.inputVersion,scope.ticketId,scope.executionKey)
+      AND task_revision=? AND input_version=? AND ticket_id=? AND execution_key=? AND (? IS NULL OR capability=?) LIMIT 1`)
+      .get(scope.userId,scope.goalId,scope.taskId,scope.taskRevision,scope.inputVersion,scope.ticketId,scope.executionKey,capability??null,capability??null)
   }
   /** Host retry gate: metadata only, no normalization/write, private payload or model-context read. */
   awaitingData(scope:SourceReadScope):boolean {
     if(!this.scopeValid(scope))return false
-    const row=this.db.prepare(`SELECT state,generation,expected_revision,actual_result_revision,actual_result_reference,
+    const row=this.db.prepare(`SELECT state,capability,generation,expected_revision,actual_result_revision,actual_result_reference,
       observed_at,max_age_seconds FROM source_state_read WHERE user_id=? AND goal_id=? AND task_id=?
       AND task_revision=? AND input_version=? AND ticket_id=? AND execution_key=? ORDER BY created_at DESC,rowid DESC LIMIT 1`)
       .get(scope.userId,scope.goalId,scope.taskId,scope.taskRevision,scope.inputVersion,scope.ticketId,scope.executionKey)
@@ -147,7 +151,7 @@ export class SourceStateStore {
     if(!source||source.generation!==Number(row.generation)||['revoked','disconnected'].includes(source.state)
       ||source.revision!==Math.max(Number(row.expected_revision),Number(row.actual_result_revision??0)))return false
     const observed=Date.parse(String(row.observed_at)),now=this.clock().ms
-    return !(row.state==='ready'&&source.state==='ready'&&source.capabilities.includes('trading_account_summary')
+    return !(row.state==='ready'&&source.state==='ready'&&source.capabilities.includes(String(row.capability) as SourceCapability)
       &&Number(row.actual_result_revision)===source.revision&&row.actual_result_reference===source.reference
       &&Number.isFinite(observed)&&observed<=now+30000&&now-observed<Number(row.max_age_seconds)*1000)
   }
@@ -290,7 +294,7 @@ export class SourceStateStore {
     const source = this.queryCurrent(String(row.user_id), String(row.goal_id), 'okx')
     if (!source || source.generation !== Number(row.generation)) return this.setState(row, 'invalidated', 'source_generation_changed', now)
     if (source.state === 'disconnected' || source.state === 'revoked') return this.setState(row, 'invalidated', 'source_not_authorized', now)
-    if (source.state !== 'ready' || !source.capabilities.includes('trading_account_summary')) return this.setState(row, 'unavailable', 'source_unavailable', now)
+    if (source.state !== 'ready' || !source.capabilities.includes(String(row.capability) as SourceCapability)) return this.setState(row, 'unavailable', 'source_unavailable', now)
     if (row.state === 'ready') {
       if (Number(row.actual_result_revision) !== source.revision || row.actual_result_reference !== source.reference)
         return this.setState(row, 'stale', 'source_revision_changed', now)
@@ -301,7 +305,7 @@ export class SourceStateStore {
     return row
   }
   private view(row: Row, now: { ms: number; iso: string }): SourceReadView {
-    const result: SourceReadView = { request_id: String(row.id), provider: 'okx', capability: 'trading_account_summary',
+    const result: SourceReadView = { request_id: String(row.id), provider: 'okx', capability: String(row.capability) as SourceCapability,
       state: stateOf(row), generation: Number(row.generation), revision: Number(row.actual_result_revision ?? row.expected_revision),
       max_age_seconds: Number(row.max_age_seconds), ...(row.reason === null ? {} : { reason: String(row.reason) }) }
     if (['pending', 'stale', 'unavailable'].includes(result.state) && Date.parse(String(row.next_attempt_at)) > now.ms) result.retry_at = String(row.next_attempt_at)
@@ -360,11 +364,11 @@ export class SourceStateStore {
         const row = this.normalize(candidate, now)
         if (!['pending', 'stale', 'unavailable'].includes(String(row.state)) || Date.parse(String(row.next_attempt_at)) > now.ms) continue
         const source = this.queryCurrent(userId, String(row.goal_id), 'okx')
-        if (source?.state !== 'ready' || !source.capabilities.includes('trading_account_summary') || source.generation !== Number(row.generation)) continue
+        if (source?.state !== 'ready' || !source.capabilities.includes(String(row.capability) as SourceCapability) || source.generation !== Number(row.generation)) continue
         const attempts = Math.min(Number(row.attempts) + 1, 31)
         const retry = new Date(now.ms + Math.min(60000, 1000 * 2 ** Math.min(attempts, 6))).toISOString()
         this.db.prepare('UPDATE source_state_read SET attempts=?,next_attempt_at=? WHERE id=? AND user_id=?').run(attempts, retry, row.id!, userId)
-        result.push({ request_id: String(row.id), goal_id: String(row.goal_id), provider: 'okx', capability: 'trading_account_summary',
+        result.push({ request_id: String(row.id), goal_id: String(row.goal_id), provider: 'okx', capability: String(row.capability) as SourceCapability,
           generation: source.generation, revision: source.revision, max_age_seconds: Number(row.max_age_seconds) })
         if (result.length >= limit) break
       }
@@ -378,6 +382,10 @@ export class SourceStateStore {
       this.identity(identity)
       let row = this.row(identity.userId, input.request_id)
       if (!row) return { request_id: input.request_id, status: 'rejected', reason: 'source_read_not_found' }
+      if(input.state==='ready'&&row.capability==='trading_history') {
+        const report=OKXHistoryReportSchema.safeParse(input.data)
+        if(!report.success||Date.parse(report.data.windowEnd)!==Date.parse(input.observed_at))throw new SourceStateError('source_read_invalid_history')
+      }
       const now = this.clock()
       const resultHash = hash(input.state === 'ready' ? input : { ...input, observed_at: undefined })
       if (input.generation !== Number(row.generation) || input.revision < Number(row.expected_revision)) {
@@ -391,7 +399,7 @@ export class SourceStateStore {
         if (row.state === 'invalidated' || row.state === 'denied') return { request_id: input.request_id, status: 'rejected', state: stateOf(row), reason: 'source_read_terminal' }
         const source = this.queryCurrent(identity.userId, String(row.goal_id), 'okx')
         if (!source || source.generation !== input.generation || input.state === 'ready' &&
-          (source.state !== 'ready' || !source.capabilities.includes('trading_account_summary'))) return { request_id: input.request_id, status: 'rejected', state: stateOf(row), reason: 'source_not_ready' }
+          (source.state !== 'ready' || !source.capabilities.includes(String(row.capability) as SourceCapability))) return { request_id: input.request_id, status: 'rejected', state: stateOf(row), reason: 'source_not_ready' }
         if (input.revision !== source.revision || input.reference !== source.reference) return { request_id: input.request_id, status: 'rejected', state: stateOf(row), reason: 'source_read_version_mismatch' }
         if (row.last_result_hash === resultHash) return { request_id: input.request_id, status: 'reused', state: stateOf(row) }
         if (row.state === 'ready') return { request_id: input.request_id, status: 'rejected', state: 'ready', reason: 'source_read_terminal' }
