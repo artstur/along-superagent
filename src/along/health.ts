@@ -167,8 +167,8 @@ export class HealthFollowup {
       human: false,
       at: d.createdAt,
       threads: [{ source: 'along', id: `goal/${d.goalId}/health/${d.eventId}` }],
-      text: 'Health summaries changed. Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.',
-      meta: { event_type: 'along.health_summary_updated', goal_id: d.goalId, health_dispatch: d.eventId }
+      text: (d.reassessment ? 'Host requested a review of an earlier completed assessment against existing accepted health facts; this is not a new observation or user instruction. ' : 'Health summaries changed. ') + 'Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.',
+      meta: { event_type: d.reassessment?'along.health_reassessment':'along.health_summary_updated', goal_id: d.goalId, health_dispatch: d.eventId, ...(d.reassessment?{source_health_dispatch:d.reassessment.sourceDispatchId,review_reason:d.reassessment.reason}:{}) }
     }
   }
   private bound(t: Trigger): HealthDispatch | undefined {
@@ -194,7 +194,7 @@ export class HealthFollowup {
     return {
       ...base,
       gate: (t, thread, tickets) => {
-        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (t.meta.event_type !== 'along.health_summary_updated' || t.meta.health_dispatch === undefined))
+        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (!['along.health_summary_updated','along.health_reassessment'].includes(String(t.meta.event_type)) || t.meta.health_dispatch === undefined))
           return base.gate(t, thread, tickets)
         const d = this.bound(t),
           g = d && this.host.store.getGoal(d.userId, d.goalId)

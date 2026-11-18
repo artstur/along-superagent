@@ -717,3 +717,48 @@ it('reads scoped timing aggregates, reassesses equal-duration timing changes and
   expect(store.counts(USER).messages).toBe(0)
   expect(store.health.state(goal.id)?.types).toEqual(['sleep'])
 })
+
+it('host reassessment preserves the original keep and source facts, binds versions and resumes through the real Worker path once',async()=>{
+ const {h,store,goal,task,event,dispatch}=await setup()
+ event('original_accepted_health')
+ const first=await dispatch();await h.runTool(first.worker,'along_health_read',{})
+ await h.runTool(first.worker,'along_health_followup',{outcome:'keep',types:['steps'],reason:'Original completed assessment retained for audit'})
+ await h.runTool(first.worker,'orchestrator_report',{state:'ready',summary:'original assessment complete'})
+ const trigger=h.runtime.store.triggers.get(first.ticket.origin.triggerId)!
+ const source=store.health.get(String(trigger.meta.health_dispatch))!
+ const facts=store.latestHealthSummaries(USER),beforeTask=store.getTask(USER,task.id)
+ const request={userId:USER,goalId:goal.id,sourceDispatchId:source.eventId,inputVersion:store.inputVersion(goal.id),
+   reviewKey:'authorized_evidence_review_v1',reason:'Recheck prior reminder authority interpretation using the same accepted facts'}
+ expect(()=>store.health.requestReassessment({...request,userId:'foreign'})).toThrow('scope')
+ expect(()=>store.health.requestReassessment({...request,inputVersion:request.inputVersion+1})).toThrow('scope')
+ expect(()=>store.health.requestReassessment({...request,reason:''})).toThrow('reason')
+ const review=store.health.requestReassessment(request)
+ expect(review.eventId).not.toBe(source.eventId)
+ expect(review.reassessment).toEqual({sourceDispatchId:source.eventId,reason:request.reason})
+ expect(review.snapshot).toEqual(source.readSnapshot)
+ expect(review.result).toBeUndefined()
+ expect(store.health.requestReassessment(request).eventId).toBe(review.eventId)
+ expect(store.health.get(source.eventId)).toEqual(source)
+ const second=await dispatch()
+ const secondTrigger=h.runtime.store.triggers.get(second.ticket.origin.triggerId)!
+ expect(secondTrigger.meta).toMatchObject({event_type:'along.health_reassessment',source_health_dispatch:source.eventId})
+ expect(secondTrigger.text).toContain('not a new observation')
+ await h.runTool(second.worker,'along_health_read',{})
+ const versions={base_revision:task.currentRevision,goal_revision:store.getGoal(USER,goal.id)!.currentRevision,input_version:request.inputVersion}
+ const rejected=await h.runTool(second.worker,'along_task_update',{...versions,task_id:task.id,idempotency_key:'missing_original_authority',reason:'Attempt without original reminder evidence',fields:{scheduled_at:'2026-11-17T01:00:00+08:00',trigger:{kind:'time',actor:'user',capability:'reminder'},reminder_plan:{state:'scheduled',source:'agent',explanation:'No accepted reminder mandate was supplied'}}}) as {status:string;reason:string;guidance?:string}
+ expect(rejected).toMatchObject({status:'invalid',reason:'reminder_requires_user_chat'})
+ expect(rejected.guidance).toContain('original accepted same-goal')
+ expect(rejected.guidance).toContain('evidence_event_id')
+ expect(rejected.guidance).toContain('Do not invent')
+ await h.runTool(second.worker,'along_health_followup',{outcome:'keep',types:['steps'],reason:'No change is justified by these facts; current reminder may legitimately remain'})
+ await h.runTool(second.worker,'orchestrator_report',{state:'ready',summary:'reassessment complete without a forced task change'})
+ await h.runtime.pump();await h.runtime.idle()
+ expect(store.health.get(source.eventId)).toEqual(source)
+ expect(store.health.get(review.eventId)?.result?.outcome).toBe('keep')
+ expect(store.health.requestReassessment(request).eventId).toBe(review.eventId)
+ expect(()=>store.health.requestReassessment({...request,sourceDispatchId:review.eventId})).toThrow('scope')
+ expect(store.latestHealthSummaries(USER)).toEqual(facts)
+ expect(store.getTask(USER,task.id)).toEqual(beforeTask)
+ expect(store.counts(USER).messages).toBe(0)
+ expect(h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='health')).toHaveLength(2)
+},25000)

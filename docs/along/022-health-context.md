@@ -12,3 +12,10 @@
 PR边界：客户端PR负责Native投递context、Swift真实源码测试及产物/版本；Agent PR负责schema/存储/工具/变化判定/语义SP及回归。Agent先兼容上线，client同步后上机。UI/OKX无改动。
 
 The bound health read also exposes the same-goal, same-input previous evaluated facts, with evaluation time and per-summary currentness, so a new Worker can compare the changed timing without reconstructing an unbounded chat. No previous judgement is treated as current fact.
+
+## 正式前台验收发现的授权解释缺口
+
+Build71自然前台已把sleep/workout context送达并触发真实复评；Worker不再用总时长证明就寝目标，却把“当前为后台事件”当成重新调整Agent准备时刻必须再次对话的理由。实际提醒source=agent、原计划明确为Agent选择的提前准备时间。修复只补健康提示中的证据引用路径：读取同目标原始已接受安排提醒指令和后续更正，必要时引用其event_id、原文及action；后台事件本身不是新授权，也不是禁止沿用原有授权。保留真正用户固定时刻、撤销、一次性限制及其他任务。不强迫本次或每次健康变化重排，缺数据或无收益可合理keep。
+
+
+Host内部恢复接口requestReassessment只接受已完成的纯健康dispatch、同用户/目标/当前inputVersion，以及有限reviewKey和明确原因。它沿原readSnapshot创建有审计引用的新dispatch，保留旧keep/原健康行；相同key幂等，不允许跨目标、finance、未完成、到期/来源/修复任务或递归复查来源。schema17仅在health_dispatch增加nullable reassessment_of/reassessment_reason。Worker收到的内部事件明示“复查旧事实，不是新观测或用户指令”；既有Runtime序列化、权限、版本、工具与ChangeSet保持。没有新增手机/桥接API或Worker调用入口。验收覆盖真实Runtime复查、重复请求不派第二次、旧keep和所有事实/任务/chat不变，以及16→17所有原字段保全。正式修复以明确请求原因引用17:09原评估，不改旧决定、不改样本、不用无关任务制造触发。

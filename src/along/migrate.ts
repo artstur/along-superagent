@@ -34,6 +34,11 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  17: db => {
+    const columns=db.prepare('PRAGMA table_info(health_dispatch)').all()
+    for(const name of ['reassessment_of','reassessment_reason'])
+      if(!columns.some(row=>row.name===name))db.exec(`ALTER TABLE health_dispatch ADD COLUMN ${name} TEXT`)
+  },
   16: db => {
     if (!db.prepare('PRAGMA table_info(health_summary)').all().some(row => row.name === 'context'))
       db.exec('ALTER TABLE health_summary ADD COLUMN context TEXT')
