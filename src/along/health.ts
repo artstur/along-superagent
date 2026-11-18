@@ -320,6 +320,8 @@ export class HealthFollowup {
         }
         continue
       } // Never reopen an ended/stopped ticket; a subsequent changed input gets a new dispatch.
+      // An obsolete audited row must not reserve this goal ahead of a current recovery.
+      if(!this.current(d))continue
       if (store.getGoal(d.userId, d.goalId)?.status !== 'active') continue
       // Persisted recoveries queue behind actual planning/work and behind a sibling just admitted this pump.
       if(submittedGoals.has(d.goalId)||this.directPlanningActive(d.userId,d.goalId))continue
