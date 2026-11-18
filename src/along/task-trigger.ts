@@ -7,8 +7,8 @@ const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/)
 export const TASK_CAPABILITIES = ['reminder', 'research', 'calculation'] as const
 export type TaskCapability = typeof TASK_CAPABILITIES[number]
 export const TASK_CONDITION_SCHEMA = z.discriminatedUnion('kind', [
-  z.object({ kind:z.literal('source_ready'), provider:z.literal('okx'), capability:z.literal('trading_account_summary') }).strict(),
-  z.object({ kind:z.literal('source_updated'), provider:z.literal('okx'), capability:z.literal('trading_account_summary') }).strict(),
+  z.object({ kind:z.literal('source_ready'), provider:z.literal('okx'), capability:z.enum(['trading_account_summary','trading_history']) }).strict(),
+  z.object({ kind:z.literal('source_updated'), provider:z.literal('okx'), capability:z.enum(['trading_account_summary','trading_history']) }).strict(),
   z.object({ kind:z.literal('task_completed'), task_id:id }).strict(),
   z.object({ kind:z.literal('health_available'), type:z.enum(['steps','workout','active_energy','weight','resting_heart_rate','wrist_temperature','sleep']) }).strict(),
 ])

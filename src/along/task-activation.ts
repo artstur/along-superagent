@@ -65,7 +65,11 @@ export class TaskActivation {
       if(d.actor==='user'&&task.reminderPlan?.state==='off'&&task.reminderPlan.reason==='opt_out') {
         store.triggers.setState(row,'waiting','等待你的完成反馈');continue
       }
-      if(this.host.available&&!this.host.available(d.capability)) {
+      // Private history research uses the installed report interpreter, not the optional public web connector.
+      // Its actual source condition, read freshness and finish proof remain independently checked.
+      const privateHistory=d.actor==='agent'&&d.capability==='research'&&d.conditions?.some(c=>
+        (c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')
+      if(this.host.available&&!this.host.available(d.capability)&&!privateHistory) {
         store.triggers.observeMissingCapability(row)
         store.triggers.setState(row,'waiting','等待执行能力恢复');continue
       }

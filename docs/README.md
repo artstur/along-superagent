@@ -10,6 +10,7 @@
 | 核对目标聊天与后台编排的可见性边界 | [聊天边界、兼容迁移与验收](along/011-conversation-boundary.md) |
 | 理解进程、Router / Worker、健康跟进与长期记忆 | [当前运行图](along/009-current-runtime.md) |
 | 核对已实现范围和待验项 | [实施与验收](along/003-implementation.md) 第 1 节 |
+| 核对 OKX 成交账单报告与策略复盘边界 | [私有历史报告](along/021-okx-history.md) |
 | 查找 DSH 核心模块与测试 | [代码架构索引](007-architecture.md)；Along 入口为 [`src/along/`](../src/along/) 和 [`src/app/runtime.ts`](../src/app/runtime.ts) |
 | 继续本轮代码质量改进 | [代码质量与文档整理记录](along/010-code-quality.md)；双仓库 Goal Prompt 归属配套 Along 的 `docs/code-quality-goal.md` |
 

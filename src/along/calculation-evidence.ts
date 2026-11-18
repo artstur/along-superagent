@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import { CalculationInputSchema, type CalculationInput } from './calculation.ts'
-import type { SourceReadScope, SourceStateStore } from './source-state.ts'
+import type { SourceReadScope, SourceStateStore, SourceCapability } from './source-state.ts'
 
 const QuantityName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/)
 export const QUANTITY_SOURCES = z.array(z.object({ quantity: QuantityName,
@@ -25,7 +25,7 @@ export const QUANTITY_PARAMETERS = z.array(z.discriminatedUnion('kind', [
 export type QuantityParameter = z.infer<typeof QUANTITY_PARAMETERS>[number]
 export interface VerifiedCalculationEvidence {
   version: 1
-  read: { request_id: string; provider: 'okx'; capability: 'trading_account_summary'; generation: number; revision: number; reference: string; observed_at: string }
+  read: { request_id: string; provider: 'okx'; capability: SourceCapability; generation: number; revision: number; reference: string; observed_at: string }
   sources: { quantity: string; path: string[]; value: string; unit: string }[]
   parameters: (QuantityParameter & { value: string; unit: string })[]
 }
