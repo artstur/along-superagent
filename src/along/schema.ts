@@ -6,7 +6,7 @@
  */
 
 /** Current schema version of `along.sqlite`; raised with every future migration step. */
-export const ALONG_SCHEMA_VERSION = 15
+export const ALONG_SCHEMA_VERSION = 16
 /** The oldest schema version this build can open and migrate directly; older databases need a backup restore. */
 export const ALONG_OLDEST_SCHEMA = 1
 
@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS health_summary (
   timezone           TEXT,
   unit               TEXT, statistic TEXT,
   value              TEXT,
+  context            TEXT,
   availability       TEXT NOT NULL,
   summarizer_version TEXT NOT NULL,
   adapter            TEXT NOT NULL,

@@ -386,6 +386,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/reminder-plan.ts` | Reminder decisions, original clock and task-scoped cadence evidence |
 | `src/along/task-schedule.ts` | Local calendar recurrence and evidence requirements for a daily mandate |
 | `src/along/health-schema.ts` | Schema-4 health evaluation baselines and durable dispatch outbox |
+| `src/along/health-context.ts` | Strict allowlisted device aggregate context and source interpretation boundaries |
 | `src/along/health-store.ts` | Host-bound health snapshots, relevant types and evaluated baselines |
 | `src/along/health.ts` | Automatic per-goal health follow-up admission, dispatch, coalescing and result tools |
 | `src/along/maintenance-schema.ts` | Schema-3 persistent night schedule and outstanding maintenance batches |
@@ -533,6 +534,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-memory-runtime.spec.ts` | Runtime-owned memory, scoped tools, current/historical context, fallback, restart and shutdown acceptance |
 | `tests/along-reminder-planning.spec.ts` | Worker reminder planning, sync snapshots, withdrawal and local weekly/daily renewal |
 | `tests/along-task-schedule.spec.ts` | Calendar gaps, overlaps, catch-up and one-off intent |
+| `tests/along-health-context.spec.ts` | Strict aggregate context, scalar compatibility, observation semantics and schema15 preservation |
 | `tests/along-health-followup.spec.ts` | Health-only Runtime dispatch, task updates, baselines, stale chat protection, scope and malformed inputs |
 | `tests/along-maintenance.spec.ts` | Scheduled memory work through actual Runtime/Engine/tools, replay, frozen paging, backoff, restart, pause, stopping, isolation and completion |
 | `tests/along-phaseB.spec.ts` | Chat response, explicit goal creation, corrections, stale-input refusal and sync through registered worker tools |

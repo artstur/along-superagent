@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { isoTime, type Trigger } from '../core/index.ts'
 import { ALONG_SOURCE } from './worklink.ts'
+import { HealthContextSchema } from './health-context.ts'
 
 export const EVENT_SCHEMA_VERSION = '1'
 /** `along.goal.updated`/`along.goal.archived` are refused before parsing (client_goal_mutation, §2.2.1a0) —
@@ -52,9 +53,34 @@ export const HealthSummaryPayloadSchema = z.object({
   value: z.unknown().optional(),
   availability: z.enum(['ok', 'no_permission', 'unavailable', 'not_synced']),
   summarizer_version: z.string().min(1).max(64),
+  context: HealthContextSchema.optional(),
 }).strict().superRefine((s,ctx)=>{
   if (s.value !== undefined && s.value !== null && (typeof s.value !== 'number' || !Number.isFinite(s.value))) {
     ctx.addIssue({code:'custom',message:'Health summaries contain finite scalar aggregates only',path:['value']})
+  }
+  if (s.context) {
+    const expectedType = s.context.windowDays === 7 ? 'sleep' : 'workout'
+    if (s.type !== expectedType || s.summarizer_version !== 'along-health-v1') {
+      ctx.addIssue({ code: 'custom', message: 'Aggregate context requires its registered type and producer', path: ['context'] })
+    }
+    const observedAt = Date.parse(s.metric_version)
+    const times = s.context.windowDays === 7
+      ? [s.context.averageThroughAt, s.context.latestSleepStartAt, s.context.latestWakeAt]
+      : [s.context.weekStartAt, s.context.latestWorkoutAt, ...s.context.patterns.map(item => item.lastObservedAt)]
+    if (times.some(value => value && Date.parse(value) > observedAt)) {
+      ctx.addIssue({ code: 'custom', message: 'Observed aggregate times cannot be after collection', path: ['context'] })
+    }
+    if (s.context.windowDays === 7) {
+      const { latestSleepStartAt: start, latestWakeAt: end } = s.context
+      if (start && end && Date.parse(start) > Date.parse(end)) {
+        ctx.addIssue({ code: 'custom', message: 'Observed sleep bounds must be ordered', path: ['context'] })
+      }
+      const window = s.window && 'start' in s.window ? s.window : undefined
+      if (window && [start, end].some(value => value &&
+        (Date.parse(value) < Date.parse(window.start) || Date.parse(value) > Date.parse(window.end)))) {
+        ctx.addIssue({ code: 'custom', message: 'Observed sleep bounds must belong to the labelled window', path: ['context'] })
+      }
+    }
   }
   if (s.summarizer_version !== 'along-health-v1') return
   const units:Record<string,string>={steps:'count',workout:'min',active_energy:'kcal',weight:'kg',resting_heart_rate:'bpm',wrist_temperature:'degC',sleep:'min'}

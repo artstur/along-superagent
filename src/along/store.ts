@@ -14,6 +14,7 @@ import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
+import type { HealthContext } from './health-context.ts'
 import { MemoryStore } from './memory/store.ts'
 import type { ReminderPlan } from './reminder-plan.ts'
 import { ResearchStore } from './research-store.ts'
@@ -78,6 +79,7 @@ export interface HealthSummaryPayload {
   type: string; metricVersion: string; unit?: string; statistic?: string
   window?: { start: string; end: string } | { night: string }; timezone?: string; value?: unknown
   availability: 'ok' | 'no_permission' | 'unavailable' | 'not_synced'; summarizerVersion: string
+  context?: HealthContext
 }
 /**
  * Structural view of the health event envelope the store needs; the canonical `EventEnvelope` type lives in
@@ -88,6 +90,7 @@ export interface HealthSummaryRow {
   id: string; userId: string; type: string; metricVersion: string; windowStart?: string; windowEnd?: string
   timezone?: string; unit?: string; statistic?: string; value?: unknown; availability: 'ok' | 'no_permission' | 'unavailable' | 'not_synced'
   summarizerVersion: string; adapter: 'known' | 'pending'; eventId: string; receivedAt: string; superseded: boolean
+  context?: HealthContext
 }
 
 export interface InboxEventInput {
@@ -306,7 +309,8 @@ export class AlongStore {
       unit: this.opt(row.unit), statistic: this.opt(row.statistic), value: row.value === null ? undefined : JSON.parse(String(row.value)),
       availability: this.text(row.availability) as HealthSummaryRow['availability'], summarizerVersion: this.text(row.summarizer_version),
       adapter: this.text(row.adapter) as HealthSummaryRow['adapter'], eventId: this.text(row.event_id),
-      receivedAt: this.text(row.received_at), superseded: this.bool(row.superseded) }
+      receivedAt: this.text(row.received_at), superseded: this.bool(row.superseded),
+      ...(typeof row.context === 'string' ? { context: JSON.parse(row.context) as HealthContext } : {}) }
   }
   private inboxRow(row: Record<string, SQLInputValue>): InboxEventRow {
     return { userId: this.text(row.user_id), eventId: this.text(row.event_id), schemaVersion: this.text(row.schema_version),
@@ -839,11 +843,11 @@ export class AlongStore {
         const windowEnd = summary.window === undefined ? undefined : 'night' in summary.window ? summary.window.night : summary.window.end
         const previous = this.latestHealthSummaries(userId).find(row => row.type === summary.type)
         this.run(`INSERT INTO health_summary (id, user_id, type, metric_version, window_start, window_end, timezone, unit, statistic, value,
-            availability, summarizer_version, adapter, event_id, received_at, superseded)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(id) DO NOTHING`,
+            availability, summarizer_version, adapter, event_id, received_at, context, superseded)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(id) DO NOTHING`,
           `hs:${userId}:${envelope.eventId}:${summary.type}`, userId, summary.type, summary.metricVersion,
           windowStart, windowEnd, summary.timezone ?? envelope.timezone, summary.unit, summary.statistic,
-          jsonOrUndefined(summary.value), summary.availability, summary.summarizerVersion, adapter, envelope.eventId, receivedAt)
+          jsonOrUndefined(summary.value), summary.availability, summary.summarizerVersion, adapter, envelope.eventId, receivedAt, jsonOrUndefined(summary.context))
         if (summary.summarizerVersion === 'along-health-v1') {
           // A later receive is not a later reading. Unknown -> available may legitimately carry an older observation date.
           const latest = ['weight', 'resting_heart_rate', 'wrist_temperature'].includes(summary.type)

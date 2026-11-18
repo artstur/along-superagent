@@ -41,3 +41,5 @@
 - 原理与行为：[设计原则](000-philosophy.md)、[领域模型](001-domain.md)、[授权](002-authorization.md)、[执行](003-execution.md)。
 - 配置与运维：[提示词](004-prompts.md)、[管理面板](005-panel.md)、[部署](006-deployment.md)。
 - 开发：[代码架构](007-architecture.md)、[来源扩展](008-cookbook.md)。
+
+- [Health foreground aggregate context](along/022-health-context.md)
