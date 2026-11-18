@@ -466,6 +466,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-source-goal-review.spec.ts` | Controlled synthetic actual Runtime/API/Worker/read/calculation lifecycle, durable restart/retry, atomic acceptance and legacy/typed field preservation |
 | `tests/along-source-state.spec.ts` | Source version ordering, scoped private reads, freshness recovery, revocation, negative replay, bounded summaries and restart/rollback |
 | `tests/along-task-trigger-runtime.spec.ts` | Actual Runtime/Engine/tool chain from new goal to immediate calculation, persisted result and idempotent publication |
+| `tests/along-gap-contract.spec.ts` | Future research publishes only after its persisted clock across restart; user-input waits survive restart and resume the original task once |
 | `tests/along-task-trigger-review.spec.ts` | Private bridge maintenance admission, same-goal evidence, immutable task fields, durable postconditions, schema-12 migration and stale scope refusal |
 | `tests/along-task-trigger-review-runtime.spec.ts` | Real Runtime registered review Worker, exact tool boundary, same-Ticket retry and restart recovery without chat, notifications or execution counts |
 | `tests/along-task-trigger-cadence.spec.ts` | Continuing goal cadence, prior-evidence repair, two-week occurrence completion and non-recurring counterexamples |
