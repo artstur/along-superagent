@@ -14,6 +14,18 @@ Plugin configuration holds the state directory and machine limits. Use the panel
 
 Along Agent also exports `dsh-superagent/along-source`, an optional Source descriptor. In an Along profile, enable the bundle row `dsh-superagent-along`, disable `dsh-superagent-github`, and initialize stored Source settings with `along.enabled = true` and `github.enabled = false`. Configure absolute `alongStateDir` and `alongBridgeTokenFile` paths alongside `stateDir`; the business data must be outside the worker directory. Runtime assembles the business store, loopback ingress, worker tools and delivery pump, and generates the bridge token file on first startup. It starts without a GitHub repository or account; its worker `gh` shim refuses calls. The account requirements below apply to GitHub deployments. The iPhone reaches this API through Along Host with `ALONG_EVENT_INGEST=on` and `ALONG_BRIDGE_TOKEN_FILE` naming the same file. See the Along repository's `docs/stage-b-tech-design.md` for the chat cutover and local validation. Runtime owns memory lifecycle, scoped memory tools and scheduled memory maintenance; automatic health follow-up uses the same local profile and allowed paired users; review/Skill jobs remain separate work. Stage C phone uploads require rebuilding and reinstalling Along; see its `docs/stage-c-tech-design.md`. No new profile flag is required; the existing proactive acceptance mode must be `auto`. `observe`, `off`, pause and removal from the allowed list do not dispatch or authorize health work.
 
+### Along bridge readiness
+
+Poll `GET /along-source/api/goals/along-status-probe` on the private loopback listener. Send `x-along-bridge: 1`, `x-along-bridge-token` from the shared secret file, and `x-along-user` / `x-along-device` from the Host's server-side binding. The probe checks identity header format and does not create a binding. A service-level check can use valid-shaped synthetic IDs with the same bridge credentials.
+
+| Response | Meaning |
+| --- | --- |
+| `200 {"service":"along-source","ready":true}` | The Along store and Engine are initialized, the delivery loop is active, and the registered Along Source is enabled. |
+| `503 {"error":"along_source_not_ready"}` | The listener is up but those readiness conditions are not met. Retry on the private bridge. |
+| `401` / `403` | Invalid bridge authentication or malformed binding identity, respectively. Check configuration. |
+
+Require HTTP 200 with `service` equal to `along-source` and `ready` equal to `true` for Tier 2. An unreachable listener or `404` also means the bridge is unavailable. This probe measures readiness to take events into the Engine. Model responses, APNs, and the operator's processing pause are separate. The authenticated data routes can still store and sync durable rows while the Source is starting. The delivery loop leaves due rows unclaimed while the Source is unavailable and resumes scanning when it becomes available.
+
 ### Permissions and isolation
 
 The bundle defines `dsh-superagent-worker` for Executors and `dsh-superagent-router` for the main Session. They appear in the DeepSeek Harness preset list but are intended only for dsh-superagent. Do not select them for personal Sessions or disable their configuration rows. The application needs them to create and resume its Sessions.

@@ -89,7 +89,7 @@ it('records waiting separately without pretending that an unconfigured trigger i
  expect(f.request()).toMatchObject({status:'waiting',reused:true});expect(f.store.triggers.get(f.userId,f.task.id)).toBeUndefined();expect(f.store.taskExecution(f.userId,f.task.id).count).toBe(0)
 })
 it('keeps the entry under original private bridge authentication and refuses body or device identity forgery',async()=>{
- const f=fixture(),token='a'.repeat(64),host={along:f.service,bridgeToken:token,settings:{} as any}
+ const f=fixture(),token='a'.repeat(64),host={along:f.service,ready:()=>true,bridgeToken:token,settings:{} as any}
  const call=(body:unknown,headers:Record<string,string>={})=>alongSourceRequest(host,{method:'POST',path:'maintenance/task-trigger-reviews',query:new URLSearchParams(),headers:{'x-along-bridge':'1','x-along-bridge-token':token,'x-along-user':f.userId,'x-along-device':f.identity.deviceId,...headers},body:async()=>body})
  expect(await call(f.input,{'x-along-bridge-token':'wrong'})).toMatchObject({status:401});expect(await call({...f.input,user_id:f.userId})).toMatchObject({status:400,body:{error:'identity_in_body'}})
  expect(await call(f.input,{'x-along-device':'d_ffffffff'})).toMatchObject({status:400,body:{error:'task_review_identity_mismatch'}});expect(await call(f.input)).toMatchObject({status:200,body:{status:'pending'}})

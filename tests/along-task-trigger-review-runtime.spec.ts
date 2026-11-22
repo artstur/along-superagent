@@ -22,7 +22,7 @@ async function setup(dir?:string){
  store.markDelivered('along:'+userId+':accepted_original_goal',new Date().toISOString())
  const task=store.insertTask({userId,goalId:goal.id,content:'周四预约周五西语课',scheduledAt:'2030-01-03T01:00:00.000Z'});store.appendTaskRevision({userId,taskId:task.id})
  const body={task_id:task.id,evidence_event_id:'accepted_original_goal',reason:'复核这一既有任务的持久trigger和周期'}
- const request=()=>alongSourceRequest({along:service,bridgeToken:'b'.repeat(64),settings:{} as any},{method:'POST',path:'maintenance/task-trigger-reviews',query:new URLSearchParams(),headers:{'x-along-bridge':'1','x-along-bridge-token':'b'.repeat(64),'x-along-user':userId,'x-along-device':deviceId},body:async()=>body})
+ const request=()=>alongSourceRequest({along:service,ready:()=>true,bridgeToken:'b'.repeat(64),settings:{} as any},{method:'POST',path:'maintenance/task-trigger-reviews',query:new URLSearchParams(),headers:{'x-along-bridge':'1','x-along-bridge-token':'b'.repeat(64),'x-along-user':userId,'x-along-device':deviceId},body:async()=>body})
  const worker=async()=>{await h.runtime.pump();await h.runtime.idle();const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_trigger_review'&&!t.ended)!;expect(ticket).toBeDefined();await vi.waitFor(()=>expect(h.tools.has('worker-'+ticket.id)).toBe(true));return{ticket,session:'worker-'+ticket.id}}
  return{h,service,store,goal,task,request,worker}
 }

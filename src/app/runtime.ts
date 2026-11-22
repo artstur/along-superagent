@@ -285,6 +285,9 @@ export class Runtime extends Service implements SourceHost {
   private closing(): boolean { return this.closingFlag }
   /** Hold evaluation, dispatch, and outbound delivery while paused or awaiting setup; sources still record incoming triggers. */
   private paused(): boolean { return !this.setup.configured() || this.store.settings().paused }
+  private alongSourceAvailable(): boolean {
+    return !this.lifetime.aborted && this.sources.instance('along')?.enabled === true
+  }
   private async initialize(): Promise<void> {
     // Register management HTTP routes before setup completes so operators can fix setup problems in the UI.
     this.disposers.push(registerHttp(this.ctx, this.httpHost()))
@@ -304,10 +307,11 @@ export class Runtime extends Service implements SourceHost {
     this.executor.resume()
     this.passes.start()
     this.effects.start()
-    // The delivery pump (design §2.2.2/§2.7.1): starts only once the engine runs, so a claimed delivery row always
-    // finds a live intake; the lifetime abort stops it with the Runtime and claimed rows expire back into the scan.
+    // Cordis registers the Along Source in a separate plugin. Its activation can follow this initialization,
+    // so check the Source before claiming deliveries and continue checking across unloads and reloads.
     if (this.along) {
       this.alongPumpStop = startDeliveryPump(this.along.service.alongStore, {
+        canDeliver: () => this.alongSourceAvailable(),
         receive: trigger => this.passes.receive(trigger),
         filteredReason: triggerId => {
           const reason = this.store.triggers.disposition(triggerId)?.filtered
@@ -322,7 +326,9 @@ export class Runtime extends Service implements SourceHost {
    * facade that adds a paired user to `sources.along.allowed` (design §2.4.1). */
   private alongApiHost(): AlongApiHost {
     const runtime = this
-    return { get along() { return runtime.along?.service }, bridgeToken: runtime.along?.bridgeToken, settings: runtime.settings }
+    return { get along() { return runtime.along?.service },
+      ready: () => runtime.alongPumpStop !== undefined && runtime.alongSourceAvailable(),
+      bridgeToken: runtime.along?.bridgeToken, settings: runtime.settings }
   }
   /**
    * Assembles the Along local deployment (design §2.7.1): settings configure it when the Along Source is enabled

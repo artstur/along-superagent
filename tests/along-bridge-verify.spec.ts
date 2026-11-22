@@ -71,6 +71,7 @@ function fakeSettings() {
 function seededHost(options: { bridgeToken?: string; inbox?: { calls: { envelope: unknown; identity: unknown }[] } } = {}) {
   const inbox = options.inbox ?? { calls: [] as { envelope: unknown; identity: unknown }[] }
   const host: AlongApiHost = {
+    ready: () => true,
     along: new AlongService(store, { inbox: { acceptEvent: (envelope, identity) => {
       inbox.calls.push({ envelope, identity })
       return { status: 'accepted', event_id: (envelope as { event_id: string }).event_id }
