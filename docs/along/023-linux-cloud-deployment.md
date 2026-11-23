@@ -243,6 +243,46 @@ pip 官方源 `files.pythonhosted.org` 实测只有 **27 kB/s**，`hy-memory` �
 1. **`langdetect` 与 `jieba` 只有 sdist**（纯 Python），pip 会现场构建 —— 这不需要编译器，但会让安装多花几分钟。
 2. **探针结尾的 `Task was destroyed but it is pending` 与 `AttributeError: 'NoneType' object has no attribute 'execute'` 是已知现象**，沿仓库 `docs/along/004-phase0-validation.md` §3.3 与 `006-memory-implementation.md` 在 Mac 上记录过同一组现象（SDK 关闭时 pipeline trace 未落盘、SQLite cache 连接已关）。**不是 Linux 特有**，也不是本次引入。
 
+### 5.3.1 记忆 embedder 的选型（云端实测）
+
+上一轮只跑到 offline 探针（合成 HTTP 响应），真实模型质量与真实供应商都没验。云端这一轮把它接上并实测。
+
+**先说一个形状问题**：hy-memory 的 embedder **只走 OpenAI 形状**（请求体 `input`、响应 `data[].embedding`）。
+MiniMax 自己的 `embo-01` 是自家形状（请求体要 `texts`、响应是 `vectors`），实测用 `input` 直接报
+`missing required parameter texts` → 需要一层形状翻译（云端第一版就是这么接的，后按下面的结论换掉了）。
+阿里云百炼的 `/compatible-mode/v1` **本来就是 OpenAI 形状**，hy-memory 可直连。
+
+四个候选的实测对照（同一组样本，本机实测，维度统一 1024）：
+
+| | 协议 | 维度 | 单请求行数 | 1 条延迟 | 单价 | 检索 Top1 | 平均 margin | 最小 margin |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **百炼 qwen3.7-text-embedding** | OpenAI 兼容 | 1024–2560 可调 | **20** | **159ms** | 0.0005 元/千 Token | **10/10** | 0.359 | **+0.076** |
+| 百炼 text-embedding-v4 | OpenAI 兼容 | 64–2048 可调 | 10 | 224ms | 0.0005 元/千 Token | 9/10 | 0.343 | −0.023 |
+| 百炼 qwen3.7-text-embedding-flash | OpenAI 兼容 | 固定 1024（请求更大维度**静默退回 1024**） | ≥21 | 134ms | 0.000125 元/千 Token | 9/10 | 0.276 | −0.042 |
+| MiniMax embo-01 | 自家形状，要翻译层 | 固定 1536 | 512 | 374ms | 公开文档查不到 | 9/10 | 0.637 | −0.229 |
+
+检索的 Top1 与 margin 用同一组 10 组问答算（每组 1 条相关文档 + 3 条干扰，看相关文档是否排在无关文档前面、差多少）。
+
+**选 `qwen3.7-text-embedding`**：
+
+- 唯一 10/10 且**最小 margin 为正**——每组都排对，没有贴脸翻车；
+- 同价、同 1024 维（索引不用重建）、比 v4 快 30%、批量上限翻倍；
+- 形状原生 OpenAI 兼容 → **不需要翻译层**（云端第一版为此写过一个垫片容器与脚本，换百炼后已删除）；
+- 账单可核实（MiniMax 那条端点不在开放平台文档里，规格与价格都查不到）。
+
+**不选 flash**：最便宜但四个里最弱；而且它请求更大维度时**静默退回 1024**（官方只支持 1024/768/512/256）——
+静默降级比报错危险。**MiniMax 均值最漂亮但不稳**：平均 margin 最高却有一组 −0.229（错得最狠）；记忆检索错一次
+就等于把一条无关记忆注入对话。
+
+**batch size 跟着上限走**：百炼 v4 单请求最多 10 条，qwen3.7 最多 20 条（实测第 21 条报
+`batch size is invalid`）。所以 `along-memory-service.py` 的 batch size 改成读
+`MEMORY_EMBEDDER_BATCH_SIZE`（默认 10 = v4 的上限），换供应商只改环境变量、不改代码。
+
+**真实模型下跑通了一轮**：一句含长期偏好的话（"我习惯 23 点睡，早上 6 点起，家里养了一只猫叫豆豆"）
+→ 记忆维护批次用真实模型跑完（`status=done`、`attempts=1`、`processed=1`、`saved=2`）→ 抽出两条长期事实
+「我习惯 23 点睡，早上 6 点起」「家里养了一只猫叫豆豆」，都带原消息作证据（治理分类要求有真实消息证据
+才成立）。向量库那一层的直接证据：Chroma 集合名 `agent_memories_1024`、维度 1024（MiniMax 那轮是 1536）。
+
 ### 5.4 镜像构建的三个约束（这台机专属）
 
 1. **pip 官方源不可用**：`files.pythonhosted.org` 实测 27 kB/s，依赖树直接超时；必须用 `mirrors.aliyun.com/pypi/simple/`（176 kB/s）。
@@ -280,11 +320,11 @@ pip 官方源 `files.pythonhosted.org` 实测只有 **27 kB/s**，`hy-memory` �
 
 | 项 | 状态 | 备注 |
 | --- | --- | --- |
-| 真实模型调用 | 未测 | 需要 DeepSeek API Key；`dsh-superagent` 的 model 配置走 profile 层的 `agent-default-model` |
-| Worker 真实执行 | 未测 | 需要一张真实 Ticket；worker preset 的 bash 沙箱在 Linux 上未验证 |
+| 真实模型调用 | 已测 | MiniMax `MiniMax-M3.1-Flash` 经 profile 层的 `agent-default-model` + pi-ai 路由接上；一句自然语言 → 自动建目标、拆 3 个任务、约每日提醒 |
+| Worker 真实执行 | 部分已测 | 派工能跑起来，但镜像缺 git 导致 worker 准备目录失败（`spawn git ENOENT`），已补；bash 沙箱本身的行为仍未系统验收 |
 | Along 事件摄取（`/events`） | 未测 | 需要 Host 侧配合；本轮按用户决定只跑 superagent 本身 |
-| Hy-Memory | 见 §5.3 | Linux python3.12 + hy-memory 2.0.16 已单独验证通过 |
-| 与 `along` Host 的联调 | 未测 | 属于本轮范围外（用户选择「只把 superagent 独立跑起来验证可用性」） |
+| Hy-Memory | 见 §5.3、§5.3.1 | Linux python3.12 + hy-memory 2.0.16 已验证；embedder 选型与真实模型一轮的实测见 §5.3.1 |
+| 与 `along` Host 的联调 | 已测 | Host 已上云（`along` 仓库 `deploy/docker-compose.cloud.yml`），配对/事件摄取/桥接端到端跑通 |
 | 长时稳定性 / 断电恢复 | 未测 | 需要观察期 |
 
 ## 7. 结论与影响
