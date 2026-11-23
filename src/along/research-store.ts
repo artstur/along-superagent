@@ -1,6 +1,7 @@
 /** AlongStore-owned evidence: retrieval is bound to the worker, user and goal before it can be cited. */
 import type { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
+import { productTextPrefix } from './product-text.ts'
 
 export const RESEARCH_DDL = `
 CREATE TABLE IF NOT EXISTS research_source (
@@ -26,11 +27,11 @@ export class ResearchStore {
  constructor(private readonly db: DatabaseSync) {}
  save(scope: ResearchScope, source: {title: string; url: string; content: string; purpose: ResearchPurpose; publishedAt?: string; fetched: boolean; publicationBasis?:'page'|'search'; publicationHint?:string}, now=Date.now()): ResearchEvidence {
   if (!this.db.prepare('SELECT 1 FROM goal WHERE id=? AND user_id=?').get(scope.goalId,scope.userId)) throw Error('research goal not found')
-  const receipt: ResearchEvidence = { id: 'src_'+randomUUID().replaceAll('-',''), title:source.title.slice(0,300),url:source.url,
+  const receipt: ResearchEvidence = { id: 'src_'+randomUUID().replaceAll('-',''), title:productTextPrefix(source.title,300),url:source.url,
    retrievedAt:new Date(now).toISOString(),expiresAt:new Date(now+ttl[source.purpose]).toISOString(),
    ...(source.publishedAt && Number.isFinite(Date.parse(source.publishedAt)) ? {publishedAt:new Date(source.publishedAt).toISOString(),publicationBasis:source.publicationBasis??(source.fetched?'page' as const:'search' as const)}:{}),
    ...(source.publicationHint&&Number.isFinite(Date.parse(source.publicationHint))?{publicationHint:new Date(source.publicationHint).toISOString()}:{}),
-   content:source.content.slice(0,24000),purpose:source.purpose,fetched:source.fetched }
+   content:productTextPrefix(source.content,24000),purpose:source.purpose,fetched:source.fetched }
   this.db.prepare('INSERT INTO research_source(id,user_id,goal_id,ticket_id,purpose,content,metadata) VALUES(?,?,?,?,?,?,?)')
    .run(receipt.id,scope.userId,scope.goalId,scope.ticketId,source.purpose,receipt.content,JSON.stringify(receipt))
   return receipt

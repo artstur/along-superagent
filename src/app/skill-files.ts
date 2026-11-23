@@ -21,7 +21,7 @@ function load(name: string) {
   if (!match) throw new Error(`Invalid packaged skill: ${path}`)
   return { name: match[1]!, description: match[2]!, content: match[3]!, path }
 }
-export const bundledSkills = { feishu: load('feishu'), github: load('github'), alongGoal: load('along-goal'), alongTask: load('along-task'), alongResearch: load('along-research'), alongHiking: load('along-hiking'), alongScheduling: load('along-scheduling'), alongCalculation: load('along-calculation'), alongData: load('along-data') }
+export const bundledSkills = { feishu: load('feishu'), github: load('github'), alongGoal: load('along-goal'), alongTask: load('along-task'), alongResearch: load('along-research'), alongHiking: load('along-hiking'), alongHealth: load('along-health'), alongScheduling: load('along-scheduling'), alongCalculation: load('along-calculation'), alongData: load('along-data') }
 /** Along capabilities are registered as discoverable skills, never expanded wholesale into the system prompt. */
 export const alongSkills = Object.values(bundledSkills).filter(skill => skill.name.startsWith('dsh-superagent-along-'))
 /**

@@ -128,7 +128,7 @@ it('hashes the assembled Along role and every skill independently; only the chan
  const irrelevant={...config,delivery:'Different repository delivery',overrides:{'runtime/shared':{text:'repo-only'}}}
  expect(alongPromptProvenance(irrelevant,context)).toEqual(proof)
  expect(alongPromptProvenance({...config,overrides:{'along/task-due':{text:'changed task occurrence contract'}}},context).sha256).not.toBe(proof.sha256)
- expect(proof.skills).toHaveLength(7)
+ expect(proof.skills).toHaveLength(8)
 })
 
 it('committed fixture is real source assembly, not a copied or historical model prompt',()=>{

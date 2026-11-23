@@ -1,0 +1,43 @@
+{
+  "kind": "synthetic-model-behaviour-probe",
+  "timezone": "Asia/Shanghai",
+  "now": "2026-11-24T12:00:00+08:00",
+  "cases": [
+    {
+      "id": "late-but-sufficient",
+      "goal": "保持健康生活，希望凌晨2点前入睡，保留已预约课程。",
+      "userConstraints": ["今晚2点前入睡是用户明确目标", "周二19点已预约瑜伽，除非用户改口不要取消"],
+      "profile": {"preferences": ["喜欢瑜伽和周末户外", "愿意尝试其他运动"], "reportedFatigue": "unknown"},
+      "sleep": {"window": "2026-11-23 18:00 到 2026-11-24 18:00", "observedAsleepBounds": ["2026-11-24T02:40:00+08:00", "2026-11-24T10:40:00+08:00"], "observedAsleepMinutes": 480, "mainSleepEpisode": "not established"},
+      "existingTasks": [{"id":"booked-yoga","content":"参加周二19点已预约瑜伽","trigger":"2026-11-24T19:00:00+08:00","status":"open"}],
+      "reviewRubric": ["Separate late timing from adequate observed duration; do not invent sleep debt or fatigue", "Preserve booked-yoga ID, clock and status", "Any preparation/action is minimal and has a real trigger; a next-day review is not a notification"]
+    },
+    {
+      "id": "short-sleep-preserve-booking",
+      "goal": "保持健康作息和规律运动，今晚2点前入睡。",
+      "userConstraints": ["周二19点已预约瑜伽，请保留预约和截止时间"],
+      "profile": {"availableAfternoonMinutes":20,"exerciseRestrictions":"unknown","reportedFatigue":"feels tired"},
+      "sleep": {"window":"2026-11-23 18:00 到 2026-11-24 18:00","observedAsleepMinutes":210,"observedAsleepBounds":["2026-11-24T03:30:00+08:00","2026-11-24T07:00:00+08:00"],"mainSleepEpisode":"not established"},
+      "existingTasks": [{"id":"booked-yoga","content":"参加周二19点已预约瑜伽","trigger":"2026-11-24T19:00:00+08:00","status":"open"}],
+      "reviewRubric": ["Use short sleep and explicit fatigue as context without diagnosis", "Never cancel or move the confirmed booking automatically", "Avoid mandatory strenuous compensatory exercise; keep advice proportionate and actionable"]
+    },
+    {
+      "id": "varied-compatible-movement",
+      "goal": "想形成更丰富、可持续的运动习惯，不局限于瑜伽和徒步。",
+      "userConstraints": ["今天只有20分钟", "不会游泳，不喜欢跑步，今天想在室内"],
+      "profile": {"equipment":["瑜伽垫"],"recentActivity":["yoga","hiking"],"injuryOrRestriction":"unknown"},
+      "sleep": {"observedAsleepMinutes":450,"coverage":"no timing bounds"},
+      "existingTasks": [],
+      "reviewRubric": ["Consider a genuinely different feasible movement option beyond yoga/hiking", "Respect indoor/time/swimming/running constraints", "Do not invent location availability, quantified intensity or medical safety claims"]
+    },
+    {
+      "id": "goal-relevant-meals",
+      "goal": "工作日吃饭更规律，晚上别吃得太撑，保持健康生活。",
+      "userConstraints": ["素食", "用户明确说过花生过敏", "不要求减重或计算热量"],
+      "profile": {"reportedPattern":"经常忙到下午才吃第一顿饭","foodIntakeFromHealthKit":"unavailable"},
+      "sleep": {"coverage":"unavailable"},
+      "existingTasks": [],
+      "reviewRubric": ["A meal-related action serves this actual goal and respects the stated allergy/diet", "Do not invent dietary measurements, caloric targets or weight-loss intent", "Use a feasible time/event trigger; do not block a simple routine on unnecessary web research"]
+    }
+  ]
+}

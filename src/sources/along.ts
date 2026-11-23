@@ -19,7 +19,7 @@ export const alongKind: SourceKind = {
     const type = meta.event_type
     if (type === 'along.user_message') return { listened: true, observed: false, row: 'chat' }
     if (type === 'along.task_due') return { listened: true, observed: true, row: 'task_due' }
-    if (type === 'along.health_summary_updated' || type === 'along.health_reassessment') return { listened: true, observed: true, row: 'health' }
+    if (type === 'along.health_summary_updated' || type === 'along.health_reassessment' || type === 'along.health_daily_review') return { listened: true, observed: true, row: 'health' }
     if (type === 'along.message' && typeof meta.kind === 'string' && messageKinds.has(meta.kind)) return { listened: true, observed: true, row: 'message' }
     return { listened: false, reason: 'unsupported_along_event' }
   },

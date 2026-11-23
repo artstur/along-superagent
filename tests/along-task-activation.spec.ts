@@ -86,3 +86,15 @@ it('requires actual user completion instead of an automatic human reminder or ex
  expect(store.getTask(userId,task.id)?.status).toBe('open')
  expect(store.taskExecution(userId,task.id).count).toBe(0)
 })
+it('keeps private-history research independent of public provider configuration but still requires its actual source condition',()=>{
+ const {store,userId,goal,task}=fixture();let ready=false
+ store.triggers.put(store.assertTaskOwner(userId,task.id),{kind:'event',actor:'agent',capability:'research',conditions:[{kind:'source_ready',provider:'okx',capability:'trading_history'}]},1)
+ const activation=new TaskActivation({store,available:()=>false,source:()=>ready?{state:'ready',generation:1,revision:1,reference:'fixture-history',capabilities:['trading_history']}:undefined})
+ activation.prepare();expect(store.getTask(userId,task.id)?.scheduledAt).toBeUndefined()
+ ready=true;activation.prepare()
+ const current=store.assertTaskOwner(userId,task.id)
+ expect(activation.allowDue(current)).toBe(true)
+ const dispatch=store.health.dispatchDue(userId,goal.id,1,{taskId:task.id,revision:current.currentRevision,dueAt:current.scheduledAt!},[])
+ activation.bind(dispatch);expect(activation.capabilityAvailable(dispatch)).toBe(true)
+ ready=false;activation.prepare();expect(activation.allowDue(store.assertTaskOwner(userId,task.id))).toBe(false)
+})

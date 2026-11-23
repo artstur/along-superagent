@@ -20,6 +20,18 @@ const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value))
 /** Reads trusted conditions, persists one logical occurrence and lets HealthFollowup dispatch it normally. */
 export class TaskActivation {
   constructor(private readonly host:ActivationHost) {}
+  private executorAvailable(row:TriggerRow):boolean {
+    const d=row.definition
+    const privateHistory=d.actor==='agent'&&d.capability==='research'&&d.conditions?.some(c=>
+      (c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')
+    return !!privateHistory||!this.host.available||this.host.available(d.capability)
+  }
+  /** Configuration loss pauses the same occurrence; it is not a stale input or a new execution. */
+  capabilityAvailable(dispatch:HealthDispatch):boolean {
+    if(!dispatch.due)return true
+    const row=this.host.store.triggers.get(dispatch.userId,dispatch.due.taskId)
+    return !row||this.executorAvailable(row)
+  }
   private conditions(row:TriggerRow):ConditionResult {
     const store=this.host.store,tokens:string[]=[]
     for(const condition of row.definition.conditions??[]) {
@@ -67,9 +79,7 @@ export class TaskActivation {
       }
       // Private history research uses the installed report interpreter, not the optional public web connector.
       // Its actual source condition, read freshness and finish proof remain independently checked.
-      const privateHistory=d.actor==='agent'&&d.capability==='research'&&d.conditions?.some(c=>
-        (c.kind==='source_ready'||c.kind==='source_updated')&&c.capability==='trading_history')
-      if(this.host.available&&!this.host.available(d.capability)&&!privateHistory) {
+      if(!this.executorAvailable(row)) {
         store.triggers.observeMissingCapability(row)
         store.triggers.setState(row,'waiting','等待执行能力恢复');continue
       }

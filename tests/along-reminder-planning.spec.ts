@@ -44,6 +44,17 @@ function fixture(){
     'x-along-bridge':'1','x-along-bridge-token':'only-synthetic','x-along-user':user,'x-along-device':device},body:async()=>undefined})
   return {store,say,commit,goal,api}
 }
+it('explains clock/cadence separately and never turns a weekday subset into all-days daily',async()=>{
+ now();const {store,say,commit,goal}=fixture();say('工作日按时吃午饭，希望形成规律。')
+ const scoped={...agent,evidence:'工作日按时吃午饭',action:'吃午饭',recurrence_source:'agent'}
+ const op={op:'task.create',content:'工作日按时吃午饭',scheduled_at:first,repeat:'daily',trigger:{kind:'time',actor:'user',capability:'reminder'},reminder_plan:scoped}
+ const rejected=await commit([op])
+ expect(rejected).toMatchObject({status:'invalid',reason:'weekday_subset_not_daily',diagnostic:{requested_repeat:'daily',clock_source:'agent',recurrence_source:'agent',weekday_subset:true}})
+ expect(JSON.stringify(rejected)).toContain('daily means all seven days')
+ expect(store.listTasks(user,{goalId:goal.id},{limit:20}).items).toHaveLength(0)
+ expect(await commit([{...op,repeat:'once'}])).toMatchObject({status:'applied'})
+ expect(supportsRecurrence('工作日按时吃午饭','工作日按时吃午饭','吃午饭','工作日按时吃午饭','weekly',6,'agent')).toBe(false)
+})
 it('requires a decision at the normal Worker entry, sends Agent arrangements and questions into real sync and task snapshots',async()=>{
   now()
   const {store,say,commit,goal,api}=fixture()

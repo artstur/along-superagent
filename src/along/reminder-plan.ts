@@ -29,6 +29,8 @@ const weekLabel = (s:string) => '一二三四五六日'.indexOf(s==='天'?'日':
 const clauses = (text: string) => text.split(/[，,。；;!?！？\n]/).map(value => value.trim()).filter(Boolean)
 const weekdays = (text: string) => [...text.matchAll(weekDay)].map(match => weekLabel(match[1]!))
 const genericAction = /^(?:提醒|安排|预约|预订|通知|推荐|完成|进行|执行|打卡)$/
+/** A calendar subset is a fixed constraint, not permission to notify seven days a week. */
+export const weekdayOnlyCadence=(text:string):boolean=>/工作日|周一(?:到|至|～|~|-)周?五|\bweekdays?\b|\bmonday\s*(?:to|through|-)\s*friday\b/i.test(text)
 
 // An explicit delegation of the plan's reminders can follow the list of activities. The original
 // action, its own recurrence and its own weekday still have to match separately for each task.
@@ -69,6 +71,7 @@ export function supportsRecurrence(message:string,quote:string,action:string,con
     // callers verify its origin/version/authority. Do not require a synonym or clause-order whitelist.
     // Explicit reminder weekdays remain facts even when the Agent chose the civil clock.
     if(denial.test(quote))return false
+    if(weekdayOnlyCadence(quote)&&(repeat==='daily'||repeat==='weekly'&&weekday>5))return false
     const remind=/提醒|通知|remind/i.exec(quote)
     if(repeat==='weekly'&&remind&&!/前一天|day before/i.test(quote)) {
       const before=quote.slice(0,remind.index)
@@ -175,6 +178,7 @@ export function planError(plan:PlanInput,time:string|null|undefined,repeat:Repea
   if (plan.source==='user' && (!quote || !message.text.includes(quote) || /[，,。；;!?！？\n]/.test(quote) ||
     !plan.action || !quote.includes(plan.action) || !content.includes(plan.action) || /^(?:提醒|安排|预约|通知|完成|进行)$/.test(plan.action) || !agentExecution&&!/提醒|叫我|通知|闹钟|remind|alert|notif/i.test(quote) ||
     /[点时](?:前|之前|以前)|\d[:：]\d\d\s*(?:前|之前|以前)|deadline|due by/i.test(quote) || !clockInQuote(quote,time,message.timezone,plan.action,agentExecution) || !sameSpecifiedDay(quote,plan.action,time,message))) return 'user_clock_evidence_required'
+  if(repeat==='daily'&&quote&&weekdayOnlyCadence(quote))return 'weekday_subset_not_daily'
   if (repeat!=='once' && (!quote || !plan.action || !supportsRecurrence(message.text,quote,plan.action,content,repeat,localWeekday(time,message.timezone),plan.recurrence_source))) return 'task_scoped_repeat_evidence_required'
   return undefined
 }

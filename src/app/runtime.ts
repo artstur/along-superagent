@@ -59,7 +59,7 @@ import { packagePath } from '../infra/paths.ts'
 import { AlongStore, assertAlongDataIsolation } from '../along/store.ts'
 import { createWorkLink, type WorkLinkModule } from '../along/worklink.ts'
 import { HealthFollowup } from '../along/health.ts'
-import { researchWeb } from '../along/web-research.ts'
+import { researchWeb, researchCapability } from '../along/web-research.ts'
 import { AlongMaintenance } from '../along/maintenance.ts'
 
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
@@ -368,14 +368,14 @@ export class Runtime extends Service implements SourceHost {
       paused: () => this.paused(), closing: () => this.closing() })
     const healthFollowup = new HealthFollowup({ store: alongStore, repo: this.store, engine: () => this.engine,
       settings: () => this.store.settings(), paused: () => this.paused(), closing: () => this.closing(),
-      available: capability => capability!=='research'||!!researchWeb(this.ctx),
+      available: capability => capability!=='research'||researchCapability(researchWeb(this.ctx)).configured,
       source: (userId,goalId,provider) => {
         if(!alongStore.goalDataSources(userId,goalId).some(s=>s.provider===provider))return undefined
         const fact=alongStore.sources.queryCurrent(userId,goalId,provider)
         return fact?{state:fact.state,generation:fact.generation,revision:fact.revision,reference:fact.reference,capabilities:fact.capabilities}:undefined
       } })
     return {
-      service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore,{available:capability=>capability!=='research'||!!researchWeb(this.ctx)}), taskReviews:healthFollowup }),
+      service: new AlongService(alongStore, { inbox: createInbox(alongStore), changeset: createChangeSetModule(alongStore,{available:capability=>capability!=='research'||researchCapability(researchWeb(this.ctx)).configured}), taskReviews:healthFollowup }),
       worklink, runrecord, memory, maintenance, healthFollowup,
       bridgeToken: bridgeTokenOf(alongBridgeTokenFile),
       stateDir: alongStateDir,

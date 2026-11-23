@@ -19,7 +19,9 @@
  */
 import { isResearchTaskContent } from './recommendation.ts'
 import { z } from 'zod'
-import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, type PlanInput, type Repeat } from './reminder-plan.ts'
+import { healthSnapshotSuperseded, healthFactTypes } from './health-facts.ts'
+import { healthLocalDate, healthTimezone } from './health-daily.ts'
+import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, weekdayOnlyCadence, type PlanInput, type Repeat } from './reminder-plan.ts'
 import { TASK_TRIGGER_SCHEMA, type TaskCapability, type TaskTriggerInput } from './task-trigger.ts'
 import { hasDailyMandate } from './task-schedule.ts'
 import { randomToken, type AlongStore, type ChangeSetRow, type ChangeSetSave, type GoalRevisionRow, type TaskRow } from './store.ts'
@@ -275,6 +277,13 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
   if (health && (health.userId !== scope.userId || health.goalId !== scope.allowedGoalId
     || health.inputVersion !== store.inputVersion(health.goalId))) return refuse('conflicted', 'conflicted_input')
   if (health && (health.result || !health.readSnapshot)) return refuse('invalid', 'health_evaluation_unavailable')
+  if(health&&!health.due&&!health.repair&&!health.sourceReview&&health.readSnapshot) {
+    const state=store.health.state(health.goalId),latest=store.latestHealthSummaries(scope.userId)
+    const watched=state?.inputVersion===health.inputVersion?state.types:healthFactTypes
+    if(healthSnapshotSuperseded(latest,health.readSnapshot,watched,health.snapshot)||health.dailyReview&&(
+      healthTimezone(latest.filter(row=>row.adapter==='known'&&row.summarizerVersion==='along-health-v1'))!==health.dailyReview.timezone||healthLocalDate(Date.now(),health.dailyReview.timezone)!==health.dailyReview.localDate))
+      return refuse('conflicted','conflicted_health')
+  }
   if (health?.due) {
     const task = store.getTask(scope.userId, health.due.taskId)
     if (!task || task.status !== 'open' || task.currentRevision !== health.due.revision
@@ -438,7 +447,10 @@ function validateAndApply(store: AlongStore, input: ChangeSetInput, scope: Commi
       if (error) return refuse('invalid',error,{op_index:opIndex,field:'reminder_plan',
         evidence_found:plan.state==='scheduled'&&!!plan.evidence&&!!userMessage?.text.includes(plan.evidence),
         action_in_evidence:plan.state==='scheduled'&&!!plan.action&&!!plan.evidence?.includes(plan.action),
-        action_in_task:plan.state==='scheduled'&&!!plan.action&&content.includes(plan.action)})
+        action_in_task:plan.state==='scheduled'&&!!plan.action&&content.includes(plan.action),
+        ...(plan.state==='scheduled'?{requested_repeat:repeat,clock_source:plan.source,recurrence_source:plan.recurrence_source??'user',
+          weekday_subset:weekdayOnlyCadence(plan.evidence??''),scheduled_weekday:(()=>{try{return time&&userMessage?.timezone?localWeekday(time,userMessage.timezone):undefined}catch{return undefined}})(),
+          supported_calendar_rules:['once','daily:all seven days','weekly:one local weekday']}:{}),})
       if (plan.state==='needs_time' && existing?.reminderPlan?.state==='off' && existing.reminderPlan.reason==='opt_out')
         return refuse('invalid','reminder_declined')
     }

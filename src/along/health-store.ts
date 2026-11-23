@@ -3,12 +3,15 @@ import type { ReminderPlan } from './reminder-plan.ts'
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 import type { HealthSummaryRow } from './store.ts'
+import { healthLocalDate, healthTimezone, nextHealthReviewAt, type DailyHealthReview } from './health-daily.ts'
+import type { ResultPresentation } from './result-presentation.ts'
 
 export interface DueTask { taskId: string; revision: number; dueAt: string }
 export interface TaskRepairReview {
   taskId:string;revision:number;evidenceEventId:string;deviceId:string;originalScheduledAt?:string;originalContent:string;reason:string;retired:boolean;contextReadAt?:string
 }
 export interface HealthDispatch {
+  dailyReview?: DailyHealthReview
   reassessment?: { sourceDispatchId: string; reason: string }
   sourceReview?:SourceGoalReview
   repair?:TaskRepairReview
@@ -19,7 +22,7 @@ export interface HealthDispatch {
   inputVersion: number
   snapshot: HealthSummaryRow[]
   readSnapshot?: HealthSummaryRow[]
-  result?: { outcome: string; types: string[]; reason: string; text?: string }
+  result?: { outcome: string; types: string[]; reason: string; text?: string; next_review_at?: string; presentation?: ResultPresentation }
   createdAt: string
 }
 /** AlongStore-owned persistence sharing the business transaction and database lifetime. */
@@ -107,8 +110,10 @@ export class HealthStore {
     const due = r && this.db.prepare('SELECT * FROM task_review WHERE event_id=?').get(eventId)
     const source=r&&this.sourceReviewSchema()?this.db.prepare('SELECT * FROM source_goal_review WHERE event_id=?').get(eventId):undefined
     const repair=r&&this.repairSchema()?this.db.prepare('SELECT * FROM task_trigger_review WHERE event_id=?').get(eventId):undefined
+    const daily=r&&this.db.prepare('SELECT * FROM health_daily_review WHERE event_id=?').get(eventId)
     return r
       ? {
+          ...(daily?{dailyReview:{timezone:String(daily.timezone),localDate:String(daily.local_date),scheduledAt:String(daily.scheduled_at)}}:{}),
           ...(r.reassessment_of==null?{}:{reassessment:{sourceDispatchId:String(r.reassessment_of),reason:String(r.reassessment_reason)}}),
           ...(source?{sourceReview:{provider:'okx' as const,sourceEventId:String(source.source_event_id),generation:Number(source.generation),revision:Number(source.revision),reference:String(source.reference),deviceId:String(source.device_id),
             capabilities:JSON.parse(String(source.capabilities)),legacyTasks:JSON.parse(String(source.legacy_tasks)),originalTaskIds:JSON.parse(String(source.original_task_ids)),retired:source.retired===1,...(source.context_read_at==null?{}:{contextReadAt:String(source.context_read_at)})}}:{}),
@@ -138,6 +143,30 @@ export class HealthStore {
         'INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING'
       )
       .run(eventId, userId, goalId, inputVersion, JSON.stringify(snapshot), new Date().toISOString())
+    return this.get(eventId)!
+  }
+  reviewSchedule(goalId:string):{userId:string;inputVersion:number;timezone:string;nextAt:string}|undefined {
+    const row=this.db.prepare('SELECT * FROM health_review_schedule WHERE goal_id=?').get(goalId)
+    return row?{userId:String(row.user_id),inputVersion:Number(row.input_version),timezone:String(row.timezone),nextAt:String(row.next_at)}:undefined
+  }
+  /** Backfill old evaluated goals without resetting a missed next-day opportunity on every restart. */
+  ensureReviewSchedule(goalId:string):void {
+    const state=this.state(goalId)
+    if(!state?.types.length||this.reviewSchedule(goalId)?.inputVersion===state.inputVersion)return
+    const snapshot=state.baseline.filter(row=>state.types.includes(row.type)),zone=healthTimezone(snapshot)
+    if(zone)this.saveReviewSchedule(goalId,state.userId,state.inputVersion,zone,nextHealthReviewAt(snapshot,zone,Date.parse(state.updatedAt)))
+  }
+  private saveReviewSchedule(goalId:string,userId:string,inputVersion:number,timezone:string,nextAt:string):void {
+    this.db.prepare(`INSERT INTO health_review_schedule(goal_id,user_id,input_version,timezone,next_at,updated_at) VALUES(?,?,?,?,?,?)
+      ON CONFLICT(goal_id) DO UPDATE SET user_id=excluded.user_id,input_version=excluded.input_version,timezone=excluded.timezone,next_at=excluded.next_at,updated_at=excluded.updated_at`)
+      .run(goalId,userId,inputVersion,timezone,nextAt,new Date().toISOString())
+  }
+  dispatchDaily(userId:string,goalId:string,inputVersion:number,snapshot:HealthSummaryRow[],review:DailyHealthReview):HealthDispatch {
+    const eventId='health_daily_'+createHash('sha256').update(JSON.stringify([userId,goalId,inputVersion,review.timezone,review.localDate])).digest('hex').slice(0,40)
+    this.db.prepare('INSERT INTO health_dispatch(event_id,user_id,goal_id,input_version,snapshot,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING')
+      .run(eventId,userId,goalId,inputVersion,JSON.stringify(snapshot),new Date().toISOString())
+    this.db.prepare('INSERT INTO health_daily_review(event_id,timezone,local_date,scheduled_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING')
+      .run(eventId,review.timezone,review.localDate,review.scheduledAt)
     return this.get(eventId)!
   }
   /** Host-only recovery of a completed assessment. Never exposed as a Worker tool or paired user message. */
@@ -243,13 +272,31 @@ export class HealthStore {
       .map((r) => this.get(String(r.event_id))!)
   }
   read(eventId: string, snapshot: HealthSummaryRow[]): void {
+    // A typed read is a projection, not a replacement of everything this Worker has already read.
+    // Empty/missing-type results cannot erase prior observations or masquerade as a source update.
+    const previous=this.get(eventId)?.readSnapshot??[]
+    const merged=new Map(previous.map(row=>[row.type,row]))
+    for(const row of snapshot)merged.set(row.type,row)
     this.db
       .prepare('UPDATE health_dispatch SET read_snapshot=? WHERE event_id=? AND result IS NULL')
-      .run(JSON.stringify(snapshot), eventId)
+      .run(JSON.stringify([...merged.values()]), eventId)
   }
   finish(d: HealthDispatch, result: NonNullable<HealthDispatch['result']>): void {
+    const observed=d.readSnapshot??d.snapshot,snapshot=observed.filter(row=>result.types.includes(row.type))
+    const prior=this.reviewSchedule(d.goalId)
+    const priorState=this.state(d.goalId)
+    const sameClock=prior?.inputVersion===d.inputVersion&&priorState?.inputVersion===d.inputVersion&&priorState.types.length===0
+    const timezone=healthTimezone(snapshot.length?snapshot:observed)??d.dailyReview?.timezone??(sameClock?prior.timezone:undefined)
+    if(result.next_review_at&&(d.due||!timezone||!result.types.length&&result.outcome!=='update'&&prior?.inputVersion!==d.inputVersion))
+      throw new Error('next_review_at requires trusted timezone and relevant observations, an applied goal plan or its existing current review schedule')
+    const nextAt=!d.due&&!d.repair&&!d.sourceReview&&timezone&&(result.types.length||result.next_review_at)
+      ?nextHealthReviewAt(snapshot,timezone,Date.now(),result.next_review_at)
+      :sameClock&&prior.timezone===timezone&&result.outcome==='keep'
+        ?d.dailyReview?nextHealthReviewAt([],timezone,Date.now()):prior.nextAt:undefined
     this.db.prepare('UPDATE health_dispatch SET result=? WHERE event_id=?').run(JSON.stringify(result), d.eventId)
     if (d.due||d.repair||d.sourceReview) return // Neither clocks nor maintenance reviews advance the observation baseline.
+    if(nextAt&&timezone)this.saveReviewSchedule(d.goalId,d.userId,d.inputVersion,timezone,nextAt)
+    else this.db.prepare('DELETE FROM health_review_schedule WHERE goal_id=?').run(d.goalId)
     this.db
       .prepare(
         `INSERT INTO health_followup(goal_id,user_id,input_version,types,baseline,reason,updated_at) VALUES(?,?,?,?,?,?,?)

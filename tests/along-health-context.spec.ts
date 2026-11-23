@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -12,6 +12,17 @@ const summary = { type:'sleep',metric_version:'2026-11-18T04:00:00Z',unit:'min',
  window:{start:'2026-11-17T10:00:00Z',end:'2026-11-18T10:00:00Z'},timezone:'Asia/Shanghai',value:420,availability:'ok',summarizer_version:'along-health-v1' }
 const context = {windowDays:7,daysWithData:5,averageThroughAt:'2026-11-17T10:00:00Z',latestWindowOpen:true,
  latestNightMinutes:420,averageMinutes:420,latestSleepStartAt:'2026-11-17T17:00:00Z',latestWakeAt:'2026-11-18T00:00:00Z'} as const
+it('mirrors the client optional workout and sleep aggregates and rejects raw/contradictory detail',()=>{
+ const fixture=JSON.parse(readFileSync(new URL('./fixtures/health-context-v2.json',import.meta.url),'utf8'))
+ const parse=(row:any)=>EventEnvelopeSchema.safeParse({schema_version:'1',event_id:'v2_context',event_type:'along.health_summary_updated',
+   occurred_at:fixture.observedAt,timezone:fixture.timezone,payload:{event_type:'along.health_summary_updated',summaries:[row]}}).success
+ expect(parse(fixture.workout)).toBe(true);expect(parse(fixture.sleep)).toBe(true)
+ for(const patch of fixture.invalidWorkoutPatches){const row=structuredClone(fixture.workout);Object.assign(row.context.recentSessions[0],patch);expect(parse(row)).toBe(false)}
+ for(const patch of fixture.invalidSleepPatches){const row=structuredClone(fixture.sleep);Object.assign(row.context,patch);expect(parse(row)).toBe(false)}
+ const future=structuredClone(fixture.workout);future.context.recentSessions[0].endAt='2026-11-24T05:00:00Z';expect(parse(future)).toBe(false)
+ const old=structuredClone(fixture.workout);old.context.recentSessions[0].startAt='2026-10-25T01:00:00Z';expect(parse(old)).toBe(false)
+ const empty=structuredClone(fixture.sleep);delete empty.context.latestNightMinutes;expect(parse(empty)).toBe(false)
+})
 it('retains only validated aggregate sleep context without treating the statistics window as the observed sleep interval',()=>{
  const result=EventEnvelopeSchema.safeParse({schema_version:'1',event_id:'sleep_context',event_type:'along.health_summary_updated',occurred_at:summary.metric_version,
  timezone:summary.timezone,payload:{event_type:'along.health_summary_updated',summaries:[{...summary,context}]}})
@@ -75,7 +86,7 @@ it('persists validated context per user and migrates a scalar schema15 row witho
     expect(migrated.latestHealthSummaries('u_context')[0]?.context).toBeUndefined()
     migrated.close()
     const checked = new DatabaseSync(file)
-    expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('17')
+    expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('18')
     const columns = Object.keys(before[0]!).map(key => '"' + key + '"').join(',')
     expect(checked.prepare('SELECT ' + columns + ' FROM health_summary').all()).toEqual(before)
     checked.close()
@@ -107,6 +118,6 @@ it('upgrades schema16 completed health assessments additively and retains the or
   const next=new AlongStore(file);expect(next.health.get(source.eventId)?.result).toEqual({outcome:'keep',types:['sleep'],reason:'Original completed decision'});expect(next.health.get(source.eventId)?.reassessment).toBeUndefined();next.close()
   const checked=new DatabaseSync(file)
   for(const t of tables){const cols=Object.keys(before[t]![0]!).map(c=>'"'+c+'"').join(',');expect(checked.prepare('SELECT '+cols+' FROM '+t).all()).toEqual(before[t])}
-  expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('17');checked.close()
+  expect(checked.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value).toBe('18');checked.close()
  } finally {rmSync(dir,{recursive:true,force:true})}
 })
