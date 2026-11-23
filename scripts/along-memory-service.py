@@ -84,7 +84,10 @@ class MemoryOwner:
         dims = int(os.environ.get("MEMORY_EMBEDDING_DIMS", "1024"))
         config.embedder.embedding_dims = dims
         config.vector_store.embedding_dims = dims
-        config.embedder.batch_size = 10
+        # 单次 HTTP 请求最多带多少条 input（SDK 按此切块）。默认值 10 是百炼
+        # text-embedding-v4 的上限（超了直接 400）；百炼 qwen3.7-text-embedding
+        # 的上限是 20，MiniMax embo-01 实测 512 —— 换供应商时用环境变量调，别改代码。
+        config.embedder.batch_size = int(os.environ.get("MEMORY_EMBEDDER_BATCH_SIZE", "10"))
         # Counts requests, not tokens or a budget. The SDK and the governance check share this diagnostic.
         import httpx
         self.calls = {"llm": 0, "embeddings": 0}

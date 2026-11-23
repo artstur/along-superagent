@@ -41,7 +41,7 @@
 
 ### 接入接口
 
-宿主使用 Python 3.12 环境，固定安装 `hy-memory==2.0.16`。0600 env 文件需要 `MEMORY_LLM_API_KEY/BASE_URL/MODEL` 和 `MEMORY_EMBEDDER_API_KEY/BASE_URL/MODEL` 六项；其他 SDK 参数沿用 [阶段 0 实测配置说明](004-phase0-validation.md#33-hy-memory-接入中实际遇到的问题)。当前 MiniMax 配置用 `max_completion_tokens`、4096 输出预算、`reasoning_effort=low`、省略 temperature、`MEMORY_LLM_MAX_RETRIES=1`；百炼向量为 1024 维、batch size 10。不能把 SDK 的 retries=0 理解成“仍调用一次”。脚本启动时验证版本、权限与必填键，初始化失败只报告不可用，不回显配置。
+宿主使用 Python 3.12 环境，固定安装 `hy-memory==2.0.16`。0600 env 文件需要 `MEMORY_LLM_API_KEY/BASE_URL/MODEL` 和 `MEMORY_EMBEDDER_API_KEY/BASE_URL/MODEL` 六项；其他 SDK 参数沿用 [阶段 0 实测配置说明](004-phase0-validation.md#33-hy-memory-接入中实际遇到的问题)。当前 MiniMax 配置用 `max_completion_tokens`、4096 输出预算、`reasoning_effort=low`、省略 temperature、`MEMORY_LLM_MAX_RETRIES=1`；百炼向量为 1024 维，**batch size 由 `MEMORY_EMBEDDER_BATCH_SIZE` 决定**（默认 10 = 百炼 `text-embedding-v4` 的单请求上限；换供应商时用环境变量调，不要改代码——云端实测见 [Linux 云端部署实测](023-linux-cloud-deployment.md#531-记忆-embedder-的选型云端实测)）。不能把 SDK 的 retries=0 理解成“仍调用一次”。脚本启动时验证版本、权限与必填键，初始化失败只报告不可用，不回显配置。
 
 构建后通过 `dsh-superagent/along-memory` 导出（Python 脚本随包分发）：
 
