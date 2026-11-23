@@ -27,9 +27,10 @@ export const CHAT = 'oc_team'
 export interface StartOptions {
   /** Reuse this directory instead of creating a temp one — restart semantics: nothing is provisioned or
    * re-seeded (everything must come from the persisted orchestrator/along databases), `stop()` keeps the files
-   * so a later `startRuntime(undefined, { dir })` reopens them, and the Along Source registers before `ready`
-   * so deliveries queued before the stop find their Source installed (BC-08-11/BC-09-04). */
+   * so a later `startRuntime(undefined, { dir })` reopens them. The fixture normally pre-registers the Along Source. */
   dir?: string
+  /** Tests can defer Along Source registration until after the restarted Runtime has initialized. */
+  deferAlongSource?: boolean
   /** Overrides the Along business data directory (the BC-07-02 negative test places it inside the execution root). */
   alongStateDir?: string
   /** Production memory backend configuration; tests replace only external SDK I/O. */
@@ -278,10 +279,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: Start
   const ctx = new Context()
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
-  // A reused directory reopens the persisted state as-is — no provisioning, no seed (BC-08-11 reads its
-  // restart assertions from the files the previous run wrote). The Along Source registers before `ready` so
-  // deliveries queued before the stop find their Source installed on the first pump tick instead of being
-  // closed as filtered (`scope` refuses uninstalled kinds terminally).
+  // A reused directory reopens the persisted state as-is (BC-08-11).
   const sources = { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT } } }
   if (!reused) {
     const seeded = new Store(join(directory, 'orchestrator.sqlite'))
@@ -292,7 +290,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: Start
   const runtime = new Runtime(ctx, testMachine({ stateDir: directory,
     alongStateDir, alongBridgeTokenFile: join(alongStateDir, 'bridge-token'), alongMemory: options.alongMemory,
     alongMaintenanceTime: options.alongMaintenanceTime }), vi.fn())
-  if (reused) runtime.sources.register(alongKind)
+  if (reused && !options.deferAlongSource) runtime.sources.register(alongKind)
   await runtime.ready
   if (!reused) {
     runtime.sources.register(feishuKind); runtime.sources.register(githubKind)

@@ -79,6 +79,7 @@ function seededHost(options: { receipts?: AlongEventReceipt[]; withService?: boo
   const settings = fakeSettings()
   const host: AlongApiHost = {
     ...(options.withService === false ? {} : { along: new AlongService(store, { inbox }) }),
+    ready: () => true,
     bridgeToken: BRIDGE_TOKEN,
     settings,
     ...options.hostOverrides,
@@ -222,7 +223,7 @@ describe('event receipts map to the contract status codes', () => {
 
   it('answers 503 while the inbox module is not installed', async () => {
     const store = new AlongStore(join(directory, 'along.sqlite'))
-    const host: AlongApiHost = { along: new AlongService(store), bridgeToken: BRIDGE_TOKEN, settings: fakeSettings() }
+    const host: AlongApiHost = { along: new AlongService(store), ready: () => false, bridgeToken: BRIDGE_TOKEN, settings: fakeSettings() }
     expect((await asA(host, 'POST', 'events', { body: envelope() }))).toEqual({ status: 503, body: { error: 'along_source_not_ready' } })
     store.close()
   })
@@ -265,9 +266,9 @@ describe('reads, sync pull and ack', () => {
 })
 
 describe('readiness', () => {
-  it('answers 503 on every data route until the service is assembled (the probe stays live)', async () => {
+  it('answers 503 on the probe and data routes until the service is assembled', async () => {
     const { host } = seededHost({ withService: false })
-    expect(await asA(host, 'GET', 'goals/along-status-probe')).toEqual({ status: 200, body: { service: 'along-source', ready: true } })
+    expect(await asA(host, 'GET', 'goals/along-status-probe')).toEqual({ status: 503, body: { error: 'along_source_not_ready' } })
     expect((await asA(host, 'GET', 'goals', { query: { user_id: USER_A } })).status).toBe(503)
     expect((await asA(host, 'POST', 'pairing', { body: { user_id: USER_A, device_id: DEVICE_A } })).status).toBe(503)
     expect((await asA(host, 'POST', 'events', { body: envelope() })).status).toBe(503)
