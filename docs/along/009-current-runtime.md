@@ -44,6 +44,10 @@ flowchart TB
 
 本地服务不等于本地模型：必要聊天上下文和获准摘要会发送到所配置的远程 LLM；记忆提取来源与检索查询也会经相应 LLM / Embedding 服务处理。原始 HealthKit 样本仍在手机。
 
+本文描述的是 **Mac 本地形态**。同一套 bundle 在 **Linux 云端**也能长驻运行并承载 Along 数据面，
+实测记录见 [Linux 云端部署实测（V-1 通过）](023-linux-cloud-deployment.md)；
+部署编排由 Along 仓库 `deploy/` 承担。
+
 ## 2. DSH Agent 怎么 run：Router、Engine、Worker 各做什么
 
 它是 DSH 的插件 bundle（包名 `dsh-superagent`），不是每条消息启动一个独立 DSH 服务。`Runtime` 在一个长期运行的 Node 进程中装配业务模块，DSH Session 承载模型会话；Worker Session 不等于新的操作系统进程。
