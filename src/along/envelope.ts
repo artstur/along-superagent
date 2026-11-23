@@ -66,7 +66,7 @@ export const HealthSummaryPayloadSchema = z.object({
     const observedAt = Date.parse(s.metric_version)
     const times = s.context.windowDays === 7
       ? [s.context.averageThroughAt, s.context.latestSleepStartAt, s.context.latestWakeAt]
-      : [s.context.weekStartAt, s.context.latestWorkoutAt, ...s.context.patterns.map(item => item.lastObservedAt)]
+      : [s.context.weekStartAt, s.context.latestWorkoutAt, ...s.context.patterns.map(item => item.lastObservedAt),...(s.context.recentSessions??[]).flatMap(item=>[item.startAt,item.endAt])]
     if (times.some(value => value && Date.parse(value) > observedAt)) {
       ctx.addIssue({ code: 'custom', message: 'Observed aggregate times cannot be after collection', path: ['context'] })
     }
@@ -79,6 +79,17 @@ export const HealthSummaryPayloadSchema = z.object({
       if (window && [start, end].some(value => value &&
         (Date.parse(value) < Date.parse(window.start) || Date.parse(value) > Date.parse(window.end)))) {
         ctx.addIssue({ code: 'custom', message: 'Observed sleep bounds must belong to the labelled window', path: ['context'] })
+      }
+    } else if(s.context.recentSessions) {
+      try {
+        const date=new Intl.DateTimeFormat('en-CA',{timeZone:s.timezone,year:'numeric',month:'2-digit',day:'2-digit'})
+        const [year,month,day]=date.format(new Date(observedAt)).split('-').map(Number)
+        const since=new Date(Date.UTC(year!,month!-1,day!-27)).toISOString().slice(0,10)
+        const rows=s.context.recentSessions
+        if(rows.some((row,index)=>date.format(new Date(row.startAt))<since||index>0&&Date.parse(row.startAt)>Date.parse(rows[index-1]!.startAt)))
+          ctx.addIssue({code:'custom',message:'Recent sessions must be ordered within the 28 local-day observation window',path:['context','recentSessions']})
+      } catch {
+        ctx.addIssue({code:'custom',message:'Recent sessions require a valid source timezone',path:['timezone']})
       }
     }
   }

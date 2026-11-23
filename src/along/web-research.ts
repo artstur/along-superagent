@@ -14,6 +14,12 @@ export interface ResearchWeb {
  /** Check the live public settings immediately before dispatch, after asynchronous DNS checks. */
  assertProvider(kind:'search'|'fetch'):void
 }
+/** Pure configuration check; never a credential/network probe and never a fallback provider change. */
+export function researchCapability(web:ResearchWeb|undefined):{configured:boolean;code?:string;action?:string} {
+ if(!web)return {configured:false,code:'WEB_PROVIDER_UNAVAILABLE',action:'恢复已授权的联网检索服务后可继续此任务。'}
+ try {web.assertProvider('search');web.assertProvider('fetch');return {configured:true}}
+ catch(error){const result=failure(error);return {configured:false,code:result.code,action:result.action}}
+}
 const PURPOSE=z.enum(['weather','alerts','access','route','general'])
 const messages:Record<string,string>={
  WEB_PROVIDER_CREDENTIAL_MISSING:'联网授权不可用，请在 Mac 上恢复已授权的搜索账户后重试。',

@@ -6,7 +6,46 @@ import { alongTools } from '../src/along/tools.ts'
 
 const userId='u_trigger',deviceId='d_trigger'
 let host:Host|undefined
-afterEach(async()=>{await host?.stop();host=undefined})
+afterEach(async()=>{await host?.stop();host=undefined;vi.useRealTimers()})
+
+it('waits durably for safe public-research configuration, resumes once and pauses retries if that configuration disappears',async()=>{
+ vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-24T04:00:00Z'))
+ const h=host=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}));h.runtime.sources.register(alongKind)
+ const settings=h.runtime.store.settings();h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...settings.policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}})
+ let configured=false
+ const search=vi.fn(async()=>({sources:[],truncated:false})),fetch=vi.fn(),original=h.ctx.get.bind(h.ctx)
+ vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search,fetch}:name==='settings'?{describe:()=>[
+   {ns:'web',value:configured?{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}:{fetchProvider:'http'}},
+   {ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:original(name as never))
+ const service=h.runtime.along!.service,store=service.alongStore;store.assertUser(userId,deviceId)
+ const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({userId,goalId:goal.id,title:'合成推荐目标',status:'active'});store.ensureInputVersion(userId,goal.id)
+ const tools=alongTools({service,scopeFor:()=>({userId,allowedGoalId:goal.id}),web:()=>({search,fetch,assertProvider:kind=>{
+   if(!configured)throw Object.assign(Error('configuration unavailable'),{code:'RESEARCH_REMOTE_PROVIDER_REQUIRED'})
+ }})},'synthetic_setup')
+ const capabilities=tools.find(tool=>tool.name==='along_execution_capabilities')!
+ expect(await capabilities.execute({},new AbortController().signal)).toMatchObject({public_research:{installed:true,configured:false}})
+ const commit=tools.find(tool=>tool.name==='along_changes_commit')!,input={idempotency_key:'wait_for_public_provider',base_revision:1,input_version:1,reason:'等待已授权联网配置恢复',
+   ops:[{op:'task.create',content:'研究适合的合成活动',trigger:{kind:'waiting',actor:'agent',capability:'research',resume:'capability_available',reason:'联网配置暂不可用'}}]}
+ expect(await commit.execute(commit.schema.parse(input),new AbortController().signal)).toMatchObject({status:'applied'})
+ const task=store.listTasks(userId,{goalId:goal.id},{limit:20}).items[0]!
+ for(let pass=0;pass<3;pass++)await h.runtime.pump()
+ expect(h.runtime.store.tickets.list()).toHaveLength(0);expect(store.getTask(userId,task.id)?.trigger?.state).toBe('waiting')
+ configured=true;await h.runtime.pump();await h.runtime.idle()
+ const ticket=h.runtime.store.tickets.list().find(t=>t.mandate.basis.via==='task_due')!
+ expect(ticket).toBeDefined();await vi.waitFor(()=>expect(h.tools.has('worker-'+ticket.id)).toBe(true))
+ const dispatch=h.runtime.along!.healthFollowup.forTicket(ticket.id)!,occurrence=store.triggers.forDispatch(dispatch.eventId)!
+ await h.runTool('worker-'+ticket.id,'along_task_context',{})
+ await h.runTool('worker-'+ticket.id,'orchestrator_report',{state:'blocked',summary:'合成：配置临时失效前的暂停'})
+ const retry=vi.spyOn(h.runtime.engine,'retryTicket')
+ configured=false;vi.setSystemTime(new Date('2026-11-24T04:02:00Z'));await h.runtime.pump();await h.runtime.idle()
+ expect(retry).not.toHaveBeenCalled();expect(store.triggers.forDispatch(dispatch.eventId)?.id).toBe(occurrence.id)
+ expect(h.runtime.store.tickets.list()).toHaveLength(1)
+ configured=true;await h.runtime.pump();await h.runtime.idle()
+ expect(store.triggers.forDispatch(dispatch.eventId)?.id).toBe(occurrence.id)
+ expect(store.getTask(userId,task.id)?.trigger?.state).toBe('running')
+ expect(h.runtime.store.tickets.list()).toHaveLength(1)
+ expect(search).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled()
+},30000)
 
 it('executes a newly planned immediate calculation through the durable due outbox and records one real result',async()=>{
  const h=host=await startRuntime(s=>s.saveSettings({...s.settings(),sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}}}))
@@ -134,7 +173,7 @@ it('does not complete a research operation from an empty unavailable recommendat
  h.runtime.sources.register(alongKind)
  const settings=h.runtime.store.settings()
  h.runtime.store.saveSettings({...settings,sources:{along:{enabled:true,config:{}},github:{enabled:false,config:{}}},policy:{...settings.policy,sources:{along:{allowed:[{id:userId}],admission:{}}}}})
- vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
+ vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:undefined)
  const store=h.runtime.along!.service.alongStore;store.assertUser(userId,deviceId)
  const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({userId,goalId:goal.id,title:'研究合成活动方案',status:'active'});store.ensureInputVersion(userId,goal.id)
  const task=store.insertTask({userId,goalId:goal.id,content:'研究合成活动方案'});store.appendTaskRevision({userId,taskId:task.id})

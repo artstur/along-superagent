@@ -15,6 +15,7 @@ import { CALCULATION_SCHEMA } from './calculation-store.ts'
 import { SOURCE_STATE_SCHEMA } from './source-state.ts'
 import { SOURCE_GOAL_REVIEW_DDL } from './source-goal-review.ts'
 import { CALCULATION_EVIDENCE_DDL } from './calculation-evidence.ts'
+import { HEALTH_DAILY_DDL } from './health-daily.ts'
 
 /** Raised when `along.sqlite` cannot be opened or migrated; the caller must abort startup. */
 export class AlongSchemaError extends Error {}
@@ -34,6 +35,7 @@ export function alongSchemaVersion(db: DatabaseSync): number | undefined {
  * Phase A starts at version 1 with no steps; future versions add one entry each.
  */
 const MIGRATIONS: Record<number, (db: DatabaseSync) => void> = {
+  18: db => db.exec(HEALTH_DAILY_DDL),
   17: db => {
     const columns=db.prepare('PRAGMA table_info(health_dispatch)').all()
     for(const name of ['reassessment_of','reassessment_reason'])

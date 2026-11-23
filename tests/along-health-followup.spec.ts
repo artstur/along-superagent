@@ -91,6 +91,120 @@ async function setup() {
   }
   return { h, store, goal, task, event, dispatch }
 }
+it.each(['all_then_missing','typed_then_missing'])('accumulates health reads without treating a missing type as a new observation (%s)',async mode=>{
+ const {h,store,task,event,dispatch}=await setup()
+ event('sleep_for_read_projection',summaries(420,'sleep','2026-11-16T04:00:00Z',{start:'2026-11-15T10:00:00Z',end:'2026-11-16T10:00:00Z'}))
+ const first=await dispatch()
+ await h.runTool(first.worker,'along_health_read',mode==='typed_then_missing'?{type:'sleep'}:{})
+ expect(await h.runTool(first.worker,'along_health_read',{type:'steps'})).toMatchObject({summaries:[]})
+ expect(await h.runTool(first.worker,'along_health_read',{type:'workout'})).toMatchObject({summaries:[]})
+ expect(store.health.get(store.getWorkLink(first.ticket.id)!.eventId!)?.readSnapshot).toMatchObject([{type:'sleep',value:420}])
+ expect(await h.runTool(first.worker,'along_changes_commit',{idempotency_key:'read_projection_update',base_revision:1,input_version:1,reason:'依据已读睡眠事实调整',
+   ops:[{op:'task.update',task_id:task.id,base_revision:task.currentRevision,fields:{content:'保留今天的已知约定'}}]})).toMatchObject({status:'applied'})
+ expect(await h.runTool(first.worker,'along_health_followup',{outcome:'update',types:['sleep'],reason:'已按真实读取的事实复评'})).toMatchObject({status:'recorded'})
+},25000)
+it('retains only the exact shipped health trigger guidance across upgrade while refusing changed authority or arbitrary wording',async()=>{
+ const {h,event,dispatch}=await setup();event('pre_upgrade_guidance')
+ const first=await dispatch(),t=h.runtime.store.triggers.get(first.ticket.origin.triggerId)!
+ const legacy='Health summaries changed. Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.'
+ h.runtime.store.triggers.save({...t,text:legacy})
+ expect(h.runtime.along!.healthFollowup.forTicket(first.ticket.id)).toBeDefined()
+ expect(await h.runTool(first.worker,'along_health_read',{})).toMatchObject({summaries:[{type:'steps'}]})
+ h.runtime.store.triggers.save({...t,text:legacy,actor:{source:'along',id:'foreign'}})
+ expect(h.runtime.along!.healthFollowup.forTicket(first.ticket.id)).toBeUndefined()
+ h.runtime.store.triggers.save({...t,text:'arbitrary new instructions'})
+ expect(h.runtime.along!.healthFollowup.forTicket(first.ticket.id)).toBeUndefined()
+},25000)
+it('persists a next-local-day planning opportunity without inventing a health upload or midnight notification',async()=>{
+ const {h,store,goal,task,event,dispatch}=await setup()
+ const sleep=summaries(420,'sleep','2026-11-16T04:00:00Z',{start:'2026-11-15T10:00:00Z',end:'2026-11-16T10:00:00Z'})
+ Object.assign(sleep[0]!,{context:{windowDays:7,daysWithData:4,averageThroughAt:'2026-11-15T10:00:00Z',latestWindowOpen:true,
+   latestNightMinutes:420,latestSleepStartAt:'2026-11-15T17:00:00Z',latestWakeAt:'2026-11-16T00:00:00Z'}})
+ event('daily_sleep_baseline',sleep)
+ const first=await dispatch();await h.runTool(first.worker,'along_health_read',{})
+ await h.runTool(first.worker,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'保留安排，明天根据最新情况再评估',next_review_at:'2026-11-17T01:00:00Z'})
+ await h.runTool(first.worker,'orchestrator_report',{state:'ready',summary:'保持安排'});await h.runtime.idle()
+ expect(store.health.reviewSchedule(goal.id)).toMatchObject({timezone:'Asia/Shanghai',nextAt:'2026-11-17T01:00:00.000Z'})
+ vi.setSystemTime(new Date('2026-11-16T16:00:00Z')) // local midnight: no notification or extra Worker
+ await h.runtime.pump();await h.runtime.idle();expect(h.runtime.store.tickets.list()).toHaveLength(1)
+ vi.setSystemTime(new Date('2026-11-17T00:59:00Z'));await h.runtime.pump();expect(h.runtime.store.tickets.list()).toHaveLength(1)
+ vi.setSystemTime(new Date('2026-11-17T01:00:00Z'));const second=await dispatch()
+ expect(h.runtime.store.triggers.get(second.ticket.origin.triggerId)).toMatchObject({human:false,meta:{event_type:'along.health_daily_review'}})
+ expect(await h.runTool(second.worker,'along_health_read',{})).toMatchObject({
+   daily_review:{timezone:'Asia/Shanghai',localDate:'2026-11-17'},summaries:[{metric_version:'2026-11-16T04:00:00Z'}]})
+ await h.runTool(second.worker,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'没有新一夜数据，现有安排仍适用'})
+ await h.runTool(second.worker,'orchestrator_report',{state:'ready',summary:'保留原任务'});await h.runtime.idle()
+ await h.runtime.pump();expect(h.runtime.store.tickets.list()).toHaveLength(2)
+ expect(store.getTask(USER,task.id)).toEqual(task)
+ expect(store.counts(USER).messages).toBe(0)
+ expect(store.syncPage(USER,0,200).items.some(item=>(item.payload as any).notification)).toBe(false)
+},25000)
+it('continues an explicitly scheduled applied goal plan with no invented watched health metric, while unrelated keep cannot start one',async()=>{
+ const {h,store,goal,task,event,dispatch}=await setup()
+ event('diet_planning_clock',summaries(420,'sleep','2026-11-16T04:00:00Z',{start:'2026-11-15T10:00:00Z',end:'2026-11-16T10:00:00Z'}))
+ const first=await dispatch();await h.runTool(first.worker,'along_health_read',{})
+ await expect(h.runTool(first.worker,'along_health_followup',{outcome:'keep',types:[],reason:'无关目标不能凭空开启每日复评',next_review_at:'2026-11-17T01:00:00Z'})).rejects.toThrow('applied goal plan')
+ expect(store.health.reviewSchedule(goal.id)).toBeUndefined()
+ expect(await h.runTool(first.worker,'along_changes_commit',{idempotency_key:'goal_plan_with_followup',base_revision:1,input_version:1,reason:'按已授权目标细化已有行动',ops:[{
+   op:'task.update',task_id:task.id,base_revision:task.currentRevision,fields:{content:'午饭后按现有安排散步'}}]})).toMatchObject({status:'applied'})
+ await h.runTool(first.worker,'along_health_followup',{outcome:'update',types:[],reason:'该目标行动不依赖睡眠数值，明天复评下一步',next_review_at:'2026-11-17T01:00:00Z'})
+ await h.runTool(first.worker,'orchestrator_report',{state:'ready',summary:'当前行动已安排，下次只是规划复评'});await h.runtime.idle()
+ expect(store.health.state(goal.id)?.types).toEqual([])
+ event('unrelated_new_steps',summaries(500))
+ const unrelated=await dispatch();await h.runTool(unrelated.worker,'along_health_read',{})
+ await h.runTool(unrelated.worker,'along_health_followup',{outcome:'keep',types:[],reason:'步数无关，不应擦掉已经明确安排的目标复评时钟'})
+ await h.runTool(unrelated.worker,'orchestrator_report',{state:'ready',summary:'忽略无关数据，保留目标时钟'});await h.runtime.idle()
+ expect(store.health.reviewSchedule(goal.id)?.nextAt).toBe('2026-11-17T01:00:00.000Z')
+ vi.setSystemTime(new Date('2026-11-17T01:00:00Z'));const second=await dispatch()
+ expect(h.runtime.store.triggers.get(second.ticket.origin.triggerId)?.meta.event_type).toBe('along.health_daily_review')
+ await h.runTool(second.worker,'along_health_read',{})
+ await h.runTool(second.worker,'along_health_followup',{outcome:'keep',types:[],reason:'继续这个已应用目标计划的复评',next_review_at:'2026-11-18T01:00:00Z'})
+ expect(store.health.reviewSchedule(goal.id)?.nextAt).toBe('2026-11-18T01:00:00.000Z')
+ await h.runTool(second.worker,'orchestrator_report',{state:'ready',summary:'保留任务，继续规划时钟'});await h.runtime.idle()
+ vi.setSystemTime(new Date('2026-11-19T01:00:00Z'));const third=await dispatch()
+ expect(await h.runTool(third.worker,'along_health_read',{})).toMatchObject({summaries:[],daily_review:{localDate:'2026-11-19',current_observations_available:false}})
+ await h.runTool(third.worker,'along_health_followup',{outcome:'keep',types:[],reason:'旧数据已过期，不伪造新睡眠，但目标计划时钟可继续',next_review_at:'2026-11-20T01:00:00Z'})
+ expect(store.health.reviewSchedule(goal.id)?.nextAt).toBe('2026-11-20T01:00:00.000Z')
+},25000)
+it('rejects a stale same-night plan when corrected sleep bounds arrive, then assesses current facts without schedule starvation',async()=>{
+ const {h,store,goal,task,event,dispatch}=await setup()
+ const base=summaries(420,'sleep','2026-11-16T04:00:00Z',{start:'2026-11-15T10:00:00Z',end:'2026-11-16T10:00:00Z'})
+ const context={windowDays:7,daysWithData:4,averageThroughAt:'2026-11-15T10:00:00Z',latestWindowOpen:true,
+   latestNightMinutes:420,latestSleepStartAt:'2026-11-15T17:00:00Z',latestWakeAt:'2026-11-16T00:00:00Z'}
+ Object.assign(base[0]!,{context});event('old_sleep_plan',base)
+ const first=await dispatch();await h.runTool(first.worker,'along_health_read',{})
+ const corrected=structuredClone(base);Object.assign(corrected[0]!,{metric_version:'2026-11-16T04:05:00Z',context:{...context,latestSleepStartAt:'2026-11-15T19:00:00Z',latestWakeAt:'2026-11-16T02:00:00Z'}})
+ event('corrected_sleep',corrected)
+ expect(await h.runTool(first.worker,'along_changes_commit',{idempotency_key:'stale_sleep_changes',base_revision:1,input_version:1,reason:'旧数据的调整',
+   ops:[{op:'task.update',task_id:task.id,base_revision:task.currentRevision,fields:{content:'不该由旧睡眠数据覆盖'}}]})).toMatchObject({status:'conflicted',reason:'conflicted_health'})
+ expect(await h.runTool(first.worker,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'过期结论'})).toMatchObject({status:'conflicted'})
+ await h.runtime.pump();await h.runtime.idle()
+ const second=h.runtime.store.tickets.list().find(ticket=>ticket.id!==first.ticket.id)!
+ expect(second).toBeDefined();await vi.waitFor(()=>expect(h.tools.has('worker-'+second.id)).toBe(true),{timeout:10000})
+ expect(await h.runTool('worker-'+second.id,'along_health_read',{})).toMatchObject({summaries:[{context:{latestWakeAt:'2026-11-16T02:00:00Z'}}]})
+ await h.runTool('worker-'+second.id,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'当前修正事实下保留原有约定'})
+ expect(store.health.state(goal.id)?.baseline[0]?.metricVersion).toBe('2026-11-16T04:05:00Z')
+ expect(store.health.reviewSchedule(goal.id)?.nextAt).toBe('2026-11-17T02:30:00.000Z')
+ expect(store.getTask(USER,task.id)?.content).toBe(task.content)
+ expect(store.counts(USER).messages).toBe(0)
+},25000)
+it('invalidates an old-zone daily review and replans its clock from a genuinely new accepted source timezone',async()=>{
+ const {h,store,goal,event,dispatch}=await setup()
+ const sleep=summaries(420,'sleep','2026-11-16T04:00:00Z',{start:'2026-11-15T10:00:00Z',end:'2026-11-16T10:00:00Z'})
+ event('timezone_baseline',sleep);const first=await dispatch();await h.runTool(first.worker,'along_health_read',{})
+ await h.runTool(first.worker,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'按原时区复评',next_review_at:'2026-11-17T01:00:00Z'})
+ await h.runTool(first.worker,'orchestrator_report',{state:'ready',summary:'保持'});await h.runtime.idle()
+ vi.setSystemTime(new Date('2026-11-17T01:00:00Z'));const old=await dispatch();await h.runTool(old.worker,'along_health_read',{})
+ const changed=structuredClone(sleep);Object.assign(changed[0]!,{timezone:'America/New_York',metric_version:'2026-11-17T01:00:00Z'})
+ event('new_actual_timezone',changed)
+ expect(await h.runTool(old.worker,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'不能沿旧日历继续'})).toMatchObject({status:'conflicted'})
+ await h.runtime.pump();await h.runtime.idle()
+ const fresh=h.runtime.store.tickets.list().find(ticket=>ticket.id!==first.ticket.id&&ticket.id!==old.ticket.id)!
+ expect(fresh).toBeDefined();await vi.waitFor(()=>expect(h.tools.has('worker-'+fresh.id)).toBe(true))
+ expect(await h.runTool('worker-'+fresh.id,'along_health_read',{})).toMatchObject({summaries:[{timezone:'America/New_York'}]})
+ await h.runTool('worker-'+fresh.id,'along_health_followup',{outcome:'keep',types:['sleep'],reason:'使用已接受的新时区重新安排复评',next_review_at:'2026-11-17T14:00:00Z'})
+ expect(store.health.reviewSchedule(goal.id)).toMatchObject({timezone:'America/New_York',nextAt:'2026-11-17T14:00:00.000Z'})
+},25000)
 it('automatically creates non-human work and applies a task update without any new chat, with durable result and sync', async () => {
   const { h, store, goal, task, event, dispatch } = await setup()
   expect(event('health_first')).toMatchObject({ status: 'accepted' })
@@ -113,6 +227,8 @@ it('automatically creates non-human work and applies a task update without any n
   expect(await h.runTool(worker, 'along_health_read', {})).toMatchObject({
     summaries: [{ type: 'steps', value: 1000 }]
   })
+  expect(await h.runTool(worker,'along_health_followup',{outcome:'keep',types:['steps'],reason:'拒绝不完整Unicode',text:'raw\ud800'})).toMatchObject({status:'invalid',reason:'invalid_arguments',issues:[{path:'text',message:expect.stringContaining('Unicode')}]})
+  expect(store.health.state(goal.id)).toBeUndefined()
   const commit = {
     idempotency_key: 'health_adjust',
     base_revision: read.goal.current_revision,

@@ -22,50 +22,12 @@ import { OKXHistoryReportSchema,okxHistoryResultText } from './okx-history.ts'
 import type { AlongIdentity,AlongCommitScope } from './service.ts'
 import { TaskActivation, type ActivationHost } from './task-activation.ts'
 import type { CalculationScope } from './calculation-store.ts'
+import { healthLocalDate, healthTimezone } from './health-daily.ts'
+import { MAX_TASK_RESULT_TEXT, ResultPresentationSchema, textPresentation, recommendationPresentation, legacyTaskResultPreview } from './result-presentation.ts'
+import { healthSummaryIsCurrent, significantHealthChange, healthSnapshotSuperseded } from './health-facts.ts'
+import { wellFormedProductText } from './product-text.ts'
+export { healthSummaryIsCurrent, significantHealthChange } from './health-facts.ts'
 
-const thresholds: Record<string, number> = {
-  steps: 500,
-  workout: 5,
-  active_energy: 50,
-  weight: 0.1,
-  resting_heart_rate: 3,
-  wrist_temperature: 0.1,
-  sleep: 15
-}
-/** Freshness describes applicability, never fabricates a zero from missing/offline data. */
-export function healthSummaryIsCurrent(s: HealthSummaryRow, now = Date.now()): boolean {
-  if (s.summarizerVersion !== 'along-health-v1') return true
-  const end = Date.parse(s.windowEnd ?? '')
-  if (['steps', 'workout', 'active_energy'].includes(s.type)) return end > now
-  if (s.type === 'sleep') return end > now - 36 * 60 * 60_000
-  if (s.type === 'resting_heart_rate') return s.availability !== 'ok' || end > now - 7 * 86400_000
-  if (s.type === 'wrist_temperature') return s.availability !== 'ok' || end > now - 30 * 86400_000
-  return true
-}
-const comparable = (s: HealthSummaryRow) => [
-  s.type,
-  s.windowStart,
-  s.windowEnd,
-  s.timezone,
-  s.unit,
-  s.statistic,
-  s.summarizerVersion
-]
-export function significantHealthChange(current: HealthSummaryRow, previous?: HealthSummaryRow): boolean {
-  if (
-    !previous ||
-    !isDeepStrictEqual(comparable(current), comparable(previous)) ||
-    current.availability !== previous.availability ||
-    !isDeepStrictEqual(current.context, previous.context)
-  )
-    return true
-  if (current.availability !== 'ok') return false
-  return (
-    typeof current.value === 'number' &&
-    typeof previous.value === 'number' &&
-    Math.abs(current.value - previous.value) + 1e-9 >= (thresholds[current.type] ?? 0)
-  )
-}
 /** Typed goal crossings bypass noise thresholds; never infer numeric targets from prose. */
 export function healthTargetCrossed(
   current: HealthSummaryRow,
@@ -167,21 +129,40 @@ export class HealthFollowup {
       human: false,
       at: d.createdAt,
       threads: [{ source: 'along', id: `goal/${d.goalId}/health/${d.eventId}` }],
-      text: (d.reassessment ? 'Host requested a review of an earlier completed assessment against existing accepted health facts; this is not a new observation or user instruction. ' : 'Health summaries changed. ') + 'Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.',
-      meta: { event_type: d.reassessment?'along.health_reassessment':'along.health_summary_updated', goal_id: d.goalId, health_dispatch: d.eventId, ...(d.reassessment?{source_health_dispatch:d.reassessment.sourceDispatchId,review_reason:d.reassessment.reason}:{}) }
+      text: (d.dailyReview ? `The next local-day health planning review is due (${d.dailyReview.localDate}, ${d.dailyReview.timezone}). The clock is not a new phone observation. ` : d.reassessment ? 'Host requested a review of an earlier completed assessment against existing accepted health facts; this is not a new observation or user instruction. ' : 'Health summaries changed. ') + 'Read the bound goal, conversation, tasks, memory and along_health_read. Load the health skill. Decide relevance and unmet goal needs semantically; incidental health data is not a new goal or a wellness checklist. Use applicable sleep duration/timing, activity and profile only when useful. Consider alternatives beyond yoga/hiking without inventing facts. Preserve fixed commitments and avoid redundant actions. Every added action needs a useful real trigger; bedtime preparation is not an immediate noon action. Keep the goal unchanged and persist only minimum useful changes. Call along_health_followup with relevant watched types, a reason and, when relevant, next_review_at before reporting ready. Ordinary keep is silent.',
+      meta: { event_type: d.dailyReview?'along.health_daily_review':d.reassessment?'along.health_reassessment':'along.health_summary_updated', goal_id: d.goalId, health_dispatch: d.eventId, ...(d.reassessment?{source_health_dispatch:d.reassessment.sourceDispatchId,review_reason:d.reassessment.reason}:{}) }
     }
   }
   private bound(t: Trigger): HealthDispatch | undefined {
     const d =
       typeof t.meta.task_trigger_review==='string'?this.host.store.health.get(t.meta.task_trigger_review):
       typeof t.meta.health_dispatch === 'string' ? this.host.store.health.get(t.meta.health_dispatch) : undefined
-    return d && isDeepStrictEqual(t, this.trigger(d)) ? d : undefined
+    if(!d)return undefined
+    const expected=this.trigger(d)
+    if(isDeepStrictEqual(t,expected))return d
+    // A package upgrade changes guidance, not the identity or authority of a persisted main-v17
+    // health work item. Accept only its exact previously shipped text and all identical scope fields.
+    if(!d.dailyReview&&!d.due&&!d.repair&&!d.sourceReview) {
+      const prefix=d.reassessment?'Host requested a review of an earlier completed assessment against existing accepted health facts; this is not a new observation or user instruction. ':'Health summaries changed. '
+      const legacy=prefix+'Read the bound goal, conversation, tasks, memory and along_health_read. Decide relevance semantically. Keep the user goal unchanged; adjust tasks only when justified. Call along_health_followup with watched types and a reason before reporting ready. Ordinary keep needs no chat or notification.'
+      if(t.text===legacy&&isDeepStrictEqual({...t,text:expected.text},expected))return d
+    }
+    return undefined
   }
   private current(d: HealthDispatch): boolean {
     const store = this.host.store
     if(d.sourceReview)return sourceReviewCurrent(store,d)
     if(d.repair)return taskReviewCurrent(store,d)
     if (d.inputVersion !== store.inputVersion(d.goalId)) return false
+    if(!d.due&&d.readSnapshot) {
+      const state=store.health.state(d.goalId)
+      const watched=state?.inputVersion===d.inputVersion?state.types:HEALTH_SUMMARY_TYPES
+      if(healthSnapshotSuperseded(store.latestHealthSummaries(d.userId),d.readSnapshot,watched,d.snapshot))return false
+    }
+    if(d.dailyReview) {
+      const current=store.latestHealthSummaries(d.userId).filter(row=>row.adapter==='known'&&row.summarizerVersion==='along-health-v1')
+      if(healthTimezone(current)!==d.dailyReview.timezone||healthLocalDate(Date.now(),d.dailyReview.timezone)!==d.dailyReview.localDate)return false
+    }
     if(!this.activation.current(d))return false
     if (!d.due) return true
     const task = store.getTask(d.userId, d.due.taskId)
@@ -194,7 +175,7 @@ export class HealthFollowup {
     return {
       ...base,
       gate: (t, thread, tickets) => {
-        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (!['along.health_summary_updated','along.health_reassessment'].includes(String(t.meta.event_type)) || t.meta.health_dispatch === undefined))
+        if (t.meta.event_type!=='along.source_ready_review'&&t.meta.event_type!=='along.task_trigger_review'&&t.meta.event_type !== 'along.task_due' && (!['along.health_summary_updated','along.health_reassessment','along.health_daily_review'].includes(String(t.meta.event_type)) || t.meta.health_dispatch === undefined))
           return base.gate(t, thread, tickets)
         const d = this.bound(t),
           g = d && this.host.store.getGoal(d.userId, d.goalId)
@@ -229,8 +210,8 @@ export class HealthFollowup {
     this.host.engine().decide(t.id, {
       evalId: candidate.evalId,
       kind: 'accept',
-      title: d.sourceReview?'来源就绪后续评':d.repair?'任务触发修复':d.due ? '到期任务复查' : '健康变化跟进',
-      name: d.sourceReview?'source-goal-review':d.repair?'task-trigger-review':d.due ? 'scheduled-task-review' : 'health-followup',
+      title: d.sourceReview?'来源就绪后续评':d.repair?'任务触发修复':d.due ? '到期任务复查' : d.dailyReview?'每日健康计划复评':'健康变化跟进',
+      name: d.sourceReview?'source-goal-review':d.repair?'task-trigger-review':d.due ? 'scheduled-task-review' : d.dailyReview?'daily-health-planning':'health-followup',
       scope: d.sourceReview?'Review this goal against current accepted source capability metadata. Preserve original human tasks and unrelated typed fields; create only useful separate typed Agent steps or honest need_data. Never read private data, change goals, post chat or execute tasks in this review.':d.repair?'Inspect and repair only this existing task trigger/plan through validated ChangeSets; preserve goal, other tasks, content, status and existing clock. Read original evidence and finish with persisted postconditions. No user chat or execution notification.':d.due ? 'Review the single bound due task under the current user mandate. Never change the goal.' :
         'Evaluate the bound existing goal against current aggregate health data; update user tasks through validated Along tools or keep. Never create, rewrite or archive the goal.',
       reason: d.sourceReview?'Host-verified new-capability bootstrap for an existing goal':d.repair?'Persisted private task-trigger maintenance request with real same-goal user evidence':d.due ? 'Host-verified scheduled task for an allowed paired user' : 'Host-verified health change for an allowed paired user',
@@ -282,6 +263,7 @@ export class HealthFollowup {
     const submittedGoals=new Set<string>()
     for (const d of store.health.pending()) {
       if (!this.allowed(d.userId)) continue
+      if(!this.activation.capabilityAvailable(d))continue
       const ticket = repo.tickets.list().find((t) => t.origin.triggerId === this.trigger(d).id)
       if(d.sourceReview?.capabilities.includes('trading_history')) {
         if(!d.sourceReview.legacyTasks.length&&sourceReviewHistoryAlreadyPlanned(store,d)) {
@@ -291,9 +273,9 @@ export class HealthFollowup {
         }
         if(this.directPlanningActive(d.userId,d.goalId))continue
       }
-      if ((d.due||d.repair||d.sourceReview) && !this.current(d)) {
+      if (!this.current(d)) {
         if (ticket && !ticket.ended && latestAssignment(ticket) && latestAssignment(ticket)!.state !== 'ended') this.host.engine().report(ticket.id, { state: 'dropped', summary: 'Superseded scheduled task.' })
-        if(d.sourceReview)store.health.retireSourceReview(d.eventId);else if(d.repair)store.health.retireRepair(d.eventId);else store.health.retireDue(d.eventId)
+        if(d.sourceReview)store.health.retireSourceReview(d.eventId);else if(d.repair)store.health.retireRepair(d.eventId);else if(d.due)store.health.retireDue(d.eventId)
         continue
       }
       if (ticket) {
@@ -371,10 +353,10 @@ export class HealthFollowup {
     }
     for (const userId of store.health.users()) {
       if (!this.allowed(userId)) continue
-      const summaries = store
+      const observed = store
         .latestHealthSummaries(userId)
-        .filter((s) => s.adapter === 'known' && s.summarizerVersion === 'along-health-v1' && healthSummaryIsCurrent(s))
-      if (!summaries.length) continue
+        .filter((s) => s.adapter === 'known' && s.summarizerVersion === 'along-health-v1')
+      const summaries=observed.filter(s=>healthSummaryIsCurrent(s))
       // Pagination is intentional: no implicit first-200-goals limit.
       let cursor: string | undefined
       do {
@@ -385,10 +367,13 @@ export class HealthFollowup {
           const version = store.inputVersion(goal.id)
           if (busy(goal.id, version)) continue
           const state = store.health.state(goal.id)
+          const savedClock=store.health.reviewSchedule(goal.id),observedZone=healthTimezone(observed)
+          const timezoneChanged=savedClock?.inputVersion===version&&observedZone!==undefined&&savedClock.timezone!==observedZone
           const metric = store.currentGoalRevision(goal.id)?.metric
           const watched: readonly string[] = state?.inputVersion === version ? state.types : HEALTH_SUMMARY_TYPES
-          if (
+          const unchanged = (
             state?.inputVersion === version &&
+            !timezoneChanged &&
             !summaries.some((s) => !state.seenTypes.includes(s.type)) &&
             !summaries.some(
               (s) =>
@@ -404,7 +389,18 @@ export class HealthFollowup {
                   ))
             )
           )
+          if(unchanged) {
+            if(!state.types.length&&!store.health.reviewSchedule(goal.id))continue
+            store.health.ensureReviewSchedule(goal.id)
+            const schedule=store.health.reviewSchedule(goal.id),zone=healthTimezone(state.types.length?observed.filter(row=>watched.includes(row.type)):observed)
+            if(!schedule||schedule.inputVersion!==version||schedule.timezone!==zone||Date.parse(schedule.nextAt)>Date.now())continue
+            const d=store.health.dispatchDaily(userId,goal.id,version,summaries,{timezone:schedule.timezone,
+              localDate:healthLocalDate(Date.now(),schedule.timezone),scheduledAt:schedule.nextAt})
+            const t=this.trigger(d)
+            if(!d.result&&!repo.triggers.get(t.id))this.host.engine().receive(t)
             continue
+          }
+          if(!summaries.length)continue
           // All current values travel in one bounded snapshot; later arrivals wait for the next work.
           const d = store.health.dispatch(userId, goal.id, version, summaries)
           const t = this.trigger(d)
@@ -467,9 +463,13 @@ export class HealthFollowup {
   read(ticketId: string, summaries: HealthSummaryRow[]) {
     const d = this.forTicket(ticketId)
     const mandate=d?.due?this.host.store.health.daily(d.due.taskId):undefined
-    const eligible = d?.due ? this.dueSummaries(d.userId, d.goalId, d.due.dueAt).filter(s => summaries.some(row => row.id === s.id)) : summaries
+    const eligible = d?.due ? this.dueSummaries(d.userId, d.goalId, d.due.dueAt).filter(s => summaries.some(row => row.id === s.id))
+      :d?.dailyReview?summaries.filter(row=>healthSummaryIsCurrent(row)):summaries
     if (d && !d.result) this.host.store.health.read(d.eventId, eligible)
-    return { summaries: eligible, ...(d?.due ? { review: { ...d.due, repeat:mandate?(mandate.weekday?'weekly':'daily'):'once',
+    return { summaries: eligible, ...(d?.dailyReview?{daily_review:{...d.dailyReview,
+      previous_review_at:this.host.store.health.state(d.goalId)?.updatedAt,current_observations_available:eligible.length>0,
+      observation_notice:'Scheduled review of accepted facts; not evidence of a new night or phone upload. Read labelled windows and freshness before planning.'}}:{}),
+      ...(!d?.due?{next_review_at:this.host.store.health.reviewSchedule(d?.goalId??'')?.nextAt}:{}), ...(d?.due ? { review: { ...d.due, repeat:mandate?(mandate.weekday?'weekly':'daily'):'once',
       ...(mandate?{timezone:mandate.zone,weekday:mandate.weekday,next_occurrence_if_kept:nextDailyTime(d.due.dueAt,mandate.zone,Date.now(),mandate.wallTime,mandate.weekday)}:{}),
       daily_evidence_event_id: this.host.store.health.daily(d.due.taskId)?.weekday ? undefined : this.host.store.health.daily(d.due.taskId)?.evidence,
       reminder_plan: this.host.store.getTask(d.userId,d.due.taskId)?.reminderPlan } } : {}) }
@@ -534,7 +534,9 @@ export class HealthFollowup {
             renew_daily_from_event: z.string().min(1).max(96).optional().describe('Due task only: original user event explicitly delegating this daily schedule. Already bound daily mandates continue automatically. Omit for one-off tasks.'),
             types: z.array(z.enum(HEALTH_SUMMARY_TYPES)).max(7),
             reason: z.string().trim().min(1).max(800),
-            text: z.string().trim().min(1).max(1200).optional(),
+            text: z.string().trim().min(1).max(MAX_TASK_RESULT_TEXT).refine(wellFormedProductText,'Task result contains an incomplete Unicode surrogate').optional(),
+            next_review_at:z.string().max(64).optional().describe('Automatic review only: future next-local-day planning review within 48 hours in trusted observation timezone. With types:[] it requires an applied relevant goal plan or continuation of its current review schedule. Reconsideration only, not a notification or new observation.'),
+            presentation:ResultPresentationSchema.optional().describe('Actual due task result only: concise product title/summary/actions with complete optional sections. No tool traces or unverified numbers/sources; does not change task or notification authority.'),
             source_request_id:z.string().min(1).max(128).optional().describe('Typed Agent research only: this occurrence’s actual ready trading_history request_id. Publishes Host-rendered facts plus qualitative text without fabricating web citations; fresh scoped read is rechecked at finish.'),
             recommendation: RECOMMENDATION_INPUT.optional().describe('Due research task only: structured result grounded in this ticket’s actual web source ids and exact quotes. Read the research skill.'),
             calculation_receipt:z.string().min(1).max(96).optional().describe('Calculation task only: the receipt_id returned by the registered along_calculate tool in this exact occurrence.')
@@ -552,6 +554,8 @@ export class HealthFollowup {
               return { status: 'recorded', reused: true, ...(d.result.outcome==='ask'?{audience:'background',delivery:'background_only'}:{}) }
             }
             if (!d.readSnapshot) throw new Error('read along_health_read before finishing')
+            if((!d.due||args.outcome==='ask')&&args.text&&args.text.length>1200)throw new Error('complete long result text requires a verified task result; health notes and questions remain bounded')
+            if(args.presentation&&(!d.due||!args.text||args.outcome==='ask'))throw new Error('result presentation requires a bound due task result and complete text')
             if(args.recommendation&&(!d.due||!args.text))throw new Error('recommendation requires a bound due task and user-facing text')
             if (!this.current(d))
               return { status: 'conflicted', reason: 'conflicted_input' }
@@ -584,9 +588,15 @@ export class HealthFollowup {
             const originalContent=d.due?store.taskRevisionContent(d.userId,d.due.taskId,d.due.revision):undefined
             const structured=args.recommendation?recommendation(store.research,{userId:d.userId,goalId:d.goalId,ticketId,
               ...(hikingIntent(originalContent??'')?{requiredKind:'hiking' as const}:{})},args.recommendation):undefined
+            if(args.text&&args.text.length>1200&&!structured&&!calculation&&!historyReport)throw new Error('long task result text requires actual verified research or calculation evidence; reminder text remains bounded')
             if(definition?.actor==='agent'&&definition.capability==='research'&&args.outcome!=='ask'&&!structured?.sources.length&&!historyReport)
               throw new Error('research execution requires actual verified sources; report failed or blocked, not completion')
             const resultText=calculation?calculationResultText(calculation.calculation,privateCalculation):historyReport?okxHistoryResultText(historyReport,args.text!):args.text
+            const completeResultText=resultText?recommendationText(structured,resultText):undefined
+            if(completeResultText&&completeResultText.length>MAX_TASK_RESULT_TEXT)throw new Error('Complete verified task result exceeds 16000 characters; reduce qualitative explanation while preserving verified facts')
+            const presentation=d.due&&resultText&&args.outcome!=='ask'
+              ?structured?recommendationPresentation(structured):calculation||historyReport?textPresentation(resultText):args.presentation??textPresentation(resultText)
+              :undefined
             const priorSources=JSON.stringify(store.goalDataSources(d.userId,d.goalId))
             store.health.finish(d, args)
             this.activation.settle(d,args.outcome==='ask'?'waiting':calculation?'calculated':historyReport?'agent_researched':structured?(definition?.actor==='agent'&&definition.capability==='research'?'agent_researched':'researched'):'notification_queued')
@@ -614,7 +624,7 @@ export class HealthFollowup {
                   role: 'assistant',
                   direction: 'outbound',
                   audience: 'background',
-                  text: recommendationText(structured,resultText)
+                  text: d.due?legacyTaskResultPreview(completeResultText!):completeResultText!
                 })
               store.linkMessageToGoals(message.id, [d.goalId], 'derived')
               store.appendSync({
@@ -624,6 +634,8 @@ export class HealthFollowup {
                 taskId: d.due?.taskId,
                 messageId: message.id,
                 payload: { message_id: message.id, text: message.text, ...(d.due?{task_execution_revision:d.due.revision}:{}), ...(structured?{recommendation:structured}:{}),
+                  ...(presentation?{result_presentation:presentation}:{}),
+                  ...(d.due?{result_text:completeResultText}:{}),
                   ...(calculation?{calculation_receipt_id:calculation.id}:{}),
                   ...(notice?{notification: {
                   event_id: eventId, kind:notice, revision: currentTask?.currentRevision ?? d.inputVersion

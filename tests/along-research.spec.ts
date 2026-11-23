@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -8,7 +8,7 @@ import { AlongService } from '../src/along/service.ts'
 import { createInbox } from '../src/along/inbox.ts'
 import { alongTools } from '../src/along/tools.ts'
 import { recommendation, RECOMMENDATION_INPUT, isResearchTaskContent, recommendationNotice, type RecommendationInput } from '../src/along/recommendation.ts'
-import { publicHttpsUrl, publicAddress, assertPublicUrl, pagePublication, researchTools, researchWeb, type ResearchWeb } from '../src/along/web-research.ts'
+import { publicHttpsUrl, publicAddress, assertPublicUrl, pagePublication, researchTools, researchWeb, researchCapability, type ResearchWeb } from '../src/along/web-research.ts'
 import type { ResearchPurpose } from '../src/along/research-store.ts'
 import { startRuntime } from './fixtures/host.ts'
 import { alongKind } from '../src/sources/along.ts'
@@ -140,16 +140,39 @@ it('delivers a due research result through the existing bound followup and leave
   await vi.waitFor(()=>expect(h.tools.has('worker-'+ticket.id)).toBe(true),{timeout:10000})
   const scope={userId,goalId:goal.id,ticketId:ticket.id}
   await h.runTool('worker-'+ticket.id,'along_health_read',{})
+  await expect(h.runTool('worker-'+ticket.id,'along_health_followup',{outcome:'ask',types:[],reason:'长问题不是执行结果',text:'问'.repeat(2501)})).rejects.toThrow('questions remain bounded')
+  await expect(h.runTool('worker-'+ticket.id,'along_health_followup',{outcome:'keep',types:[],reason:'未提供真实研究结果',text:'文'.repeat(2501)})).rejects.toThrow('actual verified research')
   const source=(purpose:ResearchPurpose,content:string)=>store.research.save(scope,{title:'合成官方来源',url:'https://www.gz.gov.cn/route',purpose,content:purpose==='weather'?content+'。当前无气象灾害预警信号':content,fetched:true})
   const route=source('route','全程6公里'),access=source('access','步道正常开放'),weather=source('weather','周末晴天')
-  const input={outcome:'keep',types:[],reason:'按原委托完成路线研究',text:'周末路线已整理，出发前复核天气。',recommendation:plan(route.id,access.id,weather.id)}
+  const completeText='完整执行结果\n'+ '已核实的研究说明。'.repeat(700)+'\n结尾必须完整保留。'
+  const input={outcome:'keep',types:[],reason:'按原委托完成路线研究',text:completeText,recommendation:plan(route.id,access.id,weather.id),
+    presentation:{version:1,title:'不可信的替代标题',summary:'模型不能替代已核实推荐',actions:[],sections:[]}}
   expect(await h.runTool('worker-'+ticket.id,'along_health_followup',input)).toMatchObject({status:'recorded',reused:false})
   expect(await h.runTool('worker-'+ticket.id,'along_health_followup',input)).toMatchObject({status:'recorded',reused:true})
   const messages=store.syncPage(userId,0,200).items.filter(i=>(i.payload as any).recommendation)
   expect(messages).toHaveLength(1);expect(messages[0]).toMatchObject({goalId:goal.id,taskId:due.id,payload:{recommendation:{status:'ready'},notification:{kind:'recommendation_ready'}}})
+  expect((messages[0]!.payload as any).text.length).toBeLessThanOrEqual(1200)
+  expect((messages[0]!.payload as any).text).toContain('结果预览')
+  expect((messages[0]!.payload as any).result_text).toBe(completeText)
+  expect((messages[0]!.payload as any).result_presentation.title).toBe(input.recommendation.title)
+  expect((messages[0]!.payload as any).result_presentation.summary).not.toBe(input.presentation.summary)
+  expect(store.workspaceSync(userId,0,200).items.find(item=>item.seq===messages[0]!.seq)?.payload).toMatchObject({
+    result_text:completeText,result_presentation:{version:1,title:input.recommendation.title},audience:'background'})
+  expect(store.health.get(store.getWorkLink(ticket.id)!.eventId!)?.result).toMatchObject({text:completeText})
+  if(process.env.ALONG_LEGACY_COMPAT_OUTPUT)writeFileSync(process.env.ALONG_LEGACY_COMPAT_OUTPUT,JSON.stringify({
+    kind:'synthetic-real-agent-workspace-sync',userId,page:store.workspaceSync(userId,0,200),expectedCompleteText:completeText})+'\n',{mode:0o600})
   expect(store.getTask(userId,outing.id)?.status).toBe('open')
  }finally{await h.stop()}
 },30_000)
+it('reports research configuration without network probes or unsafe Auto/local provider fallback',()=>{
+ const search=vi.fn(),fetch=vi.fn(),assertProvider=vi.fn()
+ expect(researchCapability({search,fetch,assertProvider})).toEqual({configured:true})
+ expect(search).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled()
+ assertProvider.mockImplementation(()=>{throw Object.assign(Error('private transport details'),{code:'RESEARCH_REMOTE_PROVIDER_REQUIRED'})})
+ expect(researchCapability({search,fetch,assertProvider})).toMatchObject({configured:false,code:'RESEARCH_REMOTE_PROVIDER_REQUIRED'})
+ expect(JSON.stringify(researchCapability({search,fetch,assertProvider}))).not.toContain('private transport')
+ expect(researchCapability(undefined)).toMatchObject({configured:false,code:'WEB_PROVIDER_UNAVAILABLE'})
+})
 it('keeps general recommendations conditional for unknown or expired checks, including expiry outside a fact',()=>{
  const {store,scope,save}=fixture(),route=save('route','全程6公里'),access=save('access','步道正常开放'),weather=save('weather','周末晴天',Date.now()-4*3600_000)
  const input=plan(route.id,access.id,weather.id);input.kind='general'
@@ -229,7 +252,7 @@ it.each(['research','outing','recommended_outing'] as const)('uses the current r
   const task=store.insertTask({userId,goalId:goal.id,content:kind==='research'?'根据天气安排周末徒步':kind==='outing'?'完成周末徒步':'完成推荐路线的徒步',scheduledAt:'2027-01-08T10:59:00Z'})
   store.appendTaskRevision({userId,taskId:task.id})
   if(kind==='research'){
-   vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
+   vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:undefined)
    store.triggers.put(store.assertTaskOwner(userId,task.id),{kind:'time',actor:'agent',capability:'research'},1)
   }
   h.runtime.along!.healthFollowup.tick();await h.runtime.idle()
@@ -260,7 +283,7 @@ it('renews the same weekly research task across repeated ticks and restart, emit
  let h=await startRuntime(undefined,{dir})
  try{
   let store=h.runtime.along!.service.alongStore;store.assertUser(userId,deviceId)
-  vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
+  vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:undefined)
   const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({goalId:goal.id,userId,title:'持续周末运动',status:'active'});store.ensureInputVersion(userId,goal.id)
   const event='weekly_research_mandate',text='每周五19:00根据天气安排周末徒步'
   expect(h.runtime.along!.service.acceptEvent({event_id:event,schema_version:'1',event_type:'along.user_message',goal_id:goal.id,occurred_at:new Date().toISOString(),timezone:'Asia/Shanghai',payload:{event_type:'along.user_message',text}},{userId,deviceId})).toMatchObject({status:'accepted'})
@@ -295,7 +318,7 @@ it('renews the same weekly research task across repeated ticks and restart, emit
   }
   await review('2027-01-08T11:00:00Z','2027-01-15T11:00:00.000Z',1)
   await h.stop();h=await startRuntime(undefined,{dir});store=h.runtime.along!.service.alongStore
-  vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:undefined)
+  vi.spyOn(h.ctx,'get').mockImplementation((name:string)=>name==='web'?{search:async()=>({sources:[],truncated:false}),fetch:async()=>({url:'https://example.com',statusCode:200,body:{kind:'text',content:''},truncated:false})}:name==='settings'?{describe:()=>[{ns:'web',value:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}},{ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:undefined)
   for(let n=0;n<3;n++)h.runtime.along!.healthFollowup.tick()
   await h.runtime.idle();expect(count()).toHaveLength(1)
   expect(h.runtime.store.tickets.list().filter(t=>t.mandate.basis.via==='task_due')).toHaveLength(1)

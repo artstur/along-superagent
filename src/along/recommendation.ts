@@ -1,7 +1,8 @@
 /** Model content is useful only with the host's actual, scoped retrieval evidence. */
 import { z } from 'zod'
 import type { ResearchScope, ResearchStore, ResearchSource, ResearchEvidence } from './research-store.ts'
-const line=(max:number)=>z.string().trim().min(1).max(max)
+import { productTextPrefix,wellFormedProductText } from './product-text.ts'
+const line=(max:number)=>z.string().trim().min(1).max(max).refine(wellFormedProductText,'Product text contains an incomplete Unicode surrogate')
 const lines=z.array(line(300)).max(12)
 const evidence=z.array(z.object({sourceId:line(96),quote:line(1500)}).strict()).max(8)
 export const RECOMMENDATION_INPUT = z.object({
@@ -44,7 +45,7 @@ const needsProjection=(kind:Recommendation['kind'],options:Recommendation['optio
 /** Older clients receive the same conservative conclusion as the structured card. */
 export function recommendationText(value:Recommendation|undefined,proposed:string):string {
  if(!value||!needsProjection(value.kind,value.options))return proposed
- return [value.summary,...value.options.map(option=>`${option.title}：${option.status==='excluded'?'暂不安排':option.status==='conditional'?'出行条件待核实':'现有条件已核对，出发前仍需复查'}`),value.nextStep].join('\n').slice(0,1200)
+ return [value.summary,...value.options.map(option=>`${option.title}：${option.status==='excluded'?'暂不安排':option.status==='conditional'?'出行条件待核实':'现有条件已核对，出发前仍需复查'}`),value.nextStep].join('\n')
 }
 /** Typed research authority is Host-supplied; legacy tasks still use the original physical/information action boundary. */
 export function recommendationNotice(value:Recommendation|undefined,task:{status:string;content:string}|undefined,originalContent=task?.content,typedAgentResearch=false):'recommendation_ready'|'task_result'|undefined {
@@ -121,7 +122,7 @@ export function recommendation(store:ResearchStore,scope:ResearchScope,input:Rec
    if(!keep)removed.push(fact.label)
    return keep
   })
-  const unknowns=removed.length?[`以下参数当前值尚未核实：${removed.join('、').slice(0,250)}`,...option.unknowns].slice(0,12):option.unknowns
+  const unknowns=removed.length?[`以下参数当前值尚未核实：${productTextPrefix(removed.join('、'),250)}`,...option.unknowns].slice(0,12):option.unknowns
   const status=risk?'excluded' as const:checked&&!uncertain&&optionSources.size>0&&unknowns.length===0?'recommended' as const:'conditional' as const
   const projected=kind==='hiking'&&status!=='recommended'
   return {id:option.id,title:projected?plainRouteTitle(option.title):option.title,
