@@ -120,6 +120,12 @@
 - **原因**：用户于 2026-11-20 确定两人共用一台服务器。D1 的公网限制继续适用于 Mac 本地部署。云端允许预先声明的两位用户经公网 443 配对和访问，两种部署均保留业务对象的 `user_id` 归属检查。
 - **影响**：Mac 本地与云端共用同一套源码，无模式开关，Mac 本地模式完整保留为回退路径；云端 v1 新链路数据面维持事件摄取开关的 503 语义，目标聊天链路照常全量过校验后自动生效；配对绑定按用户分条存储，服务端只存 token 哈希；公网配对码的防枚举用全局失败滑动窗口限速。设计与上线 Runbook 见 Along 仓库 `docs/cloud-deploy-multi-user.md`。
 
+## D20 Linux 云端可长驻承载 Along 数据面（V-1 实测通过）
+
+- **决策**：Along 数据面在 Linux 云端由**长驻** DSH profile 承载，不用 headless 一次性形态。`@deepseek-ai/dsh` 的 `dsh web` 提供长驻 Web profile，bundle 以可解析包形态装入 profile 的 node_modules 树；`/along-source/api/*` 与 `along.sqlite`、投递泵随之常驻。沿仓库 `origin/feature/tier2-cloud-orchestration` 已据此实现编排。
+- **原因**：V-1 实测（2026-11-23，阿里云 ECS）证明此前「官方 Linux 发行物只有 headless 一次性形态」的判断与发行物实际内容不符 —— 包内 `README.zh.md` 明确提供 `dsh web`、`--from-default-profile web` 与 `dsh plugin --profile <name> add`（仅 Electron 专属的 `desktop` profile 被拒绝插件管理）。实测 `/orchestrator/api/state` 返回 `setup.problem: null` 且 runtime `ready`，`/along-source/api/goals/along-status-probe` 返回 `200 {"service":"along-source","ready":true}`，即本文档 `006-deployment.md` 定义的 Tier 2 就绪契约。完整记录见 [Linux 云端部署实测](023-linux-cloud-deployment.md)。
+- **影响**：沿仓库 `docs/cloud-deploy-multi-user.md` §1/§2.1/§2.2-C9/§3.5 关于「Linux 只能 headless」「不做新链路数据面上云」的表述需随 Tier 2 启用一并修订——这些取舍的唯一理由是长驻运行时不可得。**部署必须包含 settings seed**：`src/app/setup.ts:16` 的 `localDeployment` 判定读 Settings 存储层（`sources.along.enabled===true` 且 `sources.github.enabled===false`），不是插件层 disabled 开关；缺 seed 会永久停在 `repositoryUnset` / `setupPending`。Hy-Memory 在 Linux 上可装（`hy-memory==2.0.16`，无需编译工具链，778 MB），但本轮只验证管道（offline 探针），真实模型质量仍未验收。
+
 ## 被替代的设计
 
 | 旧设计 | 出处 | 替代为 |

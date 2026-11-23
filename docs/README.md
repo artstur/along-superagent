@@ -28,6 +28,7 @@
 这些文件保留方案、实现落点与后续补记，读当前链路时先从上方运行图进入。
 
 - [阶段 0：技术验证](along/004-phase0-validation.md)
+- [Linux 云端部署实测（V-1 通过）](along/023-linux-cloud-deployment.md)
 - [阶段 A：存储、事件与桥接](along/005-phase-a-integration.md)
 - [阶段 D：长期记忆实施](along/006-memory-implementation.md)
 - [阶段 B：聊天与自动生效](along/007-phase-b-integration.md)
