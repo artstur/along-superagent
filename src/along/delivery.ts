@@ -33,6 +33,8 @@ const DELIVERY_BATCH = 10
 export interface DeliveryDeps {
   receive(trigger: Trigger): ReceiveResult | Promise<ReceiveResult>
   filteredReason(triggerId: string): string | undefined
+  /** Whether the Source can accept work now. With no Source, claiming would turn a startup gap into a permanent rejection. */
+  canDeliver?: () => boolean
   /** Error sink for pump-level surprises (row-less triggers, sink failures); per-row attempt failures are
    * already durable on the delivery row. Never throws into the pump loop. */
   report?: (error: unknown) => void
@@ -97,13 +99,16 @@ export function triggerForDelivery(store: AlongStore, row: DeliveryRow): Trigger
  * pump deterministically without timers.
  */
 export async function deliverDueDeliveries(store: AlongStore, deps: DeliveryDeps, now = Date.now()): Promise<number> {
+  if (deps.canDeliver?.() === false) return 0
   const rows = store.claimDueDeliveries(now, DELIVERY_BATCH)
   for (const row of rows) {
+    // A Source can unload while a previous row is awaiting intake. Leave the remaining claims on their leases.
+    if (deps.canDeliver?.() === false) break
     const at = isoTime(new Date().toISOString())
     try {
       const result = await deps.receive(triggerForDelivery(store, row))
       if (result === 'filtered') {
-        // Terminal: the scope refused (Source uninstalled/disabled, `listened:false`) — record the reason and
+        // Terminal: the installed Source's scope refused the event — record the reason and
         // never retry; a user message still gets its one-time explicit failure sync (§2.2.3).
         store.markDeliveryFiltered(row.triggerId, at, deps.filteredReason(row.triggerId) ?? 'filtered')
       } else {

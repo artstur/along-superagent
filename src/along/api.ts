@@ -32,6 +32,8 @@ import { SourceStateError } from './source-state.ts'
 export interface AlongApiHost {
   /** The assembled Along business service; `undefined` until the local-deployment assembly finishes → 503. */
   readonly along?: AlongService
+  /** Reports whether the Runtime is accepting work into the Engine through the registered Along Source. */
+  ready(): boolean
   /** Expected bridge token (the hex content of the 0600 token file); unset → every call is 401. */
   readonly bridgeToken?: string
   /** Settings facade; the paired user lands in `policy.sources.along.allowed` through `save('policy', …)`. */
@@ -179,8 +181,11 @@ async function registerPairing(host: AlongApiHost, identity: AlongIdentity, body
 async function route(host: AlongApiHost, identity: AlongIdentity, method: string, path: string,
   query: URLSearchParams, body: () => Promise<unknown>): Promise<AlongSourceResponse> {
   const ok = (value: unknown): AlongSourceResponse => ({ status: 200, body: value })
-  // The status probe must win over `goals/:goal_id` — the Host's readiness check tolerates only 404/2xx.
-  if (method === 'GET' && path === 'goals/along-status-probe') return ok({ service: 'along-source', ready: true })
+  // Match readiness before the goal-ID route. The listener and store may be up before the Source can take work.
+  if (method === 'GET' && path === 'goals/along-status-probe') {
+    if (!host.along || !host.ready()) throw new AlongApiError(503, 'along_source_not_ready')
+    return ok({ service: 'along-source', ready: true })
+  }
   if (method === 'POST' && path === 'pairing') return registerPairing(host, identity, await body())
   if (method === 'POST' && path === 'events') return acceptEvent(host.along, identity, await body())
   const service = host.along

@@ -19,6 +19,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import { Store } from '../src/app/store.ts'
+import { createInbox } from '../src/along/inbox.ts'
+import { AlongStore } from '../src/along/store.ts'
 import { alongKind } from '../src/sources/along.ts'
 import { startRuntime, type Host } from './fixtures/host.ts'
 
@@ -60,6 +62,65 @@ function configureAlong(h: Host) {
 }
 
 describe('Along stage A: the assembled runtime carries an event end to end and survives a restart', () => {
+  it('keeps due rows intact until the restarted Runtime has an enabled Along Source', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'along-source-readiness-'))
+    const users = [USER, 'u_eeee2222'] as const
+    const devices = [DEVICE, 'd_eeee2222'] as const
+    const triggerIds = users.map(user => `along:${user}:evt-restart`)
+    try {
+      const state = new Store(join(directory, 'orchestrator.sqlite'))
+      state.saveSettings({ ...state.settings(), sources: { along: { enabled: true, config: {} }, github: { enabled: false, config: {} } },
+        policy: { ...state.settings().policy, sources: { along: { allowed: users.map(id => ({ id })) } } } })
+      state.close()
+
+      const previous = new AlongStore(join(directory, 'along-data', 'along.sqlite'))
+      const firstAcks = users.map((userId, i) => {
+        const deviceId = devices[i]!
+        previous.assertUser(userId, deviceId)
+        expect(createInbox(previous).acceptEvent(messageEnvelope('evt-restart', `Owner ${i}`), { userId, deviceId }).status).toBe('accepted')
+        return previous.syncPage(userId, 0, 10).items[0]!.seq
+      })
+      previous.markSynced(USER, [firstAcks[0]!])
+      const due = triggerIds.map(id => previous.getDelivery(id))
+      expect(due.every(row => row?.status === 'pending' && row.nextAttemptAt <= Date.now())).toBe(true)
+      previous.close()
+
+      const h = host = await startRuntime(undefined, { dir: directory, deferAlongSource: true })
+      const along = h.runtime.along!
+      const read = (i: number, method: string, path: string, json?: unknown) => h.alongApi(method, path, json, {
+        'x-along-bridge': '1', 'x-along-bridge-token': along.bridgeToken, 'x-along-user': users[i]!, 'x-along-device': devices[i]!,
+      })
+      const probe = () => read(0, 'GET', 'goals/along-status-probe')
+      expect(await probe()).toEqual({ status: 503, body: { error: 'along_source_not_ready' } })
+      expect(triggerIds.map(id => along.service.alongStore.getDelivery(id))).toEqual(due)
+      expect(triggerIds.map(id => h.runtime.store.triggers.get(id))).toEqual([undefined, undefined])
+
+      const unregister = h.runtime.sources.register(alongKind)
+      expect(await probe()).toEqual({ status: 200, body: { service: 'along-source', ready: true } })
+      await vi.waitFor(() => {
+        expect(triggerIds.map(id => along.service.alongStore.getDelivery(id)?.status)).toEqual(['delivered', 'delivered'])
+        for (const id of triggerIds) expect(h.runtime.store.triggers.get(id)?.id).toBe(id)
+      }, { timeout: 5_000 })
+
+      for (const [i, user] of users.entries()) {
+        const result = await read(i, 'GET', `sync?user_id=${user}&conversation_version=1`)
+        expect(result.status).toBe(200)
+        expect(JSON.stringify(result.body)).toContain(`Owner ${i}`)
+        expect(JSON.stringify(result.body)).not.toContain(`Owner ${1-i}`)
+        expect(JSON.stringify(result.body)).not.toContain('delivery_failed')
+      }
+      expect((await read(0, 'POST', 'sync/ack', { seqs: [firstAcks[1]] })).status).toBe(200)
+      expect(along.service.alongStore.syncPage(USER, 0, 10).items[0]?.deliveredAt).toBeDefined()
+      expect(along.service.alongStore.syncPage(users[1], 0, 10).items[0]?.deliveredAt).toBeUndefined()
+
+      unregister()
+      expect((await probe()).status).toBe(503)
+      await h.stop(); host = undefined
+    } finally {
+      try { await host?.stop(); host = undefined } finally { rmSync(directory, { recursive: true, force: true }) }
+    }
+  }, 15_000)
+
   it('bridges one event into an applied ChangeSet and a RunRecord, keeps duplicates idle, and answers full queries after a real restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'along-phase-a-'))
     try {
