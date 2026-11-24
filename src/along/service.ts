@@ -66,6 +66,8 @@ export class AlongService {
       return receipt
     })
   }
+  /** Read-only proof from the actual imported database and current Runtime authority. */
+  workspaceHandoffStatus(identity: AlongIdentity) { return this.store.workspaceHandoffStatus(identity) }
   requestTaskTriggerReview(identity:AlongIdentity,body:unknown):unknown {
     if(!this.modules.taskReviews)throw new Error('task trigger review not installed')
     return this.modules.taskReviews.requestTaskReview(identity,body)

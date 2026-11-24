@@ -191,6 +191,13 @@ async function route(host: AlongApiHost, identity: AlongIdentity, method: string
   const service = host.along
   if (service === undefined) throw new AlongApiError(503, 'along_source_not_ready')
   const store = service.alongStore
+  if (method === 'GET' && path === 'workspace-handoff/status') {
+    if (query.has('user_id')) requireQueryUser(query, identity)
+    if (!host.ready()) throw new AlongApiError(503, 'along_source_not_ready')
+    const receipt = service.workspaceHandoffStatus(identity)
+    if (!receipt) throw new AlongApiError(404, 'not_found')
+    return ok(receipt)
+  }
   if(method==='POST'&&path==='maintenance/task-trigger-reviews') {
     const input=await body()
     if(claimsIdentity(input))throw new AlongApiError(400,'identity_in_body')

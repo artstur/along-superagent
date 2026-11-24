@@ -110,14 +110,16 @@ export class MemoryService {
     if (typeof query !== 'string' || !query.trim() || query.length > 2000) throw new Error('invalid memory query')
     const size = Math.max(1, Math.min(50, Math.floor(limit)))
     if (!Number.isFinite(size)) throw new Error('invalid memory limit')
-    this.store.memory.effective(scope.userId, scope.goalId) // validate ownership before calling a remote model
-    let ids: string[] = [], degraded = this.store.memory.projectionPending(scope.userId)
+    const initial = this.store.memory.effective(scope.userId, scope.goalId) // validate ownership before calling a remote model
+    // A cold handoff carries governed facts, never the Mac SDK's private index IDs. Keep these facts available while unindexed.
+    let ids: string[] = [], degraded = this.store.memory.projectionPending(scope.userId) || initial.some(item => item.backendIds.length === 0)
     if (!degraded) try { ids = await this.backend.search({ userId: scope.userId, query, limit: size }) }
     catch { degraded = true }
     if (this.closed) throw new Error('memory service closed')
     degraded ||= this.store.memory.projectionPending(scope.userId)
     if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) degraded = true
     const effective = this.store.memory.effective(scope.userId, scope.goalId)
+    degraded ||= effective.some(item => item.backendIds.length === 0)
     const ranked = degraded ? effective : effective.filter(item => item.backendIds.some(id => ids.includes(id)))
       .sort((a, b) => Math.min(...a.backendIds.filter(id => ids.includes(id)).map(id => ids.indexOf(id)))
         - Math.min(...b.backendIds.filter(id => ids.includes(id)).map(id => ids.indexOf(id))))

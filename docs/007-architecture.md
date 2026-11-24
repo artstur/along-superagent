@@ -380,6 +380,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/along/task-repair.ts` | Private same-task trigger review request, evidence/current-scope checks, narrow ChangeSet boundary and persisted completion postconditions |
 | `src/along/task-activation.ts` | Trusted condition evaluation and activation into the existing persistent due-task dispatch |
 | `src/along/store.ts` | `AlongStore`, the only writer of `along.sqlite`: ownership checks, object and input versions, messages ordered by the server's `seq`, paged goal, task, message and change-set reads, health summaries, Inbox rows, the delivery queue with its lease and failure paths, work links, run records and the sync outbox, all inside `atomic` savepoints; `assertAlongDataIsolation` keeps the business directory outside the worker execution root |
+| `src/along/handoff.ts`, `src/along-handoff.ts` | Bounded schema-18 personal cold handoff: explicit data/schema whitelist, exact identity/sync continuity, drained Runtime checks, private staged export/import and irreversible source retirement before cloud activation; administrative CLI only, no HTTP import or credential/profile copying |
 | `src/along/service.ts` | `AlongService`, the facade the Runtime assembles: the loopback API's single entry, with the inbox and changeset factories injected |
 | `src/along/legacy-import.ts` | `importLegacy`, the stable-ID idempotent import of the phone's old export (`g_health`/`g_finance`/`g_custom`, messages renumbered in export order) with a counts-and-hashes report |
 | `src/along/memory/index.ts` | Standalone Along memory factory and exports; the host owns lifecycle, bound tool scope and batch invocation |
@@ -543,6 +544,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-health-model-live.spec.ts` | Explicit opt-in real-model decisions on isolated synthetic health Runtime/tool scenarios; no default network calls |
 | `tests/along-result-presentation.spec.ts` | Product display authority/length boundaries and complete legacy-body preservation |
 | `tests/along-health-followup.spec.ts` | Health-only Runtime dispatch, task updates, baselines, stale chat protection, scope and malformed inputs |
+| `tests/along-personal-handoff.spec.ts` | Synthetic 50-table continuity, exact sync high-water mark, owner/schema/digest/drain refusal, atomic FK rollback, actual Runtime startup fences and cold CLI stage/retry/retire/activation |
 | `tests/along-maintenance.spec.ts` | Scheduled memory work through actual Runtime/Engine/tools, replay, frozen paging, backoff, restart, pause, stopping, isolation and completion |
 | `tests/along-phaseB.spec.ts` | Chat response, explicit goal creation, corrections, stale-input refusal and sync through registered worker tools |
 | `tests/along-runrecord-verify.spec.ts` | Along phase-A contract and integration verification: runrecord-verify |
