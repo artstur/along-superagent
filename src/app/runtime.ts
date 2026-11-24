@@ -57,6 +57,7 @@ import { AlongService } from '../along/service.ts'
 import { createAlongMemory, MemoryService } from '../along/memory/index.ts'
 import { packagePath } from '../infra/paths.ts'
 import { AlongStore, assertAlongDataIsolation } from '../along/store.ts'
+import { assertHandoffStartupAllowed } from '../along/handoff.ts'
 import { createWorkLink, type WorkLinkModule } from '../along/worklink.ts'
 import { HealthFollowup } from '../along/health.ts'
 import { researchWeb, researchCapability } from '../along/web-research.ts'
@@ -350,6 +351,7 @@ export class Runtime extends Service implements SourceHost {
     mkdirSync(alongStateDir, { recursive: true, mode: 0o700 })
     const alongCompromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
     this.alongRelease = lockSync(alongStateDir, { stale: 30_000, onCompromised: alongCompromised })
+    assertHandoffStartupAllowed(alongStateDir)
     const alongStore = this.alongStore = new AlongStore(join(alongStateDir, 'along.sqlite'))
     const memory = this.machine.alongMemory ? createAlongMemory(alongStore, { ...this.machine.alongMemory,
       script: packagePath('scripts', 'along-memory-service.py'), workerRoot: executionRoot(settings, this.machine.stateDir) })

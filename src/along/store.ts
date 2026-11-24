@@ -16,6 +16,8 @@ import { isoTime } from '../core/model.ts'
 import { migrateAlongSchema } from './migrate.ts'
 import type { HealthContext } from './health-context.ts'
 import { MemoryStore } from './memory/store.ts'
+import { activateHandoffCheckpoint, applyHandoffSourceHolds, assertHandoffImportable, exportHandoffData, importHandoffData,
+  sourceHandoffStatus as readSourceHandoffStatus, type SourceHandoffStatus, type HandoffExportInput, type HandoffManifest, type HandoffTargetReceipt, type PersonalHandoff } from './handoff.ts'
 import type { ReminderPlan } from './reminder-plan.ts'
 import { ResearchStore } from './research-store.ts'
 import { HealthStore } from './health-store.ts'
@@ -196,6 +198,7 @@ const jsonOrUndefined = (value: unknown): string | null => value === undefined ?
  */
 export class AlongStore {
   private readonly db: DatabaseSync
+  private readonly dataDirectory: string
   /** Memory persistence shares this store's handle, savepoints and lifetime. */
   readonly memory: MemoryStore
   readonly maintenance: MaintenanceStore
@@ -211,6 +214,7 @@ export class AlongStore {
    * @throws When the schema version is unsupported or migration fails; the handle is closed in every error case.
    */
   constructor(path: string) {
+    this.dataDirectory = dirname(resolve(path))
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
     try {
@@ -232,6 +236,16 @@ export class AlongStore {
   }
   /** Closes the underlying SQLite handle. */
   close(): void { this.db.close() }
+
+  /** Administrative cold handoff only; caller holds both Runtime directory locks. No replay or model call. */
+  exportPersonalHandoff(input: HandoffExportInput): PersonalHandoff { return this.atomic(() => exportHandoffData(this.db, input)) }
+  importPersonalHandoff(packet: unknown): HandoffManifest { return this.atomic(() => importHandoffData(this.db, packet)) }
+  assertPersonalHandoffImportable(packet: unknown): void { this.atomic(() => { assertHandoffImportable(this.db, packet) }) }
+  applyPersonalHandoffSourceHolds(manifest: HandoffManifest): HandoffTargetReceipt { return this.atomic(() => applyHandoffSourceHolds(this.db, manifest)) }
+  activatePersonalHandoffCheckpoint(manifest: HandoffManifest, permit: string): HandoffTargetReceipt { return this.atomic(() => activateHandoffCheckpoint(this.db, manifest, permit)) }
+  workspaceHandoffStatus(identity: { userId: string; deviceId: string }): SourceHandoffStatus | undefined {
+    return this.atomic(() => readSourceHandoffStatus(this.db, this.dataDirectory, identity))
+  }
 
   private run(sql: string, ...values: unknown[]): StatementResultingChanges {
     return this.db.prepare(sql).run(...values.map(value => value === undefined ? null : value as SQLInputValue))

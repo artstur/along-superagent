@@ -28,7 +28,8 @@
     "README.md",
     "prompts",
     "skills",
-    "scripts/along-memory-service.py"
+    "scripts/along-memory-service.py",
+    "scripts/along-handoff.mjs"
   ],
   "dsh": {
     "bundle": {
