@@ -159,13 +159,16 @@ export function assertHandoffOrchestratorDrained(db: DatabaseSync): void {
  * A malformed or cross-scope association cannot turn unresolved work into portable retired history. */
 function hasPendingHealthDispatch(data: HandoffData): boolean {
   const tasks = new Map(data.user_task.map(row => [row.id, row]))
-  const reviews = new Map<Cell | undefined, HandoffRow[]>()
+  const reviews = new Map<string, HandoffRow[]>()
   for (const table of ['task_review', 'task_trigger_review', 'source_goal_review'] as const) for (const row of data[table]) {
-    const associated = reviews.get(row.event_id) ?? []
-    associated.push(row); reviews.set(row.event_id, associated)
+    const eventId = row.event_id
+    if (typeof eventId !== 'string' || !eventId.trim()) continue
+    const associated = reviews.get(eventId) ?? []
+    associated.push(row); reviews.set(eventId, associated)
   }
   return data.health_dispatch.some(dispatch => {
     if (dispatch.result !== null) return false
+    if (typeof dispatch.event_id !== 'string' || !dispatch.event_id.trim()) return true
     const associated = reviews.get(dispatch.event_id) ?? []
     if (!associated.some(review => review.retired === 1)) return true
     return associated.some(review => {

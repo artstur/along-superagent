@@ -302,3 +302,33 @@ it.each(['due', 'repair', 'source'] as const)('refuses newly pending %s history 
   expect(() => assertHandoffStartupAllowed(targetDir)).toThrow('handoff_runtime_fenced')
   expect(portableRows('target')).toEqual(changed)
 })
+
+it.each(['due', 'repair', 'source'] as const)('refuses invalid event identities for %s retirement even when SQLite FK checks pass', kind => {
+  const source = fixture(), target = new AlongStore(join(dir, 'target', 'along.sqlite'))
+  try {
+    const eventId = dispatchFor(source, kind), valid = source.exportPersonalHandoff(INPUT)
+    const table = kind === 'due' ? 'task_review' : kind === 'repair' ? 'task_trigger_review' : 'source_goal_review'
+    raw('source', db => {
+      db.exec('BEGIN; PRAGMA defer_foreign_keys=ON')
+      db.prepare('UPDATE health_dispatch SET event_id=NULL WHERE event_id=?').run(eventId)
+      db.prepare(`UPDATE ${table} SET event_id=NULL WHERE event_id=?`).run(eventId)
+      db.exec('COMMIT')
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    })
+    // TEXT PRIMARY KEY permits NULL; SQL equality does not join two NULLs, while Map would.
+    expect(source.health.pending()).toHaveLength(1)
+    const before = portableRows('source')
+    expect(() => source.exportPersonalHandoff(INPUT)).toThrow('handoff_business_not_drained')
+    expect(portableRows('source')).toEqual(before)
+    for (const invalidId of [null, '', ' ', 17]) {
+      const packet = structuredClone(valid)
+      packet.data.health_dispatch[0]!.event_id = invalidId
+      packet.data[table][0]!.event_id = invalidId
+      rehash(packet)
+      expect(() => validatePersonalHandoff(packet)).toThrow('handoff_business_not_drained')
+      expect(() => target.importPersonalHandoff(packet)).toThrow('handoff_business_not_drained')
+      expect(target.counts(USER)).toEqual({ goals: 0, tasks: 0, messages: 0 })
+      expect(raw('target', db => db.prepare('SELECT * FROM health_dispatch').all())).toEqual([])
+    }
+  } finally { source.close(); target.close() }
+})
