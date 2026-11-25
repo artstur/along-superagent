@@ -4,15 +4,11 @@ import { UserError } from '../src/core/index.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { Setup } from '../src/app/setup.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
+import { deferred } from './fixtures/async.ts'
 import { startRuntime, type Host } from './fixtures/host.ts'
 
 let h: Host | undefined
 afterEach(async () => { await h?.stop(); h = undefined })
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(settle => { resolve = settle })
-  return { promise, resolve }
-}
 const model = { provider: 'worker-provider', model: 'worker-model' }
 
 it('refuses a save of a block that another save changed during its model or account check, and saves nothing of it', async () => {

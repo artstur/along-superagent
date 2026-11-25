@@ -1,27 +1,16 @@
 # Along Agent
 
-Along 的 Mac 本地 Agent 工程，基于 DSH Super Agent 构建，负责接收聊天与授权健康摘要、维护目标与任务、治理长期记忆并调度维护工作。目标与任务经程序校验后自动生效，用户通过聊天纠正。目标 chat 只承载真实用户与 Agent 的直接对话；后台编排与执行记录保留审计，推荐通过任务结果交付。开发与验收使用隔离身份，不得通过正式配对伪装用户发言。
+Along 的 Agent 工程基于 DSH Super Agent，负责接收聊天与授权健康摘要、维护目标和任务、治理长期记忆并调度维护工作。目标与任务经程序校验后自动生效，用户通过聊天纠正。目标 chat 只承载用户与 Agent 的直接对话。后台编排与执行记录保留审计，推荐通过任务结果交付。开发与验收使用隔离身份，不得通过正式配对伪装用户发言。
 
 本地目录沿用 `along-superagent`，包名、DSH 插件 ID 与命令沿用 `dsh-superagent`；本文和 Along 文档中的 **Along Agent** 指本工程。远端仓库地址保持不变。
 
 ## 当前实现
 
-| 能力 | 状态与验证入口 |
-| --- | --- |
-| 业务存储、配对、事件 Inbox、版本与执行记录 | 已实现；[阶段 A 集成](docs/along/005-phase-a-integration.md) |
-| 聊天、自动建目标与聊天纠正 | 最小闭环已实现；[阶段 B 集成](docs/along/007-phase-b-integration.md) |
-| 健康变化自动跟进 | 新协议、可靠补传、逐目标筛选与自动派工已实现；[Along 阶段 C](https://github.com/artstur/Along/blob/main/docs/stage-c-tech-design.md) |
-| 长期记忆与明确忘记 | 已接入 Runtime、Worker 工具及 SQLite 降级；[记忆实施](docs/along/006-memory-implementation.md) |
-| 定时记忆维护 | 已接入持久批次和 DSH 工单，默认 Mac 本地时间 03:00，可配置；[维护设计与验证](docs/along/008-scheduled-maintenance.md) |
-| 完整复盘、Skill 自动发布及回退 | 待实现；[实施与验收](docs/along/003-implementation.md) |
-
-代码实现和合成数据验证不代表完成真机验收。实际 iPhone 配对、后台执行机会、长期记忆质量、生产数据迁移与完整恢复的边界，以各阶段验收记录为准。
+从[文档导航](docs/README.md)查找目标聊天、健康跟进、OKX 私有报告和记忆的实现。每份阶段记录标明当时的验证范围。完整复盘、Skill 自动发布和回退属于待实现能力，详见[实施与验收](docs/along/003-implementation.md)。
 
 ## 本地运行
 
-按目标推荐的数据源与同步契约见 [数据源推荐](docs/along/011-goal-data-sources.md)。OKX 当前仅提供官方设置入口，打开页面不表示已授权或连接；本轮不读取真实金融账户。
-
-与 Along 产品工程相邻放置：
+开发独立的本地环境时，与 Along 产品工程相邻放置：
 
 ```text
 personal/
@@ -29,7 +18,7 @@ personal/
 └── along-superagent/     # Along Agent：DSH Runtime、业务服务与记忆
 ```
 
-在 Along 工程安装依赖后运行 `npm run activate`。启动器构建两个工程并初始化专用的 `along-phone` profile；打印手机地址、指纹和配对码。详细配置与重跑规则见 [Along 本地验证与手机连接](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#本地验证与手机连接)。Along 本地部署不要求 GitHub 账号；Hy-Memory 需要另行配置，未配置时降级读取 SQLite 中的有效记忆。
+在相邻的 Along 工程中按[本地验证与手机连接](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#本地验证与手机连接)安装依赖并运行 `npm run activate`。本地手机链路无需 GitHub 账号。Hy-Memory 需要另行配置，缺省时从 SQLite 读取有效记忆。
 
 单独开发本工程：
 
@@ -41,10 +30,6 @@ pnpm check    # 类型检查、全部测试、构建
 依赖版本以 `package.json` 和锁文件为准；DSH 实际运行版本与兼容性验证见 [技术验证记录](docs/along/004-phase0-validation.md)。
 
 ## 文档与代码导航
-
-先读[当前进程、派工与记忆链路](docs/along/009-current-runtime.md)，完整分类入口见[文档导航](docs/README.md)。导航分别列出当前实现、产品设计、阶段验收及保留的 GitHub / 飞书指南。
-
-本地手机链路统一从相邻 Along 工程的 `npm run activate` 启动；[SETUP.md](SETUP.md) 只用于 GitHub / 飞书编程 Agent 部署。
 
 | 代码位置 | 职责 |
 | --- | --- |
