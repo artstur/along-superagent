@@ -545,6 +545,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-result-presentation.spec.ts` | Product display authority/length boundaries and complete legacy-body preservation |
 | `tests/along-health-followup.spec.ts` | Health-only Runtime dispatch, task updates, baselines, stale chat protection, scope and malformed inputs |
 | `tests/along-personal-handoff.spec.ts` | Synthetic 50-table continuity, exact sync high-water mark, owner/schema/digest/drain refusal, atomic FK rollback, actual Runtime startup fences and cold CLI stage/retry/retire/activation |
+| `tests/along-retired-dispatch-handoff.spec.ts` | Retired NULL-result due/repair/source history preservation, Runtime pending parity, cold CLI/repeat-stage/activation/reopen, ownership refusals and rollback |
 | `tests/along-maintenance.spec.ts` | Scheduled memory work through actual Runtime/Engine/tools, replay, frozen paging, backoff, restart, pause, stopping, isolation and completion |
 | `tests/along-phaseB.spec.ts` | Chat response, explicit goal creation, corrections, stale-input refusal and sync through registered worker tools |
 | `tests/along-runrecord-verify.spec.ts` | Along phase-A contract and integration verification: runrecord-verify |

@@ -160,7 +160,7 @@ describe('personal schema-18 data continuity', () => {
     ['unknown column', 'ALTER TABLE goal ADD COLUMN secret TEXT', 'handoff_unsupported_columns'],
     ['unknown meta', "INSERT INTO meta VALUES('secret','private')", 'handoff_unknown_meta_key'],
     ['active work', 'UPDATE work_link SET ended_at=NULL', 'handoff_business_not_drained'],
-    ['pending dispatch', 'UPDATE health_dispatch SET result=NULL', 'handoff_business_not_drained'],
+    ['pending dispatch', 'UPDATE health_dispatch SET result=NULL; UPDATE task_review SET retired=0; UPDATE task_trigger_review SET retired=0; UPDATE source_goal_review SET retired=0', 'handoff_business_not_drained'],
     ['pending delivery', "UPDATE delivery SET status='pending'", 'handoff_business_not_drained'],
     ['running occurrence', "UPDATE task_trigger_occurrence SET state='dispatched'", 'handoff_business_not_drained'],
   ]) it('refuses '+name, () => {

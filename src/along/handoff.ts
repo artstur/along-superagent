@@ -155,10 +155,35 @@ export function assertHandoffOrchestratorDrained(db: DatabaseSync): void {
   }
 }
 
+/** Runtime suppresses a dispatch when any associated review is explicitly retired. Keep its NULL result/history.
+ * A malformed or cross-scope association cannot turn unresolved work into portable retired history. */
+function hasPendingHealthDispatch(data: HandoffData): boolean {
+  const tasks = new Map(data.user_task.map(row => [row.id, row]))
+  const reviews = new Map<Cell | undefined, HandoffRow[]>()
+  for (const table of ['task_review', 'task_trigger_review', 'source_goal_review'] as const) for (const row of data[table]) {
+    const associated = reviews.get(row.event_id) ?? []
+    associated.push(row); reviews.set(row.event_id, associated)
+  }
+  return data.health_dispatch.some(dispatch => {
+    if (dispatch.result !== null) return false
+    const associated = reviews.get(dispatch.event_id) ?? []
+    if (!associated.some(review => review.retired === 1)) return true
+    return associated.some(review => {
+      if (review.retired !== 0 && review.retired !== 1) return true
+      if ('task_id' in review) {
+        const task = tasks.get(review.task_id)
+        return !task || task.user_id !== dispatch.user_id || task.goal_id !== dispatch.goal_id
+      }
+      return !data.source_state_event.some(event => event.event_id === review.source_event_id &&
+        event.user_id === dispatch.user_id && event.goal_id === dispatch.goal_id && event.provider === review.provider)
+    })
+  })
+}
+
 function assertBusinessDrained(data: HandoffData): void {
   if (data.work_link.some(row => row.ended_at === null) || data.run_record.some(row => row.ended_at === null) ||
     data.delivery.some(row => !['delivered', 'filtered'].includes(String(row.status))) ||
-    data.health_dispatch.some(row => row.result === null) || data.maintenance_batch.some(row => row.status === 'pending') ||
+    hasPendingHealthDispatch(data) || data.maintenance_batch.some(row => row.status === 'pending') ||
     data.memory_operation.some(row => row.status === 'pending') || data.memory_attempt.some(row => row.finished_at === null) ||
     data.task_trigger.some(row => row.state === 'running') ||
     data.task_trigger_occurrence.some(row => ['pending', 'dispatched'].includes(String(row.state))) ||
