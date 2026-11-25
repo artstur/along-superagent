@@ -3,10 +3,7 @@ import { vi } from 'vitest'
 
 /** Create an externally resolvable promise. */
 export function deferred<T = void>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
-  return { promise, resolve, reject }
+  return Promise.withResolvers<T>()
 }
 /** Observe whether a promise has settled without awaiting it. */
 export function track<T>(promise: Promise<T>) {

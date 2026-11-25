@@ -6,9 +6,10 @@
 
 | 阅读目的 | 入口 |
 | --- | --- |
-| 从手机启动 Mac 本地服务 | [Along 一条命令激活](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#一条命令激活本机服务2026-11-16)；在相邻 `Along/` 中执行 `npm run activate` |
+| 启动独立的本地开发环境 | [本地运行](../README.md#本地运行) |
 | 核对目标聊天与后台编排的可见性边界 | [聊天边界、兼容迁移与验收](along/011-conversation-boundary.md) |
-| 理解进程、Router / Worker、健康跟进与长期记忆 | [当前运行图](along/009-current-runtime.md) |
+| 理解进程、Router / Worker 和长期记忆 | [Mac 本地运行图（2026-11-16）](along/009-current-runtime.md)、[个人工作区云端交接契约](along/019-personal-cloud-handoff.md) |
+| 核对按目标推荐的数据源及健康变化的跟进 | [数据源推荐](along/011-goal-data-sources.md)、[健康数据汇总](along/022-health-context.md)、[主动健康编排与任务结果](along/024-proactive-health-and-results.md) |
 | 核对已实现范围和待验项 | [实施与验收](along/003-implementation.md) 第 1 节 |
 | 核对 OKX 成交账单报告与策略复盘边界 | [私有历史报告](along/021-okx-history.md) |
 | 查找 DSH 核心模块与测试 | [代码架构索引](007-architecture.md)；Along 入口为 [`src/along/`](../src/along/) 和 [`src/app/runtime.ts`](../src/app/runtime.ts) |
@@ -32,6 +33,7 @@
 - [阶段 A：存储、事件与桥接](along/005-phase-a-integration.md)
 - [阶段 D：长期记忆实施](along/006-memory-implementation.md)
 - [阶段 B：聊天与自动生效](along/007-phase-b-integration.md)
+- [阶段 C：健康变化跟进](https://github.com/artstur/Along/blob/main/docs/stage-c-tech-design.md)
 - [定时记忆维护](along/008-scheduled-maintenance.md)
 
 ## 保留的 GitHub / 飞书编程 Agent 指南
@@ -42,5 +44,3 @@
 - 原理与行为：[设计原则](000-philosophy.md)、[领域模型](001-domain.md)、[授权](002-authorization.md)、[执行](003-execution.md)。
 - 配置与运维：[提示词](004-prompts.md)、[管理面板](005-panel.md)、[部署](006-deployment.md)。
 - 开发：[代码架构](007-architecture.md)、[来源扩展](008-cookbook.md)。
-
-- [Health foreground aggregate context](along/022-health-context.md)
