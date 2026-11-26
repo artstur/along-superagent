@@ -8,12 +8,12 @@
 | --- | --- |
 | 启动独立的本地开发环境 | [本地运行](../README.md#本地运行) |
 | 核对目标聊天与后台编排的可见性边界 | [聊天边界、兼容迁移与验收](along/011-conversation-boundary.md) |
-| 理解进程、Router / Worker 和长期记忆 | [Mac 本地运行图（2026-11-16）](along/009-current-runtime.md)、[个人工作区云端交接契约](along/019-personal-cloud-handoff.md) |
+| 理解进程、Router / Worker 和长期记忆 | [Mac 本地运行图（2026-11-16 快照）](along/009-current-runtime.md)、[长期记忆接线](along/006-memory-implementation.md) |
+| 部署云端或迁移已有个人工作区 | [Along 部署手册](https://github.com/artstur/Along/blob/main/deploy/README.md)、[个人工作区冷交接契约](along/019-personal-cloud-handoff.md) |
 | 核对按目标推荐的数据源及健康变化的跟进 | [数据源推荐](along/011-goal-data-sources.md)、[健康数据汇总](along/022-health-context.md)、[主动健康编排与任务结果](along/024-proactive-health-and-results.md) |
 | 核对已实现范围和待验项 | [实施与验收](along/003-implementation.md) 第 1 节 |
 | 核对 OKX 成交账单报告与策略复盘边界 | [私有历史报告](along/021-okx-history.md) |
 | 查找 DSH 核心模块与测试 | [代码架构索引](007-architecture.md)；Along 入口为 [`src/along/`](../src/along/) 和 [`src/app/runtime.ts`](../src/app/runtime.ts) |
-| 继续本轮代码质量改进 | [代码质量与文档整理记录](along/010-code-quality.md)；双仓库 Goal Prompt 归属配套 Along 的 `docs/code-quality-goal.md` |
 
 ## 产品决策与目标设计
 
@@ -35,6 +35,7 @@
 - [阶段 B：聊天与自动生效](along/007-phase-b-integration.md)
 - [阶段 C：健康变化跟进](https://github.com/artstur/Along/blob/main/docs/stage-c-tech-design.md)
 - [定时记忆维护](along/008-scheduled-maintenance.md)
+- [代码质量与文档整理记录](along/010-code-quality.md)
 
 ## 保留的 GitHub / 飞书编程 Agent 指南
 

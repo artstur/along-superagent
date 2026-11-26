@@ -1,13 +1,11 @@
 # V-1 实测记录：along-super-agent 在 Linux 云端独立部署
 
 > 2026-11-23。环境：阿里云 ECS，Alibaba Cloud Linux 4，Docker 29.10.0 / Compose v5.8.0。
-> 结论一句话：**可行**。沿仓库 `docs/cloud-deploy-multi-user.md` §3.5 Tier 2 挂起半年的 V-1 验证项判定通过。
+> **V-1 通过**：Linux 发行物可以长驻运行 Along Agent 并承载 Along 数据面。
 >
 > 本文记录**实测事实**（发行物实际提供什么、Linux 上装什么要多久、要多少内存与磁盘、
-> 这台 ECS 的网络有什么坑），不是部署手册 —— 部署编排由沿仓库 `deploy/` 承担。
-> 沿仓库 `origin/feature/tier2-cloud-orchestration` 分支已据此实现 Tier 2 编排
-> （`deploy/Dockerfile.superagent`、`deploy/superagent-start.sh`、`deploy/superagent-seed.mjs`、
-> `deploy/docker-compose.tier2.yml`），本文与它互补而不重复。
+> 这台 ECS 的网络有什么坑），不是部署手册。现行拓扑、启动、就绪检查与回退见 Along 的
+> [部署手册](https://github.com/artstur/Along/blob/main/deploy/README.md)。
 
 ## 1. 背景：沿仓库此前为什么判定「不可行」
 
@@ -316,44 +314,22 @@ MiniMax 自己的 `embo-01` 是自家形状（请求体要 `texts`、响应是 `
 - 先清构建缓存（`docker builder prune`）腾出 2.7 GB；
 - 不用 Hy-Memory 时沿的 SQLite 降级语义明确（文档：「Omit `alongMemory` to retain local governance and explicit SQLite fallback; this does not silently disable conversations」）。
 
-## 6. 尚未覆盖的部分
+## 6. 验证范围
+
+独立 V-1 探针与后续云端联调不是同一次验证；下表分开记录，不推定其他部署环境的状态。
 
 | 项 | 状态 | 备注 |
 | --- | --- | --- |
 | 真实模型调用 | 已测 | MiniMax `MiniMax-M3.1-Flash` 经 profile 层的 `agent-default-model` + pi-ai 路由接上；一句自然语言 → 自动建目标、拆 3 个任务、约每日提醒 |
 | Worker 真实执行 | 部分已测 | 派工能跑起来，但镜像缺 git 导致 worker 准备目录失败（`spawn git ENOENT`），已补；bash 沙箱本身的行为仍未系统验收 |
-| Along 事件摄取（`/events`） | 未测 | 需要 Host 侧配合；本轮按用户决定只跑 superagent 本身 |
+| Along 事件摄取（`/events`） | 后续联调已测 | 独立 V-1 没有 Host，事件摄取在后续 Host 联调覆盖 |
 | Hy-Memory | 见 §5.3、§5.3.1 | Linux python3.12 + hy-memory 2.0.16 已验证；embedder 选型与真实模型一轮的实测见 §5.3.1 |
-| 与 `along` Host 的联调 | 已测 | Host 已上云（`along` 仓库 `deploy/docker-compose.cloud.yml`），配对/事件摄取/桥接端到端跑通 |
+| 与 Along Host 的联调 | 后续联调已测 | 该环境的配对、事件摄取与桥接跑通；不代表真机后台或其他环境已验收 |
 | 长时稳定性 / 断电恢复 | 未测 | 需要观察期 |
 
 ## 7. 结论与影响
 
-1. **V-1 通过**：Linux npm 发行物可以承载长驻 superagent，Tier 2 在技术上成立。
-2. 沿仓库 `docs/cloud-deploy-multi-user.md` §2.1/§3.5 关于「Linux 只能 headless 一次性形态」的表述需要修订 —— 它与 `dsh web` 的实际存在相悖，是一份基于不完整信息的设计结论。
-3. 云端正式部署的形态随之变化：不再需要「host + 一次性 runner」的二段式，superagent 可作为长驻服务直接承载 Along 数据面。**但这需要重新评估 §1 里「不做新链路数据面上云」的整条取舍**，因为它的唯一理由就是长驻运行时不可得。
-4. 部署时必须包含 settings seed（§3），否则 setup 永远停在 `repositoryUnset`。
+V-1 推翻的是「Linux 只能用一次性 headless 进程」，不是 Tier 1 本身。Tier 1 仍可用 headless runner；Tier 2 可用长驻 Along Agent 承载事件工作区。Tier 2 首次建库需要写入 settings seed（§3），不能只改插件开关。
 
-### 7.1 待沿仓库修订的具体位置
-
-`origin/feature/tier2-cloud-orchestration` 已实现 Tier 2 编排并把 V-1 写成「已通过」，但**旧结论原文仍在**，
-合入 main 时需要一并修订，否则两份结论并存：
-
-| 位置 | 现文 | 建议 |
-| --- | --- | --- |
-| `docs/cloud-deploy-multi-user.md` §2.1 | 「已核实的官方 Linux 发行物 `@deepseek-ai/dsh` 是 headless 一次性形态（无监听端口、每调用一个进程退出），承载不了长驻数据面」 | 改为：发行物同时提供 `dsh web`（长驻 Web profile）与 `dsh headless`（一次性）；两者并存，headless 不是唯一形态。V-1 实测见本文 |
-| 同上 §2.2 冲突表 C9 | 「DSH 核心运行时无 Linux 长驻形态」 | 该条已不成立，标注为 V-1 已推翻 |
-| 同上 §1 | 「不做新链路数据面上云（Tier 2）」 | 该取舍的唯一理由是长驻运行时不可得；V-1 通过后需重新评估（tier2 分支已实际开启，§6.5） |
-| 同上 §3.5 | 「Tier 2（验证项 V-1，不在本轮验收范围）」 | 改为已通过并给出就绪契约 |
-
-### 7.2 本轮未覆盖、tier2 分支需继续验证的
-
-tier2 分支的实现比本轮独立验证的范围更大（Host 接入、公网 IPv4 HTTPS、TLS 与 CA、回退路径），
-这些**本轮完全没测**。本轮只证明了 superagent 本体能在 Linux 长驻并承载 Along 数据面：
-
-- 真实模型调用与 Worker 真实执行（真实 Ticket、bash 沙箱在 Linux 上的行为）；
-- Host 与 superagent 的实际联调（配对、事件摄取、投递泵的端到端）；
-- 公网形态的 TLS / CA / 回退；
-- 长时稳定性与断电恢复；
-- Hy-Memory 的真实模型质量（offline 只证明管道，不证明质量）。
+公网 TLS / CA 与回退、长时稳定性、断电恢复，以及超出 §5.3.1 样例的记忆质量，都不能从 V-1 或后续 Host 联调推定。各拓扑的验证要求以 Along 部署手册为准。
 

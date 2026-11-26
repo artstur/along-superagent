@@ -20,7 +20,7 @@ personal/
 
 在相邻的 Along 工程中按[本地验证与手机连接](https://github.com/artstur/Along/blob/main/docs/stage-b-tech-design.md#本地验证与手机连接)安装依赖并运行 `npm run activate`。本地手机链路无需 GitHub 账号。Hy-Memory 需要另行配置，缺省时从 SQLite 读取有效记忆。
 
-单独开发本工程：
+单独开发本工程：使用 `package.json` 的 `engines.node` 范围内的 Node.js（22.19+ 的 22.x 或 24+），并使用 `packageManager` 固定的 pnpm 版本。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -28,6 +28,8 @@ pnpm check    # 类型检查、全部测试、构建
 ```
 
 依赖版本以 `package.json` 和锁文件为准；DSH 实际运行版本与兼容性验证见 [技术验证记录](docs/along/004-phase0-validation.md)。
+
+云端部署从 Along 的 [部署手册](https://github.com/artstur/Along/blob/main/deploy/README.md) 选拓扑；已有个人工作区迁云按[冷交接契约](docs/along/019-personal-cloud-handoff.md)执行，不用普通重新配对替代。
 
 ## 文档与代码导航
 

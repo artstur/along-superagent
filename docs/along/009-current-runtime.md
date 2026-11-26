@@ -1,6 +1,6 @@
 # 当前 Along：进程、派工与长期记忆
 
-核对日期：2026-11-16。本文说明**当前代码如何运行**，与 [001 目标架构](001-architecture.md) 中的后续设计分开。代码基线：Along Agent `cdbac6d055d9ea053e454820072a4874b1552335`；配套 iPhone / Host 工程 Along `07aa7489ce0ed582d3a0aca7c668d444fc60e9e0`（Build 52 / Web v59）。
+核对日期：2026-11-16。本文是 Mac 本地运行快照，与 [001 目标架构](001-architecture.md) 中的后续设计分开；图中的版本及 schema 只对应当时的代码。代码基线：Along Agent `cdbac6d055d9ea053e454820072a4874b1552335`；配套 iPhone / Host 工程 Along `07aa7489ce0ed582d3a0aca7c668d444fc60e9e0`（Build 52 / Web v59）。当前实现与部署入口见[文档导航](../README.md)。
 
 主分类：`release`，依赖上述两个仓库主线。可观察验收：手机能连接新版 Host；读者能沿图找到聊天、健康跟进、记忆提取、记忆召回分别由谁触发、读写哪里、何时生效。
 
