@@ -203,7 +203,7 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
                 const revision=store.appendTaskRevision({taskId:feedbackTask.id,userId:identity.userId,scheduledAt:next,originEventId:envelope.event_id})
                 store.appendSync({userId:identity.userId,goalId:feedbackTask.goalId,taskId:feedbackTask.id,kind:'task_updated',payload:{task_id:feedbackTask.id,goal_id:feedbackTask.goalId,status:'open',revision}})
               }
-            } else {
+            } else if (feedbackTask.status!=='done') {
             // A fact, not a goal edit (D4): status flips to done and the version advances deterministically —
             // no ChangeSet, `basis_changeset` stays NULL so agent-driven and fact-driven revisions stay apart.
             const revision=store.appendTaskRevision({ taskId: feedbackTask.id, userId: identity.userId, status: 'done',
@@ -214,6 +214,9 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
             store.appendSync({userId:identity.userId,goalId:feedbackTask.goalId,taskId:feedbackTask.id,kind:'task_updated',
               payload:{task_id:feedbackTask.id,goal_id:feedbackTask.goalId,status:'done',revision}})
             }
+            // A task that is already done keeps its single done revision: a repeated completion fact (the phone
+            // retried while its sync was failing) is recorded as a message row but never advances the version
+            // again and never emits a second `task_updated` row — one task, one done version, one sync row.
           }
           // `task.feedback` changes no status and raises no version — its meaning is Stage B's Worker's to judge.
         }

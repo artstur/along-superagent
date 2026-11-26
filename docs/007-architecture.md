@@ -478,6 +478,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/along-task-trigger-review.spec.ts` | Private bridge maintenance admission, same-goal evidence, immutable task fields, durable postconditions, schema-12 migration and stale scope refusal |
 | `tests/along-task-trigger-review-runtime.spec.ts` | Real Runtime registered review Worker, exact tool boundary, same-Ticket retry and restart recovery without chat, notifications or execution counts |
 | `tests/along-task-trigger-cadence.spec.ts` | Continuing goal cadence, prior-evidence repair, two-week occurrence completion and non-recurring counterexamples |
+| `tests/along-task-history-page.spec.ts` | Bounded goal snapshot versus the paged task read: the oldest completed task stays reachable, unknown status is refused and another goal's tasks never leak |
 | `tests/along-task-activation.spec.ts` | Input changes, temporary capability/permission loss and restart/cancellation recovery through persistent task occurrences |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
