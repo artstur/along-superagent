@@ -246,6 +246,29 @@ describe('acceptEvent transactional receive', () => {
     store.close()
   })
 
+  it('emits a goal-scoped task_updated sync row for the completion fact so the phone can learn the task is done', () => {
+    const path = join(directory, 'along.sqlite')
+    const store = seededStore(path)
+    store.insertTask({ goalId: GOAL, userId: USER, content: '完成 30 分钟快走', taskId: TASK })
+    const inbox = createInbox(store)
+    const receipt = inbox.acceptEvent(userMessage({ event_id: 'evt-done-0002', event_type: 'along.message', kind: 'task.completed',
+      goal_id: GOAL, task_id: TASK,
+      payload: { event_type: 'along.message', kind: 'task.completed', task_id: TASK, completed_at: '2026-11-15T09:00:00+08:00' } }), identity)
+    expect(receipt.status).toBe('accepted')
+    const items = store.syncPage(USER, 0, 50).items
+    const updated = items.find(item => item.kind === 'task_updated')
+    expect(updated).toBeDefined()
+    expect(updated!.goalId).toBe(GOAL)
+    expect(updated!.taskId).toBe(TASK)
+    expect(updated!.payload).toMatchObject({ task_id: TASK, goal_id: GOAL, status: 'done', revision: store.getTask(USER, TASK)!.currentRevision })
+    // The phone applies a goal snapshot only for goal-scoped items — without goal_id the client keeps the old state.
+    const synced = store.workspaceSync(USER, 0, 50).items.find(item => item.kind === 'task_updated')!
+    expect(synced.goalId).toBe(GOAL)
+    const snapshot = (synced.payload as { snapshot?: { tasks: { id: string; status: string }[] } }).snapshot!
+    expect(snapshot.tasks.find(task => task.id === TASK)!.status).toBe('done')
+    store.close()
+  })
+
   it('records a task feedback as a message row only — no status change, no version advance', () => {
     const path = join(directory, 'along.sqlite')
     const store = seededStore(path)
