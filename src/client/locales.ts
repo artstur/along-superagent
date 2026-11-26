@@ -367,6 +367,7 @@ const TEXT = {
   ticketMandateLabel: ['授权', 'Mandate'],
   ticketActorLabel: ['发起', 'From'],
   ticketUpdatedLabel: ['更新', 'Updated'],
+  ticketCreatedLabel: ['发起时间', 'Initiated'],
   executionDirectory: ['执行目录的根目录', 'Ticket directory root'],
   executionDirectoryDefault: ['留空时用 {root}', 'Empty uses {root}'],
   executionDirectoryEmpty: ['留空：默认目录', 'Empty: the default directory'],
