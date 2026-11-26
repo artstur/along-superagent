@@ -26,6 +26,8 @@ Along Worker/maintenance and Router mark `dsh-superagent-policy` complete:true: 
 
 Parts are registered in `builtInParts()` in [prompts.ts](../../src/app/prompts.ts), so the existing PromptConfig store validates, versions, hashes and restores explicit `along/*` overrides. Package defaults remain the source of truth absent an override. Existing generic management full-prompt preview shows the generic repository composition; for actual Along composition use `composeAlongPrompt`/the fixture below and session provenance. A generic preview must not be mistaken for what a business Worker was sent.
 
+The Along Worker uses Simplified Chinese for direct chat replies and clarification questions, including the first reply with no goal or conversation history. The instruction belongs in `along/worker` and applies to `along_chat_reply`. Verify that the actual Worker system section contains the rule and use a fresh, isolated conversation to check model output.
+
 ## On-demand capabilities
 
 | DSH skill | When loaded / actual tools | Output and postcondition |
