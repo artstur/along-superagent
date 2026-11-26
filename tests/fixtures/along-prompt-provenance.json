@@ -1,7 +1,7 @@
 {
   "kind": "synthetic-source-assembly",
-  "sha256": "4b97ae71e18c53931b9c1c612a08895bd3174f598a3a25d8d89c40412771a487",
-  "characters": 8302,
+  "sha256": "ee5727ea0704fa1d43c799cb316868434f8066afd56bb46e962ce8ccfe122941",
+  "characters": 8448,
   "parts": [
     {
       "key": "along/shared",
@@ -9,7 +9,7 @@
     },
     {
       "key": "along/worker",
-      "sha256": "eb51ade75f4dbe95030aa920e3f447e0ec61c7d9fd9f45e8ab6a35ea31a73cfa"
+      "sha256": "e7c34c37e9c89f5232db5bd3d621acdc7032f22d7a9aadabaefc3dd02c33e0a1"
     },
     {
       "key": "along/task-due",

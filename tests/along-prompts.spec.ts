@@ -51,6 +51,7 @@ it('actual Along Worker decoration selects only its business contract and regist
  const text=h.section.text({signal:new AbortController().signal})
  expect(h.section.complete).toBe(true)
  expect(text).toContain('ALONG_OVERRIDE_SENTINEL')
+ expect(text).toContain('Use Simplified Chinese for every direct reply or clarification sent via along_chat_reply, including the first reply')
  for(const forbidden of ['REPOSITORY_SCOPE_SENTINEL','REPOSITORY_DELIVERY_SENTINEL','REPOSITORY_ROLE_SENTINEL','REPOSITORY_CUSTOM_SKILL','SHADOW_BUILTIN','Use gh for ALL','DSH_SUPERAGENT_DIR'])expect(text).not.toContain(forbidden)
  expect(h.host.environment).not.toHaveBeenCalled()
  for(const skill of alongSkills){
