@@ -59,6 +59,30 @@ describe('paged goal task reads', () => {
     store.close()
   })
 
+  it('carries the same execution summary on the paged read as on the goal snapshot', async () => {
+    const { store, call } = seeded(3)
+    const inbox = createInbox(store)
+    const identity = { userId: user, deviceId: device }
+    const taskId = 't_hist_open'
+    store.insertTask({ userId: user, goalId, taskId, content: '刚完成的任务' })
+    // 一次真实的完成事实：任务转 done，执行投影记 1 次。
+    expect(inbox.acceptEvent({ event_id: 'evt_hist_done', schema_version: '1', event_type: 'along.message', kind: 'task.completed',
+      goal_id: goalId, task_id: taskId, occurred_at: '2026-11-15T09:00:00+08:00', timezone: 'Asia/Shanghai',
+      payload: { event_type: 'along.message', kind: 'task.completed', task_id: taskId, completed_at: '2026-11-15T09:00:00+08:00' } },
+    identity).status).toBe('accepted')
+    expect(store.taskExecution(user, taskId).count).toBe(1)
+    expect(store.goalDetail(user, goalId).tasks.find(task => task.id === taskId)?.execution?.count).toBe(1)
+
+    const paged = await call(new URLSearchParams({ user_id: user, goal_id: goalId, status: 'done', limit: '50' }))
+    expect(paged.status).toBe(200)
+    const item = (paged.body as { items: { id: string; execution?: { count: number; records: { summary: string }[] } }[] }).items
+      .find(task => task.id === taskId)
+    // 分页读到的任务与目标快照同一口径：详情据此显示「已记录 1 次执行」与完成反馈。
+    expect(item?.execution?.count).toBe(1)
+    expect(item?.execution?.records.map(record => record.summary)).toContain('已收到任务完成反馈')
+    store.close()
+  })
+
   it('rejects an unknown status and never reads another goal’s tasks', async () => {
     const { store, call } = seeded(3)
     expect((await call(new URLSearchParams({ user_id: user, status: 'unknown' }))).status).toBe(400)
