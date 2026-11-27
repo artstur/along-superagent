@@ -203,12 +203,20 @@ export function createInbox(store: AlongStore): { acceptEvent(input: unknown, id
                 const revision=store.appendTaskRevision({taskId:feedbackTask.id,userId:identity.userId,scheduledAt:next,originEventId:envelope.event_id})
                 store.appendSync({userId:identity.userId,goalId:feedbackTask.goalId,taskId:feedbackTask.id,kind:'task_updated',payload:{task_id:feedbackTask.id,goal_id:feedbackTask.goalId,status:'open',revision}})
               }
-            } else {
+            } else if (feedbackTask.status!=='done') {
             // A fact, not a goal edit (D4): status flips to done and the version advances deterministically —
             // no ChangeSet, `basis_changeset` stays NULL so agent-driven and fact-driven revisions stay apart.
-            store.appendTaskRevision({ taskId: feedbackTask.id, userId: identity.userId, status: 'done',
+            const revision=store.appendTaskRevision({ taskId: feedbackTask.id, userId: identity.userId, status: 'done',
               completedFeedbackEventId: envelope.event_id, originEventId: envelope.event_id })
+            // The completion only reaches the phone through the durable outbox: without this sync row the
+            // client keeps the old snapshot and never learns the task is done (001 §7.4, `goal_id` required —
+            // only goal-scoped items carry the goal snapshot the client applies).
+            store.appendSync({userId:identity.userId,goalId:feedbackTask.goalId,taskId:feedbackTask.id,kind:'task_updated',
+              payload:{task_id:feedbackTask.id,goal_id:feedbackTask.goalId,status:'done',revision}})
             }
+            // A task that is already done keeps its single done revision: a repeated completion fact (the phone
+            // retried while its sync was failing) is recorded as a message row but never advances the version
+            // again and never emits a second `task_updated` row — one task, one done version, one sync row.
           }
           // `task.feedback` changes no status and raises no version — its meaning is Stage B's Worker's to judge.
         }

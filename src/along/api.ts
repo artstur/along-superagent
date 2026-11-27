@@ -224,7 +224,14 @@ async function route(host: AlongApiHost, identity: AlongIdentity, method: string
     requireQueryUser(query, identity)
     const status = query.get('status')
     if (status !== null && !['open', 'done', 'cancelled'].includes(status)) throw new AlongApiError(400, 'invalid_param')
-    return ok(store.listTasks(identity.userId, status === null ? {} : { status: status as 'open' | 'done' | 'cancelled' }, keysetCursor(query)))
+    // 目标内筛选：历史任务入口按需翻页读更早的已完成任务，不放大每次同步的目标快照。
+    const goalId = query.get('goal_id')
+    if (goalId !== null && goalId !== '' && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(goalId)) throw new AlongApiError(400, 'invalid_param')
+    const filter: { status?: 'open' | 'done' | 'cancelled'; goalId?: string } = status === null ? {} : { status: status as 'open' | 'done' | 'cancelled' }
+    if (goalId !== null && goalId !== '') filter.goalId = goalId
+    const page = store.listTasks(identity.userId, filter, keysetCursor(query))
+    // 与目标快照同一口径：任务行附带执行摘要，详情据此显示「已记录 N 次执行」与完成反馈。
+    return ok({ ...page, items: page.items.map(task => ({ ...task, execution: store.taskExecution(identity.userId, task.id) })) })
   }
   if (method === 'GET' && path === 'sync') {
     requireQueryUser(query, identity)
