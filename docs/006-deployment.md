@@ -34,7 +34,7 @@ Opening a blank managed Session in the Web UI can select the profile's default p
 
 Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
 
-Along memory backend is configured only on the Mac in the `dsh-superagent` plugin configuration:
+Along memory backend is configured in the `dsh-superagent` plugin configuration. The example below is the Mac layout:
 
 ```yaml
 alongMaintenanceTime: "02:15" # Mac local time, HH:mm; default 03:00
@@ -43,6 +43,8 @@ alongMemory:
   dataDir: /Users/<user>/.along/memory
   envFile: /Users/<user>/.along/memory.env
 ```
+
+The Linux cloud deployment configures the same `alongMemory` keys, but from the Along repository's profile patch instead of a hand-edited file: `deploy/superagent-profile.patch.yml` sets `python: /usr/local/bin/python3.12`, `dataDir: /var/lib/memory/data` and `envFile: /run/secrets/memory-env`, and the container copies that patch over the profile at startup, so "change the config, restart, it takes effect" does not depend on editing the state directory by hand. See the Along repository's [deployment guide](https://github.com/artstur/along/blob/main/deploy/README.md). That stack runs `@deepseek-ai/dsh@0.2.2-rc.5`, pinned in the Along repository's `deploy/agent-dsh/package.json`; the programming-Agent install above pins `0.2.1-rc.3`, which is a separate version question.
 
 Use Python 3.12 with `hy-memory==2.0.16`. The env file must be mode 0600 and contain the memory LLM/embedding configuration; put credential values only there. The packaged Python owner starts on first SDK use, outside Worker directories. Omit `alongMemory` to retain local governance and explicit SQLite fallback; this does not silently disable conversations. Current and status-labelled historical memories help the model understand updates, with current explicit intent taking priority. With the backend configured, paired and allowed users receive daily memory-maintenance work through DSH Tickets. `alongMaintenanceTime` is a volatile plugin configuration field: save it in DSH's `dsh-superagent` configuration and the next pass reads the new value without restarting. Future schedules move to the next occurrence of the new time; already overdue or running batches keep their work, then use the current time for the next cycle. Missed days coalesce into one catch-up batch. Maintenance stays out of phone chat. Review and Skill publishing are not part of this first scheduled job.
 

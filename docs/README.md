@@ -8,10 +8,11 @@
 | --- | --- |
 | 启动独立的本地开发环境 | [本地运行](../README.md#本地运行) |
 | 核对目标聊天与后台编排的可见性边界 | [聊天边界、兼容迁移与验收](along/011-conversation-boundary.md) |
-| 理解进程、Router / Worker 和长期记忆 | [Mac 本地运行图（2026-11-16 快照）](along/009-current-runtime.md)、[长期记忆接线](along/006-memory-implementation.md) |
+| 理解进程、Router / Worker 和长期记忆 | [长期记忆接线](along/006-memory-implementation.md)；进程与派工的运行快照见下方阶段记录 |
 | 部署云端或迁移已有个人工作区 | [Along 部署手册](https://github.com/artstur/Along/blob/main/deploy/README.md)、[个人工作区冷交接契约](along/019-personal-cloud-handoff.md) |
 | 核对按目标推荐的数据源及健康变化的跟进 | [数据源推荐](along/011-goal-data-sources.md)、[健康数据汇总](along/022-health-context.md)、[主动健康编排与任务结果](along/024-proactive-health-and-results.md) |
 | 核对已实现范围和待验项 | [实施与验收](along/003-implementation.md) 第 1 节 |
+| 核对任务完成、历史分页与私有数据等待 | [实施与验收](along/003-implementation.md) 第 1 节、[执行记录投影](along/013-task-execution-history.md) |
 | 核对 OKX 成交账单报告与策略复盘边界 | [私有历史报告](along/021-okx-history.md) |
 | 查找 DSH 核心模块与测试 | [代码架构索引](007-architecture.md)；Along 入口为 [`src/along/`](../src/along/) 和 [`src/app/runtime.ts`](../src/app/runtime.ts) |
 
@@ -26,8 +27,9 @@
 
 ## 阶段实现与当时验收
 
-这些文件保留方案、实现落点与后续补记，读当前链路时先从上方运行图进入。
+这些文件保留方案、实现落点与后续补记，日期、版本与 schema 只对应当时的代码。
 
+- [Mac 本地运行图（2026-11-16 快照）](along/009-current-runtime.md)
 - [阶段 0：技术验证](along/004-phase0-validation.md)
 - [Linux 云端部署实测（V-1 通过）](along/023-linux-cloud-deployment.md)
 - [阶段 A：存储、事件与桥接](along/005-phase-a-integration.md)

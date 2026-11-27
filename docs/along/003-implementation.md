@@ -1,6 +1,6 @@
 # Along 实施与验收
 
-> 2026-11-26 核对第 1 节实现索引。后续章节定义阶段范围与验收条件，不代表全部已通过。设计起始基线为 `a07764f`；各阶段实际证据见对应实施记录。
+> 2026-11-27 核对第 1 节实现索引（代码基线 `a383b61`）。后续章节定义阶段范围与验收条件，不代表全部已通过。设计起始基线为 `a07764f`；各阶段实际证据见对应实施记录。
 
 ## 1. 现有能力与扩展位置
 
@@ -17,7 +17,10 @@
 | 业务存储、完整对话、记忆治理 | 阶段 A 基座、记忆治理、Runtime/Worker 工具与定时记忆维护已实现 | 独立 Along 业务模块与 `along.sqlite`；[记忆实施记录](006-memory-implementation.md) |
 | Hy-Memory | 固定版本安装、Runtime 生命周期装配及中文合成样例验证已实现；全面质量与长期稳定性待验收 | [Python 记忆进程与 Memory Service](006-memory-implementation.md) |
 | 健康 7 类摘要 | 阶段 C 已接通新协议、前后台可靠队列、逐目标自动派工与跟进；真机后台机会待验收 | [HealthKitReader](https://github.com/artstur/Along/blob/main/ios/AlongHealth/Sources/HealthKitReader.swift) |
-| 主动健康复查与任务结果 | 已支持按目标本地日期持久去重的复查；执行结果作为任务证据交付，不混入直接聊天 | [主动健康编排与任务结果](024-proactive-health-and-results.md) |
+| 主动健康复查与任务结果 | 已支持按目标本地日期持久去重的复查；执行结果作为任务证据交付，不混入直接聊天 | [主动健康编排与任务结果](024-proactive-health-and-results.md)、[执行结果投影](../../src/along/task-execution.ts) |
+| 任务完成与历史分页 | 已实现：完成反馈经 `task.completed` 事件入 Inbox 并落为任务的完成事实（重复事件只产生一次效果）；目标、任务与消息按 keyset 分页读，历史任务可按 `goal_id` 翻页，任务行附带只读执行摘要 | [Inbox](../../src/along/inbox.ts)、[业务存储](../../src/along/store.ts)、[执行记录投影](013-task-execution-history.md) |
+| 私有数据读取与等待 | 已实现：来源事实与私有读取按用户／目标／任务范围授权，数据未就绪时持久等待并可凭新的可信证明恢复，不靠反复调模型 | [来源状态](../../src/along/source-state.ts)、[私有读取等待](020-private-read-wait.md) |
+| 业务库 schema | 当前 `ALONG_SCHEMA_VERSION = 18`；2026-11-16 的 Mac 运行图记录的是 schema 4，属当时快照，不是现行版本 | [`src/along/schema.ts`](../../src/along/schema.ts)、[Mac 本地运行图](009-current-runtime.md) |
 | 自动生效 | B 最小聊天闭环已实现：新协议页面自动展示已校验状态；旧 Host 兼容路径仍保留采用行为 | Along `docs/stage-b-tech-design.md`，Along Agent `tests/along-phaseB.spec.ts` |
 | 个人工作区迁云 | 已实现专用单用户、显式目标范围的冷交接；不是普通配对或数据合并 | [冷交接范围、操作与验证](019-personal-cloud-handoff.md) |
 
