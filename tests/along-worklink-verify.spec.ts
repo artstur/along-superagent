@@ -9,7 +9,7 @@
  * store's afterCommit into `onDomainEvent`.
  */
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -195,7 +195,7 @@ describe('Along worklink verify: BC-08-06 boundaries around the one-sentence-one
     await h.acceptedTicket(messageEvent('event-1', workThread('seg-1')))
     await wait(3) // 行的 created_at 有序，最新在途工作可判定
     const secondEvent = messageEvent('event-2', workThread('seg-2'))
-    const second = (await h.acceptedTicket(secondEvent)).ticket
+    await h.acceptedTicket(secondEvent)
     seedInboxEvent(store, 'event-2', GOAL)
 
     const replyEvent: ThreadNamingEvent = { event_id: 'event-reply', event_type: 'along.user_message', goal_id: GOAL, causation_id: 'event-2' }
@@ -249,7 +249,7 @@ describe('Along worklink verify: bounded trace and contained errors (§2.5 错�
   })
 
   it('caps errors at 100 and survives a report sink that itself throws', async () => {
-    const { h } = await startAlongHost()
+    await startAlongHost()
     const sinkErrors: unknown[] = []
     // repo 替身让 ticket.created 能解析出 Along 触发器并走到 recordWorkLink（那里抛错）
     const failing = createWorkLink({ store: { recordWorkLink: () => { throw new Error('boom') } } as unknown as AlongStore,

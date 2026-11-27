@@ -349,7 +349,6 @@ describe('delivery pump edges', () => {
   })
 
   it('a filtered user message gets exactly one failure sync and the row is terminal forever (§2.2.2/§2.2.3)', async () => {
-    const dbPath = path()
     const store = seededStore()
     const inbox = createInbox(store)
     inbox.acceptEvent(userMessage({ event_id: 'evt-filtv-001' }), identity)

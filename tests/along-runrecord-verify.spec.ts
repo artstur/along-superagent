@@ -9,7 +9,7 @@
  * emit wrapped in the orchestrator store's afterCommit into worklink + runrecord.
  */
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -242,7 +242,7 @@ describe('BC-07-01（模块口径）：新增登记路径不引入凭证', () =>
   const FAKE = { KIMI_API_TOKEN: 'kimi-fake-token-123', ALONG_BRIDGE_TOKEN: 'bridge-fake-token-456', DSH_ADMIN_TOKEN: 'dsh-fake-token-789' }
 
   it('登记全生命周期的依赖访问面收敛在声明范围内，合成凭证不入行不入说明', async () => {
-    const saved = new Map(Object.entries(FAKE).map(([k, v]) => [k, process.env[k]]))
+    const saved = new Map(Object.entries(FAKE).map(([k]) => [k, process.env[k]]))
     for (const [k, v] of Object.entries(FAKE)) process.env[k] = v
     try {
       const { h, store } = await startAlongHost()

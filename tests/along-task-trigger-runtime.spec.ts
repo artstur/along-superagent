@@ -19,7 +19,7 @@ it('waits durably for safe public-research configuration, resumes once and pause
    {ns:'web-deepseek-api',value:{sendOriginalQuestion:false}}]}:original(name as never))
  const service=h.runtime.along!.service,store=service.alongStore;store.assertUser(userId,deviceId)
  const goal=store.insertGoal({userId,domain:'custom'});store.appendGoalRevision({userId,goalId:goal.id,title:'合成推荐目标',status:'active'});store.ensureInputVersion(userId,goal.id)
- const tools=alongTools({service,scopeFor:()=>({userId,allowedGoalId:goal.id}),web:()=>({search,fetch,assertProvider:kind=>{
+ const tools=alongTools({service,scopeFor:()=>({userId,allowedGoalId:goal.id}),web:()=>({search,fetch,assertProvider:()=>{
    if(!configured)throw Object.assign(Error('configuration unavailable'),{code:'RESEARCH_REMOTE_PROVIDER_REQUIRED'})
  }})},'synthetic_setup')
  const capabilities=tools.find(tool=>tool.name==='along_execution_capabilities')!

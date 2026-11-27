@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it } from 'vitest'
 import { migrateAlongSchema } from '../src/along/migrate.ts'
 import { SourceStateStore, SOURCE_STATE_SCHEMA, SourceReadInputSchema, type SourceEvent,
-  type SourceReadScope, type SourceIdentity } from '../src/along/source-state.ts'
+  type SourceReadScope } from '../src/along/source-state.ts'
 
 const handles: DatabaseSync[] = [], dirs: string[] = []
 afterEach(() => { for (const db of handles.splice(0)) db.close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })

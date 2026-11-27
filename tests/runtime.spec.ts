@@ -598,7 +598,7 @@ it('reports a Source that was switched on as starting until its next pass report
 })
 
 it('records each settings save with its policy change and the open tickets told about it', async () => {
-  const { ticket } = await acceptedTicket()
+  await acceptedTicket()
   const settings = runtime.store.settings()
   await runtime.settings.save('executor', { ...settings.executor, maxWorkers: 5 }, runtime.store.blockRevision('executor'), 'panel')
   // What a Source receives is its own configuration, not the Policy; who may originate work there is the Policy's.

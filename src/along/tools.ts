@@ -170,7 +170,7 @@ export function alongTools(host: AlongToolsHost, ticketId: string): Tool[] {
     ]:[]),
     ...(execution?.actor==='agent'&&execution.capability==='calculation'?[alongTool({name:'along_calculate',description:'Execute this host-bound calculation occurrence using bounded exact arithmetic with units, persist its scoped receipt for along_task_finish. Input facts/assumptions are separate from arithmetic correctness. This tool is unavailable to planning tickets.',
       schema:z.object({calculation:CalculationInputSchema,source_request_id:z.string().min(1).max(128).optional(),quantity_sources:QUANTITY_SOURCES.optional(),quantity_parameters:QUANTITY_PARAMETERS.optional()}).strict(),execute:async(args)=>{
-        const bound=scope(),d=host.healthFollowup?.forTicket(ticketId)
+        const d=host.healthFollowup?.forTicket(ticketId)
         if(d?.due) {
           const calcScope=host.healthFollowup!.calculationScope(ticketId)
           return store.atomic(()=>{
