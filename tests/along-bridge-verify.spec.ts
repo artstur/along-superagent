@@ -58,7 +58,7 @@ function fakeSettings() {
       expect(block).toBe('policy')
       return { block, revision: state.revision, value: state.policy }
     },
-    save: async (block: string, value: unknown, revision: number, origin: string) => {
+    save: async (block: string, value: unknown, revision: number) => {
       expect(block).toBe('policy')
       state.saves += 1
       state.policy = value as Record<string, unknown>

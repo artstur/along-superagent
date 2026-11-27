@@ -26,7 +26,7 @@ async function fixture(text='刚才仍是单次。请继续原任务：'+quote){
  return {h,store,goal,task,other,otherBefore,worker,ticketId,event,source}
 }
 it.each(['recommendation_first','update_first'])('does not complete an explicit weekly request after reading once; allows %s',async order=>{
- const {h,store,goal,task,other,otherBefore,worker,source}=await fixture()
+ const {h,store,task,other,otherBefore,worker,source}=await fixture()
  try {
   expect(await h.runTool(worker,'along_task_list',{})).toMatchObject({tasks:expect.arrayContaining([expect.objectContaining({task_id:task.id,reminder_plan:expect.objectContaining({repeat:'once'})})])})
   if(order==='recommendation_first')expect(await h.runTool(worker,'along_chat_reply',{text:'路线已整理，每周安排尚未补上。',recommendation:rec(source.id)})).toMatchObject({status:'replied'})

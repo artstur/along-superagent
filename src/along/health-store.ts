@@ -3,7 +3,7 @@ import type { ReminderPlan } from './reminder-plan.ts'
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 import type { HealthSummaryRow } from './store.ts'
-import { healthLocalDate, healthTimezone, nextHealthReviewAt, type DailyHealthReview } from './health-daily.ts'
+import { healthTimezone, nextHealthReviewAt, type DailyHealthReview } from './health-daily.ts'
 import type { ResultPresentation } from './result-presentation.ts'
 
 export interface DueTask { taskId: string; revision: number; dueAt: string }

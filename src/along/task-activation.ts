@@ -33,7 +33,7 @@ export class TaskActivation {
     return !row||this.executorAvailable(row)
   }
   private conditions(row:TriggerRow):ConditionResult {
-    const store=this.host.store,tokens:string[]=[]
+    const tokens:string[]=[]
     for(const condition of row.definition.conditions??[]) {
       const result=this.condition(row,condition)
       if(!result.ready)return result

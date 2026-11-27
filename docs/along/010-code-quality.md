@@ -51,3 +51,70 @@
 本轮以 `ccc57ba64494ce528e7c27eff5539455bb09e3e9` 为基线。根 README 保留工程职责和本地开发命令，功能说明及阶段证据由文档导航统一索引。设置保存测试复用现有的 deferred fixture，仍在相同的调用点创建、等待和释放 Promise。验收覆盖文档链接、类型检查、全量测试和 `lib/` 构建文件的逐份比对。
 
 本轮 `npm run check` 通过，1927 项测试通过，1 项真实模型测试沿用既有跳过条件。相同工具链构建基线和清理后的版本，25 份 `lib/` 文件的路径和 SHA-256 均一致。
+
+## 2026-11-27 · 死代码清理（TASK-83）
+
+### 范围与口径
+
+只删除**确认无入口且无兼容用途**的导入与私有辅助逻辑；涉及接口、持久化数据或兼容性语义的候选只记录证据，留待单独评估，不在本轮删除。Along 与 Along Agent 两仓同批排查、同批交付。
+
+### 排查手段
+
+- **模块可达性**：以 `tsdown.config.ts` 的 7 个构建入口（`src/index.ts`、`src/client/index.tsx`、`src/sources/github.ts`、`src/sources/feishu.ts`、`src/sources/along.ts`、`src/along/memory/index.ts`、`src/along-handoff.ts`）为根，沿 `import` / `import()` / `export … from` 边遍历 `src/` 全量模块，列出无任何入口引用的模块；再单独列出「只有测试引用、生产无引用」的模块。
+- **编译期死代码**：`tsc --noEmit --noUnusedLocals --noUnusedParameters` 列出未使用的导入、局部量与参数（该组合原本不在 `tsconfig.json` 里，本轮清理后加入）。
+- **导入级死代码**：解析 `src/` 与 `tests/` 的全部 `import`（含跨行与 `import type`），逐个绑定名在导入文件其余部分做词边界检索。
+- **声明级死代码**：`function` / `const` / `class` / `interface` / `type` 的名字在全仓出现次数 ≤ 1（只有声明处）才列为候选；只被本文件内引用的 `export` 属于「只多一个导出关键字」，不算死代码。
+
+### 已删除
+
+**1. `src/` 12 处未使用绑定**：
+
+| 文件 | 删除项 |
+| --- | --- |
+| `src/along/changeset.ts` | 未使用的类型导入 `TaskTriggerInput` |
+| `src/along/health-store.ts` | 未使用的导入 `healthLocalDate` |
+| `src/along/task-activation.ts` | 未使用的局部量 `store` |
+| `src/along/tools.ts` | 未使用的局部量 `bound`（`scope()` 的调用保留，见「独立验收退回后的修复」） |
+| `src/app/resources.ts` | 未使用的导入 `KV` |
+| `src/app/runtime.ts` | 未使用的导入 `allowedSender`、`triggerMessage`、`ticketCard` |
+| `src/core/engine.ts` | 未使用的类型导入 `ChannelRef` |
+| `src/core/tickets.ts` | 未使用的导入 `latestReport` |
+| `src/executor/dsh.ts` | 未使用的局部量 `source` |
+| `src/infra/environment.ts` | 未使用的解构变量 `repository` |
+| `src/sources/github.ts` | 未使用的类型导入 `GithubComment` |
+| `src/sources/host.ts` | 未使用的类型导入 `ChannelRef` |
+
+`src/infra/environment.ts` 的 `writeEnvironment` 仍然接受 `repository`（`Pick<Deployment, 'stateDir' | 'repository' | 'github' | 'feishu'>`），只是不再解构它：函数体写的 git config 只依赖 `stateDir` 与 GitHub 凭据，从不引用仓库地址，签名保持原样以免改动调用方契约。
+
+**2. `tests/` 14 处未使用绑定**：`along-bridge-verify.spec.ts` 的 `origin` 参数、`along-inbox-verify.spec.ts` 的 `dbPath`、`along-inbox.spec.ts` 的 `inbox` 与 `path`、`along-runrecord-verify.spec.ts` 的 `rmSync` 与 map 回调的 `v`、`along-runrecord.spec.ts` 的 `rmSync`、`along-source-state.spec.ts` 的类型导入 `SourceIdentity`、`along-task-trigger-runtime.spec.ts` 的 `kind` 参数、`along-weekly-completion.spec.ts` 解构出的 `goal`、`along-worklink-verify.spec.ts` 的 `rmSync`、`second` 与 `h`、`along-worklink.spec.ts` 的 `rmSync`、`feishu-read.spec.ts` 的导入 `feishuReferences`、`model-surface.spec.ts` 的常量 `ASSESSMENT`、`runtime.spec.ts` 解构出的 `ticket`、`sources.spec.ts` 的导入 `MemoryRepositories`、`store.spec.ts` 的导入 `key`。
+
+删除后保留了全部副作用调用：`await acceptedTicket()`、`await startAlongHost()`、`await h.acceptedTicket(secondEvent)` 仍照原样执行。
+
+**3. `tsconfig.json` 加入 `noUnusedLocals` 与 `noUnusedParameters`**：把「未使用的导入／局部量／参数」变成编译期错误，避免死代码再次累积。清理后全仓零违规，`pnpm typecheck` 与 `pnpm build` 均通过。
+
+### 独立验收退回后的修复
+
+独立验收（锁定 `64f1f8c`）发现本轮清理引入了一处行为回归，已按退回意见修复。
+
+- **缺陷**：`src/along/tools.ts` 的 `along_calculate` 里，原实现是 `const bound=scope(),d=host.healthFollowup?.forTicket(ticketId)`——`bound` 没被读，但 `scope()` 的**调用本身有副作用**：它先 `assertActive(ticketId)`，再要求 `host.scopeFor(ticketId)` 返回工作范围，否则抛 `ticket <id> has no Along work scope`。把整条语句当成「未使用的局部量」删掉，等于删掉了这道守卫。
+- **触发条件**：工具注册时工作范围有效，执行时 `host.scopeFor(ticketId)` 已返回 `undefined`（范围在注册后被释放）。
+- **预期**：立即报「工作范围失效」；**实际（修复前）**：跳过这次查询继续按 dispatch 检查，落到计算存储自己的 `calculation_invalid_scope`，错误层级与文案都错了。
+- **修复**：在原位置保留独立的 `scope()` 调用（与同文件 `along_execution_capabilities`、`along_source_read`、`along_task_context` 的既有写法一致），只删未使用的返回值绑定。
+- **回归**：`tests/along-calculation-scope.spec.ts` 用真实 `AlongStore` / `AlongService` 与宿主替身，覆盖「注册时范围有效、执行时范围已释放」。断言 `along_calculate` 抛 `has no Along work scope`，且守卫先于派发解析生效——宿主替身的 `calculationScope` 调用次数为 0，没有写出任何收据。
+- **变异检测**：只回退这一处 `scope()` 调用，新增用例即失败（收到 `calculation_invalid_scope` 而非 `has no Along work scope`）；恢复后通过。
+
+其余 25 处删除重新逐条核对了副作用：删除的都是**未读取的绑定**，被删语句里唯一的调用分别是纯函数（`join`、`createInbox`）、无副作用的属性读取（`this.host.store`、`ticket.origin.triggerId`、`deployment.repository`）、未使用的形参，或**类型导入**（`verbatimModuleSyntax` 下整体擦除）。被整条删除的 `import { KV }` 与 `import { ticketCard }` 也不改变模块求值：`kv.ts` 与 `cards.ts` 没有模块级副作用，且仍分别被 `src/app/runtime.ts` 与 `src/app/resources.ts` 等处加载。
+
+### 已记录、未删除的候选
+
+- **`src/along/legacy-import.ts`（休眠的旧数据兼容路径）**：这是 `src/` 里**唯一**没有生产代码引用的模块——2026-11-27 全仓引用核对显示只有 `tests/along-store.spec.ts` 与 `tests/along-store-acceptance.spec.ts` 导入它。它是「手机旧版 localStorage 导出」向 `along.sqlite` 的稳定 ID 幂等导入器（`g_health`/`g_finance`/`g_custom`）。删除会改变持久化数据与兼容性语义，需要单独评估，本轮只把结论写进 `docs/007-architecture.md` 的模块索引。
+- **只多一个 `export` 关键字的符号**：全仓有 136 个导出符号只在本文件内被引用（如 `src/along/envelope.ts` 的 `EVENT_TYPES`、`src/app/notices.ts` 的 `receiptNotice`、`src/policy.ts` 的 `POLICY_REVISION`），符号本身都在用，死的只是导出面。收窄模块公开面属于接口变更，未纳入本轮。
+
+### 结论与验证
+
+`src/` 全量模块（含 7 个构建入口）没有可达性缺失的模块；`src/` 与 `tests/` 在加入 `noUnusedLocals` / `noUnusedParameters` 后零违规，说明导入级与局部量级的死代码已清空。
+
+- `pnpm check`（`pnpm typecheck` + `pnpm test` + `pnpm build`）：**112** 个测试文件、**1933** 项通过、**1** 项跳过（真实模型测试沿用既有跳过条件），类型检查与两端构建成功。新增用例 1 项（`tests/along-calculation-scope.spec.ts`）。
+- 清理本身未增删任何既有用例（`git diff -U0 -- tests` 无 `it(` / `test(` / `describe(` 声明行变化）；独立验收退回后新增 1 项回归用例，总数相应 +1。
+- `tests/docs.spec.ts` 要求每个测试文件都登记在 `docs/007-architecture.md` 的测试表里，新用例已登记。
+- 未验证事项：未部署公开环境、未启动真实模型、未做 iPhone 真机验收；这些流程本轮未执行，不得记为已验收。

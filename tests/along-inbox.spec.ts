@@ -189,7 +189,6 @@ describe('acceptEvent transactional receive', () => {
   it('rolls the whole transaction back when a business write fails mid-way, and sends no receipt (BC-08-01 失败侧)', () => {
     const path = join(directory, 'along.sqlite')
     const store = seededStore(path)
-    const inbox = createInbox(store)
     const breaking = Object.assign(Object.create(store), {
       raiseInputVersion: () => { throw new Error('simulated failure after the message row') },
     }) as AlongStore
@@ -443,7 +442,6 @@ describe('delivery pump', () => {
   })
 
   it('delivers at least once: stored, duplicate and filtered outcomes close the row, failures back off (BC-08-03, §2.2.2/2.2.3)', async () => {
-    const path = join(directory, 'along.sqlite')
     const store = seededStore()
     const inbox = createInbox(store)
     inbox.acceptEvent(userMessage({ event_id: 'evt-pump-0001' }), identity)

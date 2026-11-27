@@ -22,7 +22,7 @@ import { z } from 'zod'
 import { healthSnapshotSuperseded, healthFactTypes } from './health-facts.ts'
 import { healthLocalDate, healthTimezone } from './health-daily.ts'
 import { PLAN, declinesReminder, localWeekday, planError, publicPlan, singleOccurrence, supportsRecurrence, weekdayOnlyCadence, type PlanInput, type Repeat } from './reminder-plan.ts'
-import { TASK_TRIGGER_SCHEMA, type TaskCapability, type TaskTriggerInput } from './task-trigger.ts'
+import { TASK_TRIGGER_SCHEMA, type TaskCapability } from './task-trigger.ts'
 import { hasDailyMandate } from './task-schedule.ts'
 import { randomToken, type AlongStore, type ChangeSetRow, type ChangeSetSave, type GoalRevisionRow, type TaskRow } from './store.ts'
 
