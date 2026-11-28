@@ -58,13 +58,16 @@ export const ALONG_BASE_REVISION_SCHEMA = z.number().int().min(0).describe('JSON
 export const ALONG_INPUT_VERSION_SCHEMA = z.number().int().min(1).describe('JSON integer from along_goal_read.input_version, never a quoted string.')
 
 /**
- * Context/constraint list; entries are plain strings or a constrained entry with an optional deadline
- * (§3 `goal_revision.context`: 情境/约束数组，可含带期限情境). The legacy import stores plain strings.
+ * Context/constraint list with one optional user-facing goal summary.
+ * Plain strings and entries with optional deadlines keep their existing meaning.
  */
 export const ALONG_CONTEXT_SCHEMA = z.array(z.union([
   z.string().trim().min(1).max(300),
   z.object({ text: z.string().trim().min(1).max(300), until: ALONG_ISO_SCHEMA.optional() }).strict(),
-])).max(20)
+  z.object({ kind: z.literal('goal_summary'), text: z.string().trim().min(1).max(120).regex(/^[^\r\n]+$/) })
+    .strict().describe('One plain sentence explaining the outcome the user wants, for their goal card.'),
+])).max(20).refine(context => context.filter(item => typeof item !== 'string' && 'kind' in item).length <= 1,
+  'Use at most one goal_summary entry')
 
 /**
  * Metric of a goal content op. `target` accepts number-like strings because the old chain normalized them
