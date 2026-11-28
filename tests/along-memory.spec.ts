@@ -8,6 +8,7 @@ import { AlongStore } from '../src/along/store.ts'
 import { MemoryService } from '../src/along/memory/service.ts'
 import { memoryTools } from '../src/along/memory/tools.ts'
 import type { ExtractionInput, ExtractionResult, MemoryBackend, MemoryCandidate } from '../src/along/memory/model.ts'
+import { MemoryBackendError } from '../src/along/memory/model.ts'
 
 const USER = 'u_memory', OTHER = 'u_other', GOAL = 'g_memory', SECOND = 'g_second'
 let dir: string, path: string, store: AlongStore, service: MemoryService, backend: MemoryBackend
@@ -419,5 +420,26 @@ describe('failure recovery and migrations (BC-04-12, §2.5.4)', () => {
     store = new AlongStore(path)
     expect(store.getMessage(USER, source.id)?.text).toBe(source.text)
     expect(store.memory.memories(USER)).toEqual([])
+  })
+})
+
+describe('backend failures stay diagnosable', () => {
+  it('reports the backend reason and counts consecutive failures until a page succeeds', async () => {
+    const source = message()
+    vi.mocked(backend.extract).mockRejectedValue(new MemoryBackendError('classification_empty_content'))
+    expect(await service.runBatch(USER)).toMatchObject({ status: 'pending', reason: 'classification_empty_content' })
+    expect(service.failureStreak(USER)).toBe(1)
+    expect(await service.runBatch(USER)).toMatchObject({ status: 'pending', reason: 'classification_empty_content' })
+    expect(service.failureStreak(USER)).toBe(2)
+    vi.mocked(backend.extract).mockResolvedValue({ requestId: 'r', backendIds: ['sdk-node'],
+      candidates: [candidate(source.id, source.text)] })
+    expect(await service.runBatch(USER)).toMatchObject({ status: 'done', saved: 1 })
+    expect(service.failureStreak(USER)).toBe(0)
+  })
+  it('never leaks provider text into the reason', async () => {
+    message()
+    vi.mocked(backend.extract).mockRejectedValue(new Error('provider said sk-secret-value'))
+    expect(await service.runBatch(USER)).toMatchObject({ status: 'pending', reason: 'memory_unavailable' })
+    expect(JSON.stringify(await service.runBatch(USER))).not.toContain('sk-secret-value')
   })
 })

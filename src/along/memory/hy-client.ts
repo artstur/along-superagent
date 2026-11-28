@@ -5,10 +5,15 @@ import { isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
 import { assertAlongDataIsolation } from '../store.ts'
 import type { ExtractionInput, ExtractionResult, MemoryBackend } from './model.ts'
+import { MemoryBackendError } from './model.ts'
 
 export interface HyMemoryOptions {
   python: string; script: string; dataDir: string; envFile: string; workerRoot: string; timeoutMs?: number
 }
+
+/** The owner's own reason codes; anything else stays "unknown", so provider text never crosses the boundary. */
+const REASONS = new Set(['classification_empty_content', 'classification_invalid_json', 'classification_invalid_shape',
+  'classification_http_error', 'classification_invalid_reply'])
 
 /** Constructed by the host, not from tool arguments. No credential values enter this process's protocol. */
 export class HyMemoryBackend implements MemoryBackend {
@@ -55,10 +60,11 @@ export class HyMemoryBackend implements MemoryBackend {
       if (this.child !== child) return
       try {
         if (line.length > 4_000_000) throw new Error('memory protocol limit')
-        const response = JSON.parse(line) as { ready?: boolean; id?: number; ok?: boolean; result?: unknown }
+        const response = JSON.parse(line) as { ready?: boolean; id?: number; ok?: boolean; result?: unknown; reason?: string }
         if (response.ready === true) return
         if (!this.pending || response.id !== this.pending.id) throw new Error('memory protocol sequence')
-        if (response.ok !== true) this.pending.reject(new Error('memory backend unavailable'))
+        if (response.ok !== true) this.pending.reject(new MemoryBackendError(
+          typeof response.reason === 'string' && REASONS.has(response.reason) ? response.reason : 'unknown'))
         else this.pending.resolve(response.result)
       } catch { this.abort(child) }
     })

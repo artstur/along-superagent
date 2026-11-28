@@ -11,7 +11,7 @@ import { alongTool } from './tool.ts'
 import { KV } from '../kv.ts'
 
 export const MAINTENANCE_SOURCE = 'along-maintenance'
-const RETRY_MS = 60_000, PAGES_PER_CALL = 5
+const RETRY_MS = 60_000, MAX_RETRY_MS = 30 * 60_000, PAGES_PER_CALL = 5
 /** Next local configured time, computed as calendar time so DST and wake-up do not replay missed days. */
 export function nextMaintenanceAt(now: Date, time = '03:00'): string {
   const [hour, minute] = time.split(':').map(Number)
@@ -135,7 +135,7 @@ export class AlongMaintenance {
   }
   tools(ticketId: string) {
     return [alongTool({ name: 'along_maintenance_run',
-      description: 'Execute up to five host-bound memory pages. No user, batch or filesystem parameters. Repeat pending without retry_at; when retry_at is returned report failed and end the turn. Report ready only after done. Governance and persistence determine completion.',
+      description: 'Execute up to five host-bound memory pages. No user, batch or filesystem parameters. Repeat pending without retry_at; when retry_at is returned report failed and end the turn, naming the reason when one is given. Report ready only after done. Governance and persistence determine completion.',
       schema: z.object({}).strict(), execute: async (_args, signal) => this.run(ticketId, signal) })]
   }
   private async run(ticketId: string, signal: AbortSignal) {
@@ -145,7 +145,7 @@ export class AlongMaintenance {
       || !this.allowed(this.host.settings(), batch.userId) || this.host.paused() || this.host.closing()) throw new Error('maintenance capability unavailable')
     if (batch.status === 'done') return { status: 'done', processed: batch.processed, saved: batch.saved }
     if (batch.retryAt > this.now().toISOString()) return { status: 'pending', retry_at: batch.retryAt }
-    if (this.active) return this.defer(batch.id)
+    if (this.active) return this.defer(batch)
     const work = this.process(batch, ticketId, signal)
     this.active = work
     try { return await work } finally { this.active = undefined }
@@ -166,8 +166,8 @@ export class AlongMaintenance {
           return { status: 'stopped' }
         }
         signal.throwIfAborted()
-        if (this.host.paused() || this.host.closing() || !this.allowed(this.host.settings(), batch.userId)) return this.defer(batch.id)
-        if (result.status === 'pending') return this.defer(batch.id)
+        if (this.host.paused() || this.host.closing() || !this.allowed(this.host.settings(), batch.userId)) return this.defer(batch)
+        if (result.status === 'pending') return this.defer(batch, result.reason)
         if (!store.memory.hasWork(batch.userId, batch.throughSeq)) {
           store.atomic(() => {
             store.maintenance.finish(batch.id, this.now().toISOString())
@@ -177,12 +177,15 @@ export class AlongMaintenance {
         }
       }
       return { status: 'pending' }
-    } catch { return this.defer(batch.id) }
+    } catch { return this.defer(batch) }
   }
-  private defer(id: string) {
-    const retryAt = new Date(this.now().getTime() + RETRY_MS).toISOString()
-    this.host.store.maintenance.defer(id, retryAt)
-    return { status: 'pending', retry_at: retryAt }
+  /** Backs off while the batch keeps failing: a broken backend must not burn the quota every minute. */
+  private defer(batch: MaintenanceBatch, reason?: string) {
+    const streak = this.host.memory.failureStreak(batch.userId)
+    const delay = Math.min(RETRY_MS * 2 ** Math.max(streak - 1, 0), MAX_RETRY_MS)
+    const retryAt = new Date(this.now().getTime() + delay).toISOString()
+    this.host.store.maintenance.defer(batch.id, retryAt)
+    return { status: 'pending', retry_at: retryAt, ...(reason ? { reason } : {}) }
   }
   private stopBatch(id: string, userId: string): void {
     this.host.store.atomic(() => {

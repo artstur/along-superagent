@@ -53,6 +53,18 @@ def walk_nodes(value):
             yield from walk_nodes(nested)
 
 
+class GovernanceError(Exception):
+    """A classification failure with a stable, credential-free reason code.
+
+    The reason reaches the worker through the host protocol, so a failing batch says
+    why instead of an opaque "memory_unavailable" that hides for hours.
+    """
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
 class MemoryOwner:
     def __init__(self, data_dir, env_file):
         if importlib.metadata.version("hy-memory") != VERSION:
@@ -114,29 +126,51 @@ class MemoryOwner:
     def classify(self, sources, existing, nodes):
         import httpx
         config = self.config.llm
+        # The classifier gets its own budget, not the SDK's agent budget: that one covers a whole
+        # agent turn, and a reasoning model spends it on thinking instead of on the answer.
+        budget = int(os.environ.get("MEMORY_GOVERNANCE_MAX_TOKENS", "8192"))
+        effort = os.environ.get("MEMORY_GOVERNANCE_REASONING_EFFORT", "low")
         body = {"model": config.model, "messages": [
             {"role": "system", "content": GOVERNANCE_PROMPT},
             {"role": "user", "content": json.dumps({"sources": sources, "existing": existing,
                                                      "hy_memories": nodes}, ensure_ascii=False)}],
-            config.output_token_parameter: config.agent_max_tokens}
+            config.output_token_parameter: budget}
         if not config.omit_temperature:
             body["temperature"] = config.temperature
         # Match the already-verified provider settings, including MiniMax reasoning_effort.
         for key, value in (config.extra_body or {}).items():
             if key not in body:
                 body[key] = value
+        if effort and "reasoning_effort" not in body:
+            body["reasoning_effort"] = effort
         headers = dict(config.extra_headers or {})
         headers["Authorization"] = "Bearer " + config.api_key
         with httpx.Client(timeout=config.timeout) as http:
             self.calls['llm'] += 1
             response = http.post(config.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
-            response.raise_for_status()
-            reply = response.json()
-        content = reply["choices"][0]["message"]["content"]
+            if response.status_code == 400 and "reasoning_effort" in response.text:
+                # A provider without a thinking dial: keep the request, drop only that key.
+                body.pop("reasoning_effort", None)
+                self.calls['llm'] += 1
+                response = http.post(config.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
+            if response.status_code >= 400:
+                raise GovernanceError("classification_http_error")
+            try:
+                reply = response.json()
+                message = reply["choices"][0]["message"]
+            except (ValueError, KeyError, IndexError, TypeError):
+                raise GovernanceError("classification_invalid_reply")
+        content = message.get("content") or ""
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
-        candidates = json.loads(content)["candidates"]
+        if not content:
+            # A reasoning model that spent the whole budget on thinking returns no answer at all.
+            raise GovernanceError("classification_empty_content")
+        try:
+            candidates = json.loads(content)["candidates"]
+        except (ValueError, KeyError, TypeError):
+            raise GovernanceError("classification_invalid_json")
         if not isinstance(candidates, list) or len(candidates) > 100:
-            raise ValueError("invalid classification")
+            raise GovernanceError("classification_invalid_shape")
         return candidates
 
     def extract(self, params):
@@ -231,6 +265,9 @@ def main():
                     request_id = request["id"]
                     result = owner.dispatch(request["method"], request["params"])
                     emit({"id": request_id, "ok": True, "result": result})
+                except GovernanceError as error:
+                    # A stable reason code, never provider text: the worker reports why it failed.
+                    emit({"id": request_id, "ok": False, "error": "memory_unavailable", "reason": error.code})
                 except Exception:
                     emit({"id": request_id, "ok": False, "error": "memory_unavailable"})
         finally:

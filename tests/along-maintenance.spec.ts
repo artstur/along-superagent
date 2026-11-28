@@ -10,6 +10,7 @@ import { AlongStore } from '../src/along/store.ts'
 import { HyMemoryBackend } from '../src/along/memory/hy-client.ts'
 import { MAINTENANCE_SOURCE, nextMaintenanceAt } from '../src/along/maintenance.ts'
 import type { ExtractionInput } from '../src/along/memory/model.ts'
+import { MemoryBackendError } from '../src/along/memory/model.ts'
 import type { Trigger } from '../src/core/index.ts'
 import { policyEffects, settingsPolicy } from '../src/policy.ts'
 import { reference } from './fixtures/deployment.ts'
@@ -133,6 +134,20 @@ it('persists SDK backoff and resumes the same batch and ticket after a restart w
   expect(await next.h.runTool(`worker-${ticket.id}`, 'along_maintenance_run', {})).toMatchObject({ status: 'done' })
   expect(next.store.memory.effective(USER)).toHaveLength(1)
 }, 30_000)
+
+it('backs off while the batch keeps failing and carries the reason into the report', async () => {
+  sdk().mockRejectedValue(new MemoryBackendError('classification_empty_content'))
+  const { h, store } = await configured(); message(store); due(store)
+  const { worker } = await dispatch(h)
+  const first = await h.runTool(worker, 'along_maintenance_run', {}) as { status: string; retry_at: string; reason?: string }
+  expect(first).toMatchObject({ status: 'pending', reason: 'classification_empty_content' })
+  const batch = store.maintenance.outstanding(USER)!
+  store.maintenance.defer(batch.id, PAST)
+  const second = await h.runTool(worker, 'along_maintenance_run', {}) as typeof first
+  expect(second).toMatchObject({ status: 'pending', reason: 'classification_empty_content' })
+  // Consecutive failures back off further, so a broken backend cannot burn the quota every minute.
+  expect(Date.parse(second.retry_at) - Date.parse(first.retry_at)).toBeGreaterThanOrEqual(60_000)
+})
 
 it('recovers a batch persisted before DSH receive, rejects body forgery and does not revive human-stopped work', async () => {
   sdk()

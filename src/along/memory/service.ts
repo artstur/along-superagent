@@ -1,6 +1,6 @@
 /** Memory governance. SDK writes/recall are untrusted proposals; only SQLite facts leave this service. */
 import type { AlongStore, MessageRow } from '../store.ts'
-import { MemoryCandidateSchema, type GovernedMemory, type MemoryBackend, type MemoryCandidate, type MemorySource } from './model.ts'
+import { MemoryBackendError, MemoryCandidateSchema, type GovernedMemory, type MemoryBackend, type MemoryCandidate, type MemorySource } from './model.ts'
 
 /** Governs SDK proposals and serves only current, owned, applicable SQLite memories to planning callers. */
 export class MemoryService {
@@ -9,7 +9,7 @@ export class MemoryService {
   constructor(private readonly store: AlongStore, private readonly backend: MemoryBackend) {}
 
   /** One batch per call. The stage-E scheduler repeats while processed>0, without overlapping work. */
-  runBatch(userId: string, throughSeq?: number): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending' }> {
+  runBatch(userId: string, throughSeq?: number): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending'; reason?: string }> {
     if (this.closed) return Promise.reject(new Error('memory service closed'))
     // Calls from separate schedulers share the same in-flight operation, never cross users.
     if (this.busy) return Promise.reject(new Error('memory batch already running'))
@@ -17,7 +17,7 @@ export class MemoryService {
     this.busy = work
     return work.finally(() => { this.busy = undefined })
   }
-  private async process(userId: string, throughSeq?: number): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending' }> {
+  private async process(userId: string, throughSeq?: number): Promise<{ processed: number; saved: number; status: 'idle' | 'done' | 'pending'; reason?: string }> {
     const memory = this.store.memory
     const generation = memory.cleanupGeneration(userId)
     if (generation !== undefined) {
@@ -55,11 +55,15 @@ export class MemoryService {
         }
       })
       return { processed: operation.sourceIds.length, saved, status: 'done' }
-    } catch {
+    } catch (error) {
       if (!this.closed) memory.failAttempt(attemptId)
-      return { processed: 0, saved: 0, status: 'pending' }
+      // The reason code travels to the worker, so a failing batch says why instead of stalling silently.
+      return { processed: 0, saved: 0, status: 'pending', reason: error instanceof MemoryBackendError ? error.reason : 'memory_unavailable' }
     }
   }
+
+  /** Consecutive failed attempts of this user's pending operations; a completed page resets the streak. */
+  failureStreak(userId: string): number { return this.store.memory.failureStreak(userId) }
 
   private apply(userId: string, candidate: MemoryCandidate, sources: MemorySource[], backendIds: string[]): boolean {
     const memory = this.store.memory
