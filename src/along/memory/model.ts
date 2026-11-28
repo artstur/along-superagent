@@ -37,3 +37,10 @@ export interface MemoryBackend {
   clearUser(userId: string): Promise<void>
   close(): Promise<void>
 }
+/** A backend failure carrying a stable reason code, never provider text or credentials. */
+export class MemoryBackendError extends Error {
+  constructor(readonly reason: string) {
+    super('memory backend unavailable');
+    this.name = 'MemoryBackendError';
+  }
+}

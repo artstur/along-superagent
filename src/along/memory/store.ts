@@ -219,4 +219,15 @@ export class MemoryStore {
       .map(row => ({ id: String(row.id), status: String(row.status), operationId: String(row.operation_id),
         requestId: row.request_id === null ? undefined : String(row.request_id) }))
   }
+  /** Consecutive failed attempts of the user's pending operations; a completed page resets the streak. */
+  failureStreak(userId: string): number {
+    const rows = this.rows(`SELECT a.status FROM memory_attempt a JOIN memory_operation o ON o.id=a.operation_id
+      WHERE o.user_id=? AND o.status='pending' ORDER BY a.started_at DESC LIMIT 50`, userId)
+    let streak = 0
+    for (const row of rows) {
+      if (!['failed', 'interrupted', 'interrupted_after_sdk'].includes(String(row.status))) break
+      streak++
+    }
+    return streak
+  }
 }

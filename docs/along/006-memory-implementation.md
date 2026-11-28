@@ -43,6 +43,17 @@
 
 宿主使用 Python 3.12 环境，固定安装 `hy-memory==2.0.16`。0600 env 文件需要 `MEMORY_LLM_API_KEY/BASE_URL/MODEL` 和 `MEMORY_EMBEDDER_API_KEY/BASE_URL/MODEL` 六项；其他 SDK 参数沿用 [阶段 0 实测配置说明](004-phase0-validation.md#33-hy-memory-接入中实际遇到的问题)。当前 MiniMax 配置用 `max_completion_tokens`、4096 输出预算、`reasoning_effort=low`、省略 temperature、`MEMORY_LLM_MAX_RETRIES=1`；百炼向量为 1024 维，**batch size 由 `MEMORY_EMBEDDER_BATCH_SIZE` 决定**（默认 10 = 百炼 `text-embedding-v4` 的单请求上限；换供应商时用环境变量调，不要改代码——云端实测见 [Linux 云端部署实测](023-linux-cloud-deployment.md#531-记忆-embedder-的选型云端实测)）。不能把 SDK 的 retries=0 理解成“仍调用一次”。脚本启动时验证版本、权限与必填键，初始化失败只报告不可用，不回显配置。
 
+**治理分类器有自己的一组参数，不与 SDK 的 agent 预算共用**（`scripts/along-memory-service.py` 的 `classify()`）：
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `MEMORY_GOVERNANCE_MAX_TOKENS` | `8192` | 分类请求自己的输出额度，思考与答案共享这一份 |
+| `MEMORY_GOVERNANCE_REASONING_EFFORT` | `low` | 发给供应商的思考档位；供应商拒绝该参数时去掉它重试一次，其余设置不变 |
+
+推理模型会按额度膨胀思考长度，额度就是答案预算：MiniMax-M3.1-Flash 强制开启思考（`reasoning_effort=none`、`thinking=disabled` 都被 400 拒绝），额度 2000 时思考吃满、`message.content` 为空；额度 32768 时思考 14367 token、耗时 108s，又会撞上宿主 120s 的传输超时。`low` 档实测 6.4s 返回合法 JSON。
+
+分类失败不再统一吞成 `memory_unavailable`：脚本给出稳定原因码（`classification_empty_content`、`classification_invalid_json`、`classification_invalid_shape`、`classification_http_error`、`classification_invalid_reply`），宿主透传到 Worker，失败报告里写明原因；供应商原文与凭证都不进协议。
+
 构建后通过 `dsh-superagent/along-memory` 导出（Python 脚本随包分发）：
 
 ```ts

@@ -281,6 +281,28 @@ MiniMax 自己的 `embo-01` 是自家形状（请求体要 `texts`、响应是 `
 「我习惯 23 点睡，早上 6 点起」「家里养了一只猫叫豆豆」，都带原消息作证据（治理分类要求有真实消息证据
 才成立）。向量库那一层的直接证据：Chroma 集合名 `agent_memories_1024`、维度 1024（MiniMax 那轮是 1536）。
 
+### 5.3.2 云端记忆 env 必须带齐供应商参数（2026-11-28 事故后补）
+
+云端的 0600 记忆 env 起初只有六项必填键、维度和 embedder batch size，**少了本仓库早就写明的 MiniMax
+参数**（`max_completion_tokens`、4096 输出预算、`reasoning_effort=low`、省略 temperature、`MAX_RETRIES=1`）。
+少了 `reasoning_effort=low` 之后，SDK 内部提取与治理分类都按满额思考跑，11-28 03:00 的维护批次因此连续
+514 次失败（详见[定时维护](008-scheduled-maintenance.md#云端事故记录2026-11-28)）。
+
+云端 env 现在固定携带：
+
+```
+MEMORY_LLM_API_KEY=…            MEMORY_LLM_BASE_URL=https://api.minimaxi.com/v1
+MEMORY_LLM_MODEL=MiniMax-M3.1-Flash
+MEMORY_LLM_EXTRA_BODY={"reasoning_effort":"low"}
+MEMORY_AGENT_MAX_TOKENS=32768
+MEMORY_EMBEDDER_API_KEY=…        MEMORY_EMBEDDER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+MEMORY_EMBEDDER_MODEL=qwen3.7-text-embedding
+MEMORY_EMBEDDING_DIMS=1024       MEMORY_EMBEDDER_BATCH_SIZE=20
+```
+
+治理分类器自己的预算与思考档位见[记忆实现](006-memory-implementation.md#接入接口)，不依赖上面这行
+`MEMORY_LLM_EXTRA_BODY`；那行保留是为了让 SDK 内部提取同样按 `low` 思考，避免提取结果被思考额度挤空。
+
 ### 5.4 镜像构建的三个约束（这台机专属）
 
 1. **pip 官方源不可用**：`files.pythonhosted.org` 实测 27 kB/s，依赖树直接超时；必须用 `mirrors.aliyun.com/pypi/simple/`（176 kB/s）。
