@@ -80,6 +80,19 @@ const goalContent = () => {
     context: revision?.context, status: revision?.status }
 }
 
+it('validates one concise goal summary and syncs it with the current revision', () => {
+  const entry = { kind: 'goal_summary', text: '通过规律运动改善体能。' } as const
+  expect(commit({ ops: [{ op: 'goal.update', fields: { context: [entry, '保持规律运动'] } }] }))
+    .toMatchObject({ status: 'applied', goal_revision: 2 })
+  expect(store.currentGoalRevision(GOAL)?.context).toEqual([entry, '保持规律运动'])
+  const update = store.workspaceSync(USER, 0, 50).items.find(item => item.kind === 'goal_updated')
+  expect(update?.payload).toMatchObject({ snapshot: { revision: { revision: 2, context: [entry, '保持规律运动'] } } })
+  for (const context of [[entry, entry], [{ ...entry, text: '长'.repeat(121) }], [{ ...entry, text: '两\n行' }]]) {
+    expect(ALONG_CHANGE_SET_INPUT_SCHEMA.safeParse(input({ ops: [{ op: 'goal.update', fields: { context } }] }, GOAL)).success)
+      .toBe(false)
+  }
+})
+
 describe('BC-08-04 a stale base_revision is refused and marked conflicted, current state unchanged', () => {
   it('refuses a goal commit against an outdated revision and writes no business rows', () => {
     const applied = commit({ ops: [{ op: 'goal.update', fields: { title: '每周运动 150 分钟' } }] })
